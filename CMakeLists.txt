@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(Threads REQUIRED)
+
 function(lanlink_enable_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /permissive-)
@@ -15,7 +17,9 @@ function(lanlink_enable_warnings target)
 endfunction()
 
 add_library(lanlink_core STATIC
+    src/core/config.cpp
     src/core/component.cpp
+    src/core/logger.cpp
 )
 
 target_include_directories(lanlink_core
@@ -27,6 +31,8 @@ target_compile_definitions(lanlink_core
     PRIVATE
         LANLINK_VERSION="${PROJECT_VERSION}"
 )
+
+target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 
 lanlink_enable_warnings(lanlink_core)
 
@@ -54,4 +60,16 @@ if(WIN32)
     target_link_libraries(lanlink_ui PRIVATE lanlink_core)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
+endif()
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(lanlink_core_tests
+        tests/core_tests.cpp
+    )
+
+    target_link_libraries(lanlink_core_tests PRIVATE lanlink_core)
+    lanlink_enable_warnings(lanlink_core_tests)
+    add_test(NAME lanlink-core COMMAND lanlink_core_tests)
 endif()
