@@ -36,6 +36,17 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 
 lanlink_enable_warnings(lanlink_core)
 
+add_library(lanlink_protocol STATIC
+    src/protocol/codec.cpp
+)
+
+target_include_directories(lanlink_protocol
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+lanlink_enable_warnings(lanlink_protocol)
+
 add_executable(lanlink_relay
     apps/relay/main.cpp
 )
@@ -72,4 +83,12 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_core_tests PRIVATE lanlink_core)
     lanlink_enable_warnings(lanlink_core_tests)
     add_test(NAME lanlink-core COMMAND lanlink_core_tests)
+
+    add_executable(lanlink_protocol_tests
+        tests/protocol_tests.cpp
+    )
+
+    target_link_libraries(lanlink_protocol_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_protocol_tests)
+    add_test(NAME lanlink-protocol COMMAND lanlink_protocol_tests)
 endif()
