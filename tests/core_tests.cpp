@@ -51,6 +51,13 @@ void test_configuration() {
         "relay_host=relay.example.com\n"
         "relay_port=8443\n"
         "listen_host=127.0.0.1\n"
+        "tls_certificate_file=certs/relay.crt\n"
+        "tls_private_key_file=certs/relay.key\n"
+        "quic_handshake_timeout_ms=8000\n"
+        "quic_idle_timeout_ms=90000\n"
+        "quic_keep_alive_interval_ms=20000\n"
+        "reconnect_initial_delay_ms=500\n"
+        "reconnect_max_delay_ms=10000\n"
         "log_level=WARNING\n"
         "log_directory=var/log/lanlink\n"
         "log_max_size_bytes=65536\n"
@@ -59,6 +66,15 @@ void test_configuration() {
     expect(config.relay_host == "relay.example.com", "relay host");
     expect(config.relay_port == 8443, "relay port");
     expect(config.listen_host == "127.0.0.1", "listen host");
+    expect(config.tls_certificate_file == std::filesystem::path{"certs/relay.crt"},
+           "certificate file");
+    expect(config.tls_private_key_file == std::filesystem::path{"certs/relay.key"},
+           "private key file");
+    expect(config.quic_handshake_timeout_ms == 8000, "handshake timeout");
+    expect(config.quic_idle_timeout_ms == 90000, "idle timeout");
+    expect(config.quic_keep_alive_interval_ms == 20000, "keep alive interval");
+    expect(config.reconnect_initial_delay_ms == 500, "initial reconnect delay");
+    expect(config.reconnect_max_delay_ms == 10000, "maximum reconnect delay");
     expect(config.log_level == lanlink::core::LogLevel::warning, "log level");
     expect(config.log_directory == std::filesystem::path{"var/log/lanlink"}, "log directory");
     expect(config.log_max_size_bytes == 65536, "log size");
@@ -83,6 +99,29 @@ void test_configuration() {
     expect_error([] {
         static_cast<void>(lanlink::core::parse_config("log_max_size_bytes=1024\n"));
     }, "small log size");
+    expect_error([] {
+        static_cast<void>(lanlink::core::parse_config("tls_certificate_file=relay.crt\n"));
+    }, "incomplete certificate pair");
+    expect_error([] {
+        static_cast<void>(lanlink::core::parse_config(
+            "quic_idle_timeout_ms=5000\nquic_keep_alive_interval_ms=5000\n"));
+    }, "keep alive shorter than idle timeout");
+    expect_error([] {
+        static_cast<void>(lanlink::core::parse_config(
+            "reconnect_initial_delay_ms=1000\nreconnect_max_delay_ms=999\n"));
+    }, "reconnect delay order");
+
+    expect_error([] {
+        lanlink::core::RuntimeConfig relay_config;
+        lanlink::core::validate_relay_config(relay_config);
+    }, "relay certificate required");
+
+    try {
+        lanlink::core::validate_relay_config(config);
+        expect(true, "relay configuration");
+    } catch (const std::exception&) {
+        expect(false, "relay configuration");
+    }
 }
 
 void test_configuration_file(const std::filesystem::path& directory) {

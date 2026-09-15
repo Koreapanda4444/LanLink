@@ -7,6 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
+find_package(msquic CONFIG REQUIRED)
+
+if(TARGET msquic::msquic)
+    set(LANLINK_MSQUIC_TARGET msquic::msquic)
+elseif(TARGET msquic)
+    set(LANLINK_MSQUIC_TARGET msquic)
+else()
+    message(FATAL_ERROR "The msquic package did not export a supported CMake target")
+endif()
 
 function(lanlink_enable_warnings target)
     if(MSVC)
@@ -47,11 +56,31 @@ target_include_directories(lanlink_protocol
 
 lanlink_enable_warnings(lanlink_protocol)
 
+add_library(lanlink_transport STATIC
+    src/transport/quic.cpp
+    src/transport/reconnect.cpp
+)
+
+target_include_directories(lanlink_transport
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(lanlink_transport
+    PUBLIC
+        lanlink_core
+    PRIVATE
+        lanlink_protocol
+        ${LANLINK_MSQUIC_TARGET}
+)
+
+lanlink_enable_warnings(lanlink_transport)
+
 add_executable(lanlink_relay
     apps/relay/main.cpp
 )
 
-target_link_libraries(lanlink_relay PRIVATE lanlink_core)
+target_link_libraries(lanlink_relay PRIVATE lanlink_core lanlink_transport)
 set_target_properties(lanlink_relay PROPERTIES OUTPUT_NAME "lanlink-relay")
 lanlink_enable_warnings(lanlink_relay)
 
@@ -60,7 +89,7 @@ if(WIN32)
         apps/service/main.cpp
     )
 
-    target_link_libraries(lanlink_service PRIVATE lanlink_core)
+    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 
@@ -91,4 +120,12 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_protocol_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_protocol_tests)
     add_test(NAME lanlink-protocol COMMAND lanlink_protocol_tests)
+
+    add_executable(lanlink_transport_tests
+        tests/transport_tests.cpp
+    )
+
+    target_link_libraries(lanlink_transport_tests PRIVATE lanlink_transport)
+    lanlink_enable_warnings(lanlink_transport_tests)
+    add_test(NAME lanlink-transport COMMAND lanlink_transport_tests)
 endif()

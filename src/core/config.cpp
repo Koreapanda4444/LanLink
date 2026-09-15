@@ -116,6 +116,50 @@ RuntimeConfig parse_config(const std::string_view content) {
                 config.relay_port = static_cast<std::uint16_t>(parsed);
             } else if (key == "listen_host") {
                 config.listen_host = value;
+            } else if (key == "tls_certificate_file") {
+                config.tls_certificate_file = std::string(value);
+            } else if (key == "tls_private_key_file") {
+                config.tls_private_key_file = std::string(value);
+            } else if (key == "quic_handshake_timeout_ms") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, "quic_handshake_timeout_ms is out of range");
+                }
+
+                config.quic_handshake_timeout_ms = static_cast<std::uint32_t>(parsed);
+            } else if (key == "quic_idle_timeout_ms") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, "quic_idle_timeout_ms is out of range");
+                }
+
+                config.quic_idle_timeout_ms = static_cast<std::uint32_t>(parsed);
+            } else if (key == "quic_keep_alive_interval_ms") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, "quic_keep_alive_interval_ms is out of range");
+                }
+
+                config.quic_keep_alive_interval_ms = static_cast<std::uint32_t>(parsed);
+            } else if (key == "reconnect_initial_delay_ms") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, "reconnect_initial_delay_ms is out of range");
+                }
+
+                config.reconnect_initial_delay_ms = static_cast<std::uint32_t>(parsed);
+            } else if (key == "reconnect_max_delay_ms") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, "reconnect_max_delay_ms is out of range");
+                }
+
+                config.reconnect_max_delay_ms = static_cast<std::uint32_t>(parsed);
             } else if (key == "log_level") {
                 try {
                     config.log_level = parse_log_level(value);
@@ -180,6 +224,38 @@ void validate_config(const RuntimeConfig& config) {
         throw std::runtime_error("listen_host is invalid");
     }
 
+    if (config.tls_certificate_file.empty() != config.tls_private_key_file.empty()) {
+        throw std::runtime_error(
+            "tls_certificate_file and tls_private_key_file must be configured together");
+    }
+
+    if (config.quic_handshake_timeout_ms < 1'000 ||
+        config.quic_handshake_timeout_ms > 60'000) {
+        throw std::runtime_error("quic_handshake_timeout_ms must be between 1000 and 60000");
+    }
+
+    if (config.quic_idle_timeout_ms < 5'000 || config.quic_idle_timeout_ms > 600'000) {
+        throw std::runtime_error("quic_idle_timeout_ms must be between 5000 and 600000");
+    }
+
+    if (config.quic_keep_alive_interval_ms == 0 ||
+        config.quic_keep_alive_interval_ms >= config.quic_idle_timeout_ms) {
+        throw std::runtime_error(
+            "quic_keep_alive_interval_ms must be positive and less than quic_idle_timeout_ms");
+    }
+
+    if (config.reconnect_initial_delay_ms < 100 ||
+        config.reconnect_initial_delay_ms > 60'000) {
+        throw std::runtime_error(
+            "reconnect_initial_delay_ms must be between 100 and 60000");
+    }
+
+    if (config.reconnect_max_delay_ms < config.reconnect_initial_delay_ms ||
+        config.reconnect_max_delay_ms > 300'000) {
+        throw std::runtime_error(
+            "reconnect_max_delay_ms must be at least the initial delay and at most 300000");
+    }
+
     if (config.log_directory.empty()) {
         throw std::runtime_error("log_directory is empty");
     }
@@ -190,6 +266,14 @@ void validate_config(const RuntimeConfig& config) {
 
     if (config.log_max_files == 0 || config.log_max_files > 32) {
         throw std::runtime_error("log_max_files must be between 1 and 32");
+    }
+}
+
+void validate_relay_config(const RuntimeConfig& config) {
+    validate_config(config);
+
+    if (config.tls_certificate_file.empty() || config.tls_private_key_file.empty()) {
+        throw std::runtime_error("TLS certificate and private key are required by the relay");
     }
 }
 

@@ -1,11 +1,28 @@
 #include "lanlink/core/config.hpp"
 #include "lanlink/core/component.hpp"
 #include "lanlink/core/logger.hpp"
+#include "lanlink/transport/quic.hpp"
 
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
+#include <utility>
+
+namespace {
+
+volatile std::sig_atomic_t stop_requested = 0;
+
+void handle_signal(int) {
+    stop_requested = 1;
+}
+
+}
 
 int main(const int argc, char* argv[]) {
     using lanlink::core::Component;
@@ -28,7 +45,45 @@ int main(const int argc, char* argv[]) {
         logger.info("starting");
         std::cout << "LanLink " << lanlink::core::component_name(Component::service)
                   << " " << lanlink::core::project_version() << '\n';
-        std::cout << "Windows service integration is not implemented yet.\n";
+
+        lanlink::transport::QuicClientOptions options;
+        options.relay_host = config.relay_host;
+        options.port = config.relay_port;
+        options.handshake_timeout = std::chrono::milliseconds{config.quic_handshake_timeout_ms};
+        options.idle_timeout = std::chrono::milliseconds{config.quic_idle_timeout_ms};
+        options.keep_alive_interval_ms = config.quic_keep_alive_interval_ms;
+        options.reconnect_initial_delay =
+            std::chrono::milliseconds{config.reconnect_initial_delay_ms};
+        options.reconnect_maximum_delay =
+            std::chrono::milliseconds{config.reconnect_max_delay_ms};
+
+        lanlink::transport::QuicRelayClient client(std::move(options), logger);
+        std::signal(SIGINT, handle_signal);
+        std::signal(SIGTERM, handle_signal);
+
+        std::atomic_bool worker_finished = false;
+        std::exception_ptr worker_error;
+        std::jthread worker([&](const std::stop_token token) {
+            try {
+                client.run(token);
+            } catch (...) {
+                worker_error = std::current_exception();
+            }
+
+            worker_finished.store(true);
+        });
+
+        while (stop_requested == 0 && !worker_finished.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{200});
+        }
+
+        worker.request_stop();
+        client.stop();
+        worker.join();
+
+        if (worker_error) {
+            std::rethrow_exception(worker_error);
+        }
         logger.info("stopped");
         logger.flush();
         return EXIT_SUCCESS;
