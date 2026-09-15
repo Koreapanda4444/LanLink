@@ -3,6 +3,8 @@
 #include "lanlink/protocol/codec.hpp"
 #include "lanlink/protocol/stream_decoder.hpp"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -51,6 +53,49 @@ void write_token(const std::filesystem::path& path, const std::string_view token
     }
 }
 
+#ifdef _WIN32
+std::vector<std::byte> read_binary(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+
+    if (!input) {
+        throw std::runtime_error("cannot read test file");
+    }
+
+    const auto size = std::filesystem::file_size(path);
+    std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+
+    if (static_cast<std::size_t>(input.gcount()) != bytes.size()) {
+        throw std::runtime_error("cannot read complete test file");
+    }
+
+    return bytes;
+}
+
+void write_binary(const std::filesystem::path& path, const std::span<const std::byte> bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+
+    if (!output) {
+        throw std::runtime_error("cannot write test file");
+    }
+}
+#endif
+
+bool has_temporary_identity(const std::filesystem::path& directory,
+                            const std::filesystem::path& identity) {
+    const auto prefix = identity.filename().string() + ".tmp-";
+
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.path().filename().string().starts_with(prefix)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void test_identity(const std::filesystem::path& directory) {
     const auto path = directory / "device.identity";
     auto first = lanlink::auth::DeviceIdentity::load_or_create(path);
@@ -63,14 +108,19 @@ void test_identity(const std::filesystem::path& directory) {
     const auto signature = first.sign(message);
 
     expect(std::filesystem::exists(path), "identity file created");
+#ifdef _WIN32
+    const auto stored = read_binary(path);
+    expect(stored.size() > 9, "protected identity file size");
+    expect(stored.size() > 4 && stored[4] == std::byte{2}, "protected identity version");
+#else
     expect(std::filesystem::file_size(path) == 37, "identity file size");
-#ifndef _WIN32
     const auto unsafe_permissions = std::filesystem::perms::group_all |
                                     std::filesystem::perms::others_all;
     expect((std::filesystem::status(path).permissions() & unsafe_permissions) ==
                std::filesystem::perms::none,
            "identity file permissions");
 #endif
+    expect(!has_temporary_identity(directory, path), "identity temporary file removed");
     expect(first_id.size() == lanlink::auth::device_id_size * 2, "device id length");
     expect(lanlink::auth::verify_signature(first.public_key(), message, signature),
            "identity signature");
@@ -83,6 +133,19 @@ void test_identity(const std::filesystem::path& directory) {
     auto second = lanlink::auth::DeviceIdentity::load_or_create(path);
     expect(second.device_id_hex() == first_id, "identity remains stable");
 
+#ifndef _WIN32
+    std::filesystem::permissions(path,
+                                 std::filesystem::perms::owner_all |
+                                     std::filesystem::perms::group_read |
+                                     std::filesystem::perms::others_read,
+                                 std::filesystem::perm_options::replace);
+    auto repaired = lanlink::auth::DeviceIdentity::load_or_create(path);
+    expect(repaired.device_id_hex() == first_id, "permission repair preserves identity");
+    expect((std::filesystem::status(path).permissions() & unsafe_permissions) ==
+               std::filesystem::perms::none,
+           "unsafe identity permissions repaired");
+#endif
+
     expect_error([&directory] {
         const auto invalid = directory / "invalid.identity";
         std::ofstream output(invalid, std::ios::binary);
@@ -91,6 +154,43 @@ void test_identity(const std::filesystem::path& directory) {
         static_cast<void>(lanlink::auth::DeviceIdentity::load_or_create(invalid));
     }, "invalid identity rejected");
 }
+
+#ifdef _WIN32
+void test_legacy_identity_migration(const std::filesystem::path& directory) {
+    constexpr std::array<std::byte, 4> magic{
+        std::byte{'L'},
+        std::byte{'L'},
+        std::byte{'I'},
+        std::byte{'D'},
+    };
+    std::array<std::byte, 37> legacy{};
+    std::copy(magic.begin(), magic.end(), legacy.begin());
+    legacy[4] = std::byte{1};
+
+    for (std::size_t index = 5; index < legacy.size(); ++index) {
+        legacy[index] = std::byte{static_cast<unsigned char>(index)};
+    }
+
+    const auto path = directory / "legacy.identity";
+    write_binary(path, legacy);
+    auto migrated = lanlink::auth::DeviceIdentity::load_or_create(path);
+    const auto device_id = migrated.device_id_hex();
+    auto stored = read_binary(path);
+
+    expect(stored.size() > 9, "legacy identity replaced by protected identity");
+    expect(stored.size() > 4 && stored[4] == std::byte{2}, "legacy identity migrated");
+    expect(!has_temporary_identity(directory, path), "migration temporary file removed");
+
+    auto reloaded = lanlink::auth::DeviceIdentity::load_or_create(path);
+    expect(reloaded.device_id_hex() == device_id, "migration preserves device identity");
+
+    stored.back() = stored.back() ^ std::byte{1};
+    write_binary(path, stored);
+    expect_error([&path] {
+        static_cast<void>(lanlink::auth::DeviceIdentity::load_or_create(path));
+    }, "corrupted protected identity rejected");
+}
+#endif
 
 void test_token(const std::filesystem::path& directory) {
     constexpr std::string_view secret = "0123456789abcdef0123456789abcdef";
@@ -221,6 +321,9 @@ int main() {
 
     try {
         test_identity(directory);
+#ifdef _WIN32
+        test_legacy_identity_migration(directory);
+#endif
         test_token(directory);
         test_payloads();
         test_successful_handshake(directory);

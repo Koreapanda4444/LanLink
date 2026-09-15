@@ -1,4 +1,5 @@
 #include "lanlink/auth/identity.hpp"
+#include "secret_store.hpp"
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -17,15 +18,6 @@
 namespace lanlink::auth {
 namespace {
 
-constexpr std::array<std::byte, 4> identity_magic{
-    std::byte{'L'},
-    std::byte{'L'},
-    std::byte{'I'},
-    std::byte{'D'},
-};
-constexpr std::byte identity_version{1};
-constexpr std::size_t identity_seed_size = 32;
-constexpr std::size_t identity_file_size = identity_magic.size() + 1 + identity_seed_size;
 constexpr std::size_t maximum_token_size = 4096;
 constexpr std::string_view transcript_prefix = "lanlink-auth-v1";
 
@@ -138,84 +130,6 @@ std::vector<std::byte> read_binary_file(const std::filesystem::path& path,
     return bytes;
 }
 
-SecretKey read_identity_seed(const std::filesystem::path& path) {
-    auto bytes = read_binary_file(path, identity_file_size);
-
-    if (bytes.size() != identity_file_size ||
-        !std::equal(identity_magic.begin(), identity_magic.end(), bytes.begin()) ||
-        bytes[identity_magic.size()] != identity_version) {
-        cleanse(bytes);
-        throw std::runtime_error("invalid device identity file: " + path.string());
-    }
-
-    SecretKey seed{};
-    std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(identity_magic.size() + 1),
-                seed.size(),
-                seed.begin());
-    cleanse(bytes);
-    return seed;
-}
-
-void write_identity_seed(const std::filesystem::path& path, const SecretKey& seed) {
-    const auto parent = path.parent_path();
-    std::error_code error;
-
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent, error);
-
-        if (error) {
-            throw std::runtime_error("cannot create identity directory: " + parent.string());
-        }
-    }
-
-    std::array<std::byte, 8> suffix{};
-    random_fill(suffix);
-    auto temporary = path;
-    temporary += ".tmp-" + hex_encode(suffix);
-
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-
-        if (!output) {
-            throw std::runtime_error("cannot create device identity: " + path.string());
-        }
-
-#ifndef _WIN32
-        std::filesystem::permissions(temporary,
-                                     std::filesystem::perms::owner_read |
-                                         std::filesystem::perms::owner_write,
-                                     std::filesystem::perm_options::replace,
-                                     error);
-
-        if (error) {
-            output.close();
-            std::filesystem::remove(temporary, error);
-            throw std::runtime_error("cannot protect device identity: " + path.string());
-        }
-#endif
-
-        output.write(reinterpret_cast<const char*>(identity_magic.data()),
-                     static_cast<std::streamsize>(identity_magic.size()));
-        output.put(static_cast<char>(std::to_integer<unsigned char>(identity_version)));
-        output.write(reinterpret_cast<const char*>(seed.data()),
-                     static_cast<std::streamsize>(seed.size()));
-        output.flush();
-
-        if (!output) {
-            output.close();
-            std::filesystem::remove(temporary, error);
-            throw std::runtime_error("cannot write device identity: " + path.string());
-        }
-    }
-
-    std::filesystem::rename(temporary, path, error);
-
-    if (error) {
-        std::filesystem::remove(temporary, error);
-        throw std::runtime_error("cannot install device identity: " + path.string());
-    }
-}
-
 }
 
 DeviceIdentity::DeviceIdentity(PublicKey public_key_value,
@@ -257,14 +171,18 @@ DeviceIdentity DeviceIdentity::load_or_create(const std::filesystem::path& path)
 
     SecretKey secret_key{};
 
-    if (exists) {
-        secret_key = read_identity_seed(path);
-    } else {
-        random_fill(secret_key);
-        write_identity_seed(path, secret_key);
-    }
-
     try {
+        if (exists) {
+            const auto requires_migration = detail::load_device_secret(path, secret_key);
+
+            if (requires_migration) {
+                detail::store_device_secret(path, secret_key);
+            }
+        } else {
+            random_fill(secret_key);
+            detail::store_device_secret(path, secret_key);
+        }
+
         auto public_key_value = derive_public_key(secret_key);
         auto identity = DeviceIdentity(std::move(public_key_value), secret_key);
         cleanse(secret_key);
