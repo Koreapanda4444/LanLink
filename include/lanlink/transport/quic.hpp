@@ -18,6 +18,7 @@ struct QuicServerOptions {
     std::uint16_t port = 4433;
     std::filesystem::path certificate_file;
     std::filesystem::path private_key_file;
+    std::filesystem::path auth_token_file;
     std::chrono::milliseconds handshake_timeout{10'000};
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
@@ -26,6 +27,8 @@ struct QuicServerOptions {
 struct QuicClientOptions {
     std::string relay_host = "127.0.0.1";
     std::uint16_t port = 4433;
+    std::filesystem::path identity_file;
+    std::filesystem::path auth_token_file;
     std::chrono::milliseconds handshake_timeout{10'000};
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
@@ -66,6 +69,7 @@ public:
     void stop() noexcept;
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool connected() const noexcept;
+    [[nodiscard]] bool authenticated() const noexcept;
 
 private:
     class Impl;

@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
 find_package(msquic CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 if(TARGET msquic::msquic)
     set(LANLINK_MSQUIC_TARGET msquic::msquic)
@@ -47,6 +48,7 @@ lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
     src/protocol/codec.cpp
+    src/protocol/stream_decoder.cpp
 )
 
 target_include_directories(lanlink_protocol
@@ -55,6 +57,25 @@ target_include_directories(lanlink_protocol
 )
 
 lanlink_enable_warnings(lanlink_protocol)
+
+add_library(lanlink_auth STATIC
+    src/auth/handshake.cpp
+    src/auth/identity.cpp
+)
+
+target_include_directories(lanlink_auth
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(lanlink_auth
+    PUBLIC
+        lanlink_protocol
+    PRIVATE
+        OpenSSL::Crypto
+)
+
+lanlink_enable_warnings(lanlink_auth)
 
 add_library(lanlink_transport STATIC
     src/transport/quic.cpp
@@ -70,6 +91,7 @@ target_link_libraries(lanlink_transport
     PUBLIC
         lanlink_core
     PRIVATE
+        lanlink_auth
         lanlink_protocol
         ${LANLINK_MSQUIC_TARGET}
 )
@@ -120,6 +142,14 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_protocol_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_protocol_tests)
     add_test(NAME lanlink-protocol COMMAND lanlink_protocol_tests)
+
+    add_executable(lanlink_auth_tests
+        tests/auth_tests.cpp
+    )
+
+    target_link_libraries(lanlink_auth_tests PRIVATE lanlink_auth)
+    lanlink_enable_warnings(lanlink_auth_tests)
+    add_test(NAME lanlink-auth COMMAND lanlink_auth_tests)
 
     add_executable(lanlink_transport_tests
         tests/transport_tests.cpp

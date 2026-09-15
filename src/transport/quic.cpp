@@ -1,27 +1,55 @@
 #include "lanlink/transport/quic.hpp"
 
+#include "lanlink/auth/handshake.hpp"
+#include "lanlink/auth/identity.hpp"
 #include "lanlink/core/logger.hpp"
+#include "lanlink/protocol/codec.hpp"
 #include "lanlink/protocol/message.hpp"
+#include "lanlink/protocol/stream_decoder.hpp"
 #include "lanlink/transport/reconnect.hpp"
 
 #include <msquic.h>
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <iomanip>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace lanlink::transport {
 namespace {
 
 constexpr QUIC_UINT62 application_shutdown_code = 0;
+constexpr QUIC_UINT62 authentication_shutdown_code = 1;
+
+struct PendingSend {
+    PendingSend(std::vector<std::byte> encoded,
+                const QUIC_API_TABLE* api_table,
+                const HQUIC connection_handle,
+                const bool shutdown)
+        : bytes(std::move(encoded)),
+          api(api_table),
+          connection(connection_handle),
+          shutdown_after_send(shutdown) {
+        buffer.Length = static_cast<std::uint32_t>(bytes.size());
+        buffer.Buffer = reinterpret_cast<std::uint8_t*>(bytes.data());
+    }
+
+    std::vector<std::byte> bytes;
+    QUIC_BUFFER buffer{};
+    const QUIC_API_TABLE* api;
+    HQUIC connection;
+    bool shutdown_after_send;
+};
 
 std::string status_text(const QUIC_STATUS status) {
     std::ostringstream output;
@@ -38,6 +66,41 @@ QUIC_BUFFER alpn_buffer() noexcept {
         static_cast<std::uint32_t>(protocol::protocol_alpn.size()),
         reinterpret_cast<std::uint8_t*>(const_cast<char*>(protocol::protocol_alpn.data())),
     };
+}
+
+QUIC_STATUS send_frame(const QUIC_API_TABLE* api,
+                       const HQUIC stream,
+                       const protocol::Frame& frame,
+                       const HQUIC connection = nullptr,
+                       const bool shutdown_after_send = false) noexcept {
+    try {
+        auto pending = std::make_unique<PendingSend>(
+            protocol::encode_frame(frame), api, connection, shutdown_after_send);
+        const auto status = api->StreamSend(stream,
+                                            &pending->buffer,
+                                            1,
+                                            QUIC_SEND_FLAG_NONE,
+                                            pending.get());
+
+        if (QUIC_SUCCEEDED(status)) {
+            static_cast<void>(pending.release());
+        }
+
+        return status;
+    } catch (...) {
+        return QUIC_STATUS_OUT_OF_MEMORY;
+    }
+}
+
+void complete_send(QUIC_STREAM_EVENT* event) noexcept {
+    auto pending = std::unique_ptr<PendingSend>(
+        static_cast<PendingSend*>(event->SEND_COMPLETE.ClientContext));
+
+    if (pending && pending->shutdown_after_send && pending->connection != nullptr) {
+        pending->api->ConnectionShutdown(pending->connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         authentication_shutdown_code);
+    }
 }
 
 void log_noexcept(core::Logger& logger,
@@ -62,6 +125,10 @@ void validate_server_options(const QuicServerOptions& options) {
         throw std::invalid_argument("QUIC relay certificate and private key are required");
     }
 
+    if (options.auth_token_file.empty()) {
+        throw std::invalid_argument("QUIC relay authentication token is required");
+    }
+
     if (options.handshake_timeout <= std::chrono::milliseconds::zero() ||
         options.idle_timeout <= std::chrono::milliseconds::zero() ||
         options.keep_alive_interval_ms == 0 ||
@@ -78,6 +145,10 @@ void validate_client_options(const QuicClientOptions& options) {
 
     if (options.port == 0) {
         throw std::invalid_argument("QUIC relay port must be non-zero");
+    }
+
+    if (options.identity_file.empty() || options.auth_token_file.empty()) {
+        throw std::invalid_argument("QUIC client identity and authentication token are required");
     }
 
     if (options.handshake_timeout <= std::chrono::milliseconds::zero() ||
@@ -103,6 +174,8 @@ public:
         validate_server_options(options_);
 
         try {
+            auth_token_ = std::make_unique<auth::AuthToken>(
+                auth::AuthToken::load(options_.auth_token_file));
             initialize();
         } catch (...) {
             release();
@@ -180,6 +253,20 @@ public:
 private:
     struct ConnectionContext {
         Impl* owner;
+        std::atomic_bool control_stream_started = false;
+    };
+
+    struct StreamContext {
+        StreamContext(Impl* owner_value,
+                      const HQUIC connection_value,
+                      const auth::AuthToken& token)
+            : owner(owner_value), connection(connection_value), handshake(token) {
+        }
+
+        Impl* owner;
+        HQUIC connection;
+        auth::ServerHandshake handshake;
+        protocol::FrameStreamDecoder decoder;
     };
 
     void initialize() {
@@ -209,6 +296,8 @@ private:
         settings.IsSet.IdleTimeoutMs = TRUE;
         settings.KeepAliveIntervalMs = options_.keep_alive_interval_ms;
         settings.IsSet.KeepAliveIntervalMs = TRUE;
+        settings.PeerBidiStreamCount = 1;
+        settings.IsSet.PeerBidiStreamCount = TRUE;
 
         auto alpn = alpn_buffer();
         status = api_->ConfigurationOpen(registration_,
@@ -280,6 +369,17 @@ private:
         }
     }
 
+    static QUIC_STATUS QUIC_API stream_callback(HQUIC stream,
+                                                 void* context,
+                                                 QUIC_STREAM_EVENT* event) {
+        try {
+            auto* stream_context = static_cast<StreamContext*>(context);
+            return stream_context->owner->on_stream_event(stream, stream_context, event);
+        } catch (...) {
+            return QUIC_STATUS_INTERNAL_ERROR;
+        }
+    }
+
     QUIC_STATUS on_listener_event(QUIC_LISTENER_EVENT* event) {
         if (event->Type != QUIC_LISTENER_EVENT_NEW_CONNECTION) {
             return QUIC_STATUS_SUCCESS;
@@ -325,6 +425,32 @@ private:
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
                 log_noexcept(logger_, core::LogLevel::info, "QUIC client disconnected");
                 break;
+            case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED: {
+                if (context->control_stream_started.exchange(true)) {
+                    api_->ConnectionShutdown(connection,
+                                             QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                             authentication_shutdown_code);
+                    break;
+                }
+
+                auto stream_context = std::unique_ptr<StreamContext>(
+                    new (std::nothrow) StreamContext(this, connection, *auth_token_));
+
+                if (!stream_context) {
+                    api_->ConnectionShutdown(connection,
+                                             QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                             authentication_shutdown_code);
+                    return QUIC_STATUS_OUT_OF_MEMORY;
+                }
+
+                auto* const raw_stream_context = stream_context.release();
+                api_->SetCallbackHandler(
+                    event->PEER_STREAM_STARTED.Stream,
+                    reinterpret_cast<void*>(
+                        static_cast<QUIC_STREAM_CALLBACK_HANDLER>(stream_callback)),
+                    raw_stream_context);
+                break;
+            }
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
                 api_->ConnectionClose(connection);
                 delete context;
@@ -336,8 +462,93 @@ private:
         return QUIC_STATUS_SUCCESS;
     }
 
+    QUIC_STATUS on_stream_event(HQUIC stream,
+                                StreamContext* context,
+                                QUIC_STREAM_EVENT* event) {
+        switch (event->Type) {
+            case QUIC_STREAM_EVENT_RECEIVE:
+                for (std::uint32_t index = 0; index < event->RECEIVE.BufferCount; ++index) {
+                    const auto& input = event->RECEIVE.Buffers[index];
+
+                    try {
+                        const auto frames = context->decoder.push(std::span<const std::byte>(
+                            reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
+
+                        for (const auto& frame : frames) {
+                            handle_auth_frame(stream, context, frame);
+                        }
+                    } catch (const std::exception& error) {
+                        log_noexcept(logger_,
+                                     core::LogLevel::warning,
+                                     "invalid authentication stream: " +
+                                         std::string(error.what()));
+                        api_->ConnectionShutdown(context->connection,
+                                                 QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                                 authentication_shutdown_code);
+                        return QUIC_STATUS_SUCCESS;
+                    }
+                }
+                break;
+            case QUIC_STREAM_EVENT_SEND_COMPLETE:
+                complete_send(event);
+                break;
+            case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
+            case QUIC_STREAM_EVENT_PEER_RECEIVE_ABORTED:
+                api_->ConnectionShutdown(context->connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         authentication_shutdown_code);
+                break;
+            case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+                if (!event->SHUTDOWN_COMPLETE.AppCloseInProgress) {
+                    api_->StreamClose(stream);
+                }
+                delete context;
+                break;
+            default:
+                break;
+        }
+
+        return QUIC_STATUS_SUCCESS;
+    }
+
+    void handle_auth_frame(const HQUIC stream,
+                           StreamContext* context,
+                           const protocol::Frame& frame) {
+        protocol::Frame response;
+        bool shutdown_after_send = false;
+
+        if (frame.type == protocol::MessageType::client_hello) {
+            response = context->handshake.handle_hello(frame);
+        } else if (frame.type == protocol::MessageType::client_auth) {
+            response = context->handshake.handle_proof(frame);
+            shutdown_after_send = context->handshake.rejected();
+
+            if (context->handshake.authenticated()) {
+                log_noexcept(logger_,
+                             core::LogLevel::info,
+                             "device authenticated: " + context->handshake.device_id_hex());
+            } else {
+                log_noexcept(logger_, core::LogLevel::warning, "device authentication rejected");
+            }
+        } else {
+            throw std::runtime_error("unexpected frame before authentication");
+        }
+
+        const auto status = send_frame(api_,
+                                       stream,
+                                       response,
+                                       context->connection,
+                                       shutdown_after_send);
+
+        if (QUIC_FAILED(status)) {
+            throw std::runtime_error("authentication response send failed: " +
+                                     status_text(status));
+        }
+    }
+
     QuicServerOptions options_;
     core::Logger& logger_;
+    std::unique_ptr<auth::AuthToken> auth_token_;
     const QUIC_API_TABLE* api_ = nullptr;
     HQUIC registration_ = nullptr;
     HQUIC configuration_ = nullptr;
@@ -356,6 +567,10 @@ public:
         validate_client_options(options_);
 
         try {
+            identity_ = std::make_unique<auth::DeviceIdentity>(
+                auth::DeviceIdentity::load_or_create(options_.identity_file));
+            auth_token_ = std::make_unique<auth::AuthToken>(
+                auth::AuthToken::load(options_.auth_token_file));
             initialize();
         } catch (...) {
             release();
@@ -383,6 +598,7 @@ public:
 
         stop_requested_.store(false);
         connected_.store(false);
+        authenticated_.store(false);
         std::stop_callback stop_callback(stop_token, [this] { stop(); });
 
         try {
@@ -426,19 +642,42 @@ public:
         return connected_.load();
     }
 
+    [[nodiscard]] bool authenticated() const noexcept {
+        return authenticated_.load();
+    }
+
 private:
     struct AttemptState {
         std::mutex mutex;
         std::condition_variable complete_wake;
         HQUIC connection = nullptr;
         bool complete = false;
-        bool ever_connected = false;
+        bool ever_authenticated = false;
         bool shutdown_requested = false;
     };
 
     struct ConnectionContext {
         Impl* owner;
         std::shared_ptr<AttemptState> state;
+    };
+
+    struct StreamContext {
+        StreamContext(Impl* owner_value,
+                      const HQUIC connection_value,
+                      std::shared_ptr<AttemptState> state_value,
+                      const auth::DeviceIdentity& identity,
+                      const auth::AuthToken& token)
+            : owner(owner_value),
+              connection(connection_value),
+              state(std::move(state_value)),
+              handshake(identity, token) {
+        }
+
+        Impl* owner;
+        HQUIC connection;
+        std::shared_ptr<AttemptState> state;
+        auth::ClientHandshake handshake;
+        protocol::FrameStreamDecoder decoder;
     };
 
     void initialize() {
@@ -541,7 +780,7 @@ private:
 
             clear_active(state);
 
-            if (state->ever_connected) {
+            if (state->ever_authenticated) {
                 reconnect_.reset();
             }
 
@@ -645,6 +884,7 @@ private:
 
     void finish_run() noexcept {
         connected_.store(false);
+        authenticated_.store(false);
         running_.store(false);
         run_complete_.notify_all();
     }
@@ -661,20 +901,30 @@ private:
         }
     }
 
+    static QUIC_STATUS QUIC_API stream_callback(HQUIC stream,
+                                                 void* context,
+                                                 QUIC_STREAM_EVENT* event) {
+        try {
+            auto* stream_context = static_cast<StreamContext*>(context);
+            return stream_context->owner->on_stream_event(stream, stream_context, event);
+        } catch (...) {
+            return QUIC_STATUS_INTERNAL_ERROR;
+        }
+    }
+
     QUIC_STATUS on_connection_event(HQUIC connection,
                                     ConnectionContext* context,
                                     QUIC_CONNECTION_EVENT* event) {
         switch (event->Type) {
             case QUIC_CONNECTION_EVENT_CONNECTED:
-                {
-                    std::lock_guard lock(context->state->mutex);
-                    context->state->ever_connected = true;
-                }
                 connected_.store(true);
+                authenticated_.store(false);
                 log_noexcept(logger_, core::LogLevel::info, "connected to QUIC relay");
+                open_control_stream(connection, context->state);
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
                 connected_.store(false);
+                authenticated_.store(false);
                 log_noexcept(logger_,
                              core::LogLevel::warning,
                              "relay transport shutdown: " +
@@ -682,10 +932,12 @@ private:
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
                 connected_.store(false);
+                authenticated_.store(false);
                 log_noexcept(logger_, core::LogLevel::warning, "relay closed the connection");
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
                 connected_.store(false);
+                authenticated_.store(false);
 
                 {
                     std::lock_guard lock(context->state->mutex);
@@ -710,14 +962,177 @@ private:
         return QUIC_STATUS_SUCCESS;
     }
 
+    void open_control_stream(const HQUIC connection,
+                             const std::shared_ptr<AttemptState>& state) {
+        auto context = std::unique_ptr<StreamContext>(
+            new (std::nothrow) StreamContext(this,
+                                             connection,
+                                             state,
+                                             *identity_,
+                                             *auth_token_));
+
+        if (!context) {
+            api_->ConnectionShutdown(connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     authentication_shutdown_code);
+            return;
+        }
+
+        HQUIC stream = nullptr;
+        auto status = api_->StreamOpen(connection,
+                                       QUIC_STREAM_OPEN_FLAG_NONE,
+                                       stream_callback,
+                                       context.get(),
+                                       &stream);
+
+        if (QUIC_FAILED(status)) {
+            log_noexcept(logger_,
+                         core::LogLevel::warning,
+                         "authentication StreamOpen failed: " + status_text(status));
+            api_->ConnectionShutdown(connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     authentication_shutdown_code);
+            return;
+        }
+
+        auto* const raw_context = context.release();
+        status = api_->StreamStart(stream, QUIC_STREAM_START_FLAG_NONE);
+
+        if (QUIC_FAILED(status)) {
+            log_noexcept(logger_,
+                         core::LogLevel::warning,
+                         "authentication StreamStart failed: " + status_text(status));
+            api_->StreamClose(stream);
+            delete raw_context;
+            api_->ConnectionShutdown(connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     authentication_shutdown_code);
+            return;
+        }
+
+        const auto hello = raw_context->handshake.begin(1);
+        status = send_frame(api_, stream, hello);
+
+        if (QUIC_FAILED(status)) {
+            log_noexcept(logger_,
+                         core::LogLevel::warning,
+                         "authentication hello send failed: " + status_text(status));
+            api_->StreamShutdown(stream,
+                                 QUIC_STREAM_SHUTDOWN_FLAG_ABORT,
+                                 authentication_shutdown_code);
+            api_->ConnectionShutdown(connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     authentication_shutdown_code);
+        }
+    }
+
+    QUIC_STATUS on_stream_event(HQUIC stream,
+                                StreamContext* context,
+                                QUIC_STREAM_EVENT* event) {
+        switch (event->Type) {
+            case QUIC_STREAM_EVENT_START_COMPLETE:
+                if (QUIC_FAILED(event->START_COMPLETE.Status)) {
+                    api_->ConnectionShutdown(context->connection,
+                                             QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                             authentication_shutdown_code);
+                }
+                break;
+            case QUIC_STREAM_EVENT_RECEIVE:
+                for (std::uint32_t index = 0; index < event->RECEIVE.BufferCount; ++index) {
+                    const auto& input = event->RECEIVE.Buffers[index];
+
+                    try {
+                        const auto frames = context->decoder.push(std::span<const std::byte>(
+                            reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
+
+                        for (const auto& frame : frames) {
+                            handle_auth_frame(stream, context, frame);
+                        }
+                    } catch (const std::exception& error) {
+                        log_noexcept(logger_,
+                                     core::LogLevel::warning,
+                                     "invalid relay authentication response: " +
+                                         std::string(error.what()));
+                        api_->ConnectionShutdown(context->connection,
+                                                 QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                                 authentication_shutdown_code);
+                        return QUIC_STATUS_SUCCESS;
+                    }
+                }
+                break;
+            case QUIC_STREAM_EVENT_SEND_COMPLETE:
+                complete_send(event);
+                break;
+            case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
+            case QUIC_STREAM_EVENT_PEER_RECEIVE_ABORTED:
+            case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
+                api_->ConnectionShutdown(context->connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         authentication_shutdown_code);
+                break;
+            case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+                if (!event->SHUTDOWN_COMPLETE.AppCloseInProgress) {
+                    api_->StreamClose(stream);
+                }
+                delete context;
+                break;
+            default:
+                break;
+        }
+
+        return QUIC_STATUS_SUCCESS;
+    }
+
+    void handle_auth_frame(const HQUIC stream,
+                           StreamContext* context,
+                           const protocol::Frame& frame) {
+        if (frame.type == protocol::MessageType::server_hello) {
+            const auto response = context->handshake.handle_challenge(frame);
+            const auto status = send_frame(api_, stream, response);
+
+            if (QUIC_FAILED(status)) {
+                throw std::runtime_error("authentication proof send failed: " +
+                                         status_text(status));
+            }
+
+            return;
+        }
+
+        if (frame.type != protocol::MessageType::auth_result) {
+            throw std::runtime_error("unexpected relay authentication frame");
+        }
+
+        if (!context->handshake.handle_result(frame)) {
+            log_noexcept(logger_, core::LogLevel::warning, "relay authentication rejected");
+            api_->ConnectionShutdown(context->connection,
+                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                     authentication_shutdown_code);
+            return;
+        }
+
+        {
+            std::lock_guard lock(context->state->mutex);
+            context->state->ever_authenticated = true;
+        }
+
+        authenticated_.store(true);
+        log_noexcept(logger_,
+                     core::LogLevel::info,
+                     "relay authentication completed for device " +
+                         identity_->device_id_hex());
+    }
+
     QuicClientOptions options_;
     core::Logger& logger_;
     ReconnectBackoff reconnect_;
+    std::unique_ptr<auth::DeviceIdentity> identity_;
+    std::unique_ptr<auth::AuthToken> auth_token_;
     const QUIC_API_TABLE* api_ = nullptr;
     HQUIC registration_ = nullptr;
     HQUIC configuration_ = nullptr;
     std::atomic_bool running_ = false;
     std::atomic_bool connected_ = false;
+    std::atomic_bool authenticated_ = false;
     std::atomic_bool stop_requested_ = false;
     std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
@@ -765,6 +1180,10 @@ bool QuicRelayClient::running() const noexcept {
 
 bool QuicRelayClient::connected() const noexcept {
     return impl_->connected();
+}
+
+bool QuicRelayClient::authenticated() const noexcept {
+    return impl_->authenticated();
 }
 
 }

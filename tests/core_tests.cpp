@@ -53,6 +53,8 @@ void test_configuration() {
         "listen_host=127.0.0.1\n"
         "tls_certificate_file=certs/relay.crt\n"
         "tls_private_key_file=certs/relay.key\n"
+        "device_identity_file=data/test.identity\n"
+        "auth_token_file=data/test.token\n"
         "quic_handshake_timeout_ms=8000\n"
         "quic_idle_timeout_ms=90000\n"
         "quic_keep_alive_interval_ms=20000\n"
@@ -70,6 +72,10 @@ void test_configuration() {
            "certificate file");
     expect(config.tls_private_key_file == std::filesystem::path{"certs/relay.key"},
            "private key file");
+    expect(config.device_identity_file == std::filesystem::path{"data/test.identity"},
+           "device identity file");
+    expect(config.auth_token_file == std::filesystem::path{"data/test.token"},
+           "auth token file");
     expect(config.quic_handshake_timeout_ms == 8000, "handshake timeout");
     expect(config.quic_idle_timeout_ms == 90000, "idle timeout");
     expect(config.quic_keep_alive_interval_ms == 20000, "keep alive interval");
@@ -122,6 +128,19 @@ void test_configuration() {
     } catch (const std::exception&) {
         expect(false, "relay configuration");
     }
+
+    try {
+        lanlink::core::validate_service_config(config);
+        expect(true, "service configuration");
+    } catch (const std::exception&) {
+        expect(false, "service configuration");
+    }
+
+    expect_error([] {
+        lanlink::core::RuntimeConfig service_config;
+        service_config.device_identity_file.clear();
+        lanlink::core::validate_service_config(service_config);
+    }, "service identity required");
 }
 
 void test_configuration_file(const std::filesystem::path& directory) {

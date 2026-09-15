@@ -120,6 +120,10 @@ RuntimeConfig parse_config(const std::string_view content) {
                 config.tls_certificate_file = std::string(value);
             } else if (key == "tls_private_key_file") {
                 config.tls_private_key_file = std::string(value);
+            } else if (key == "device_identity_file") {
+                config.device_identity_file = std::string(value);
+            } else if (key == "auth_token_file") {
+                config.auth_token_file = std::string(value);
             } else if (key == "quic_handshake_timeout_ms") {
                 const auto parsed = parse_unsigned(value, key_view, line_number);
 
@@ -274,6 +278,22 @@ void validate_relay_config(const RuntimeConfig& config) {
 
     if (config.tls_certificate_file.empty() || config.tls_private_key_file.empty()) {
         throw std::runtime_error("TLS certificate and private key are required by the relay");
+    }
+
+    if (config.auth_token_file.empty()) {
+        throw std::runtime_error("auth_token_file is required by the relay");
+    }
+}
+
+void validate_service_config(const RuntimeConfig& config) {
+    validate_config(config);
+
+    if (config.device_identity_file.empty()) {
+        throw std::runtime_error("device_identity_file is required by the service");
+    }
+
+    if (config.auth_token_file.empty()) {
+        throw std::runtime_error("auth_token_file is required by the service");
     }
 }
 

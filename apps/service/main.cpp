@@ -35,7 +35,7 @@ int main(const int argc, char* argv[]) {
         auto config = argc == 2
                           ? lanlink::core::load_config(std::filesystem::path{argv[1]})
                           : lanlink::core::RuntimeConfig{};
-        lanlink::core::validate_config(config);
+        lanlink::core::validate_service_config(config);
 
         lanlink::core::Logger logger(config.log_directory / "service.log",
                                      "service",
@@ -49,6 +49,8 @@ int main(const int argc, char* argv[]) {
         lanlink::transport::QuicClientOptions options;
         options.relay_host = config.relay_host;
         options.port = config.relay_port;
+        options.identity_file = config.device_identity_file;
+        options.auth_token_file = config.auth_token_file;
         options.handshake_timeout = std::chrono::milliseconds{config.quic_handshake_timeout_ms};
         options.idle_timeout = std::chrono::milliseconds{config.quic_idle_timeout_ms};
         options.keep_alive_interval_ms = config.quic_keep_alive_interval_ms;

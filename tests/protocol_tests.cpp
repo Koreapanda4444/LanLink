@@ -51,6 +51,8 @@ void test_constants() {
     expect(protocol_alpn == "lanlink/1", "protocol alpn");
     expect(frame_header_size == 16, "frame header size");
     expect(message_type_name(MessageType::client_hello) == "client_hello", "client hello name");
+    expect(message_type_name(MessageType::client_auth) == "client_auth", "client auth name");
+    expect(message_type_name(MessageType::auth_result) == "auth_result", "auth result name");
     expect(message_type_name(MessageType::error) == "error", "error name");
     expect(message_type_name(static_cast<MessageType>(0x7777)) == "unknown", "unknown type name");
     expect(is_known_message_type(MessageType::heartbeat), "known message type");
@@ -93,6 +95,8 @@ void test_message_round_trips() {
         MessageType::heartbeat,
         MessageType::heartbeat_ack,
         MessageType::disconnect,
+        MessageType::client_auth,
+        MessageType::auth_result,
         MessageType::error,
     };
 
@@ -227,6 +231,8 @@ void test_generated_frames() {
         MessageType::heartbeat,
         MessageType::heartbeat_ack,
         MessageType::disconnect,
+        MessageType::client_auth,
+        MessageType::auth_result,
         MessageType::error,
     };
     std::uint32_t state = 0x13579bdfU;
