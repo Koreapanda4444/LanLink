@@ -132,6 +132,14 @@ RuntimeConfig parse_config(const std::string_view content) {
                 }
 
                 config.quic_handshake_timeout_ms = static_cast<std::uint32_t>(parsed);
+            } else if (key == "authentication_timeout_ms") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, "authentication_timeout_ms is out of range");
+                }
+
+                config.authentication_timeout_ms = static_cast<std::uint32_t>(parsed);
             } else if (key == "quic_idle_timeout_ms") {
                 const auto parsed = parse_unsigned(value, key_view, line_number);
 
@@ -236,6 +244,11 @@ void validate_config(const RuntimeConfig& config) {
     if (config.quic_handshake_timeout_ms < 1'000 ||
         config.quic_handshake_timeout_ms > 60'000) {
         throw std::runtime_error("quic_handshake_timeout_ms must be between 1000 and 60000");
+    }
+
+    if (config.authentication_timeout_ms < 1'000 ||
+        config.authentication_timeout_ms > 60'000) {
+        throw std::runtime_error("authentication_timeout_ms must be between 1000 and 60000");
     }
 
     if (config.quic_idle_timeout_ms < 5'000 || config.quic_idle_timeout_ms > 600'000) {

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -234,9 +235,15 @@ void test_payloads() {
     expect(lanlink::auth::decode_client_proof(lanlink::auth::encode_client_proof(proof)) == proof,
            "client proof round trip");
 
-    const lanlink::auth::AuthResultPayload result{true};
+    lanlink::auth::AuthResultPayload result{true};
+    result.session_id.fill(std::byte{0x66});
     expect(lanlink::auth::decode_auth_result(lanlink::auth::encode_auth_result(result)) == result,
            "auth result round trip");
+
+    const lanlink::auth::AuthResultPayload rejected{};
+    expect(lanlink::auth::decode_auth_result(lanlink::auth::encode_auth_result(rejected)) ==
+               rejected,
+           "rejected auth result round trip");
 
     expect_error([] {
         static_cast<void>(lanlink::auth::decode_client_hello({std::byte{0}}));
@@ -244,6 +251,15 @@ void test_payloads() {
     expect_error([] {
         static_cast<void>(lanlink::auth::decode_auth_result({std::byte{2}}));
     }, "invalid auth result rejected");
+    expect_error([] {
+        static_cast<void>(
+            lanlink::auth::encode_auth_result(lanlink::auth::AuthResultPayload{true}));
+    }, "accepted result requires session id");
+    expect_error([] {
+        lanlink::auth::AuthResultPayload invalid;
+        invalid.session_id.front() = std::byte{1};
+        static_cast<void>(lanlink::auth::encode_auth_result(invalid));
+    }, "rejected result forbids session id");
 }
 
 void test_successful_handshake(const std::filesystem::path& directory) {
@@ -253,21 +269,46 @@ void test_successful_handshake(const std::filesystem::path& directory) {
     auto server_token = lanlink::auth::AuthToken::from_secret(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     lanlink::auth::ClientHandshake client(identity, client_token);
-    lanlink::auth::ServerHandshake server(server_token);
+    constexpr std::uintptr_t connection_binding = 0x1234U;
+    const auto now = lanlink::auth::ServerHandshake::Clock::now();
+    lanlink::auth::ServerHandshake server(server_token,
+                                          connection_binding,
+                                          now + std::chrono::seconds{10});
 
     const auto hello = client.begin(71);
-    const auto challenge = server.handle_hello(hello);
+    const auto challenge = server.handle_hello(hello, now);
     const auto proof = client.handle_challenge(challenge);
-    const auto result = server.handle_proof(proof);
+    const auto result = server.handle_proof(proof, now);
 
     expect(client.handle_result(result), "client accepts auth result");
     expect(client.authenticated(), "client authenticated state");
     expect(server.authenticated(), "server authenticated state");
     expect(server.device_id_hex() == identity.device_id_hex(), "server device id");
+    expect(client.session_id().has_value(), "client session id assigned");
+    expect(client.session_id() == std::optional<lanlink::auth::SessionId>{server.session_id()},
+           "client and server session id match");
+    expect(server.bound_to(connection_binding, server.device_id(), server.session_id()),
+           "session bound to connection and device");
+    expect(!server.bound_to(connection_binding + 1U, server.device_id(), server.session_id()),
+           "session rejects wrong connection binding");
 
     expect_error([&client] {
         static_cast<void>(client.begin(72));
     }, "handshake cannot restart");
+    expect_error([&client, &result] {
+        static_cast<void>(client.handle_result(result));
+    }, "client rejects duplicate auth result");
+    expect_error([&server, &proof, now] {
+        static_cast<void>(server.handle_proof(proof, now));
+    }, "server rejects duplicate proof");
+
+    client.close();
+    server.close();
+    expect(!client.session_id().has_value(), "client session cleared on close");
+    expect(!server.authenticated(), "server session cleared on close");
+    expect_error([&server] {
+        static_cast<void>(server.session_id());
+    }, "closed server session id unavailable");
 }
 
 void test_rejected_handshake(const std::filesystem::path& directory) {
@@ -277,16 +318,80 @@ void test_rejected_handshake(const std::filesystem::path& directory) {
     auto server_token = lanlink::auth::AuthToken::from_secret(
         "cccccccccccccccccccccccccccccccc");
     lanlink::auth::ClientHandshake client(identity, client_token);
-    lanlink::auth::ServerHandshake server(server_token);
+    const auto now = lanlink::auth::ServerHandshake::Clock::now();
+    lanlink::auth::ServerHandshake server(server_token, 0x2222U, now + std::chrono::seconds{10});
 
     const auto hello = client.begin(19);
-    const auto challenge = server.handle_hello(hello);
+    const auto challenge = server.handle_hello(hello, now);
     const auto proof = client.handle_challenge(challenge);
-    const auto result = server.handle_proof(proof);
+    const auto result = server.handle_proof(proof, now);
 
     expect(!client.handle_result(result), "wrong token rejected by client");
     expect(!server.authenticated(), "wrong token not authenticated");
     expect(server.rejected(), "server rejected state");
+    expect(!client.session_id().has_value(), "rejected client has no session id");
+}
+
+void test_strict_state_timeout_and_replay(const std::filesystem::path& directory) {
+    auto identity =
+        lanlink::auth::DeviceIdentity::load_or_create(directory / "strict-state.identity");
+    auto client_token = lanlink::auth::AuthToken::from_secret(
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    auto server_token = lanlink::auth::AuthToken::from_secret(
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    const auto now = lanlink::auth::ServerHandshake::Clock::now();
+    lanlink::auth::ClientHandshake client(identity, client_token);
+    const auto hello = client.begin(83);
+
+    lanlink::auth::ServerHandshake first(server_token, 0x3001U, now + std::chrono::seconds{10});
+    const auto first_challenge = first.handle_hello(hello, now);
+    const auto first_proof = client.handle_challenge(first_challenge);
+
+    lanlink::auth::ServerHandshake wrong_order(server_token,
+                                               0x3002U,
+                                               now + std::chrono::seconds{10});
+    expect_error([&wrong_order, &first_proof, now] {
+        static_cast<void>(wrong_order.handle_proof(first_proof, now));
+    }, "proof before hello rejected");
+
+    lanlink::auth::ServerHandshake duplicate_hello(server_token,
+                                                   0x3003U,
+                                                   now + std::chrono::seconds{10});
+    static_cast<void>(duplicate_hello.handle_hello(hello, now));
+    expect_error([&duplicate_hello, &hello, now] {
+        static_cast<void>(duplicate_hello.handle_hello(hello, now));
+    }, "duplicate hello rejected");
+
+    lanlink::auth::ServerHandshake replay(server_token,
+                                          0x3004U,
+                                          now + std::chrono::seconds{10});
+    static_cast<void>(replay.handle_hello(hello, now));
+    const auto replay_result = replay.handle_proof(first_proof, now);
+    expect(!lanlink::auth::decode_auth_result(replay_result.payload).accepted,
+           "proof replay rejected by fresh challenge");
+    expect(replay.rejected(), "replayed session enters rejected state");
+
+    lanlink::auth::ServerHandshake timeout(server_token,
+                                           0x3005U,
+                                           now + std::chrono::milliseconds{5});
+    static_cast<void>(timeout.handle_hello(hello, now));
+    expect(timeout.expire(now + std::chrono::milliseconds{5}),
+           "authentication deadline expires");
+    expect(timeout.timed_out(), "timed out session state");
+    expect_error([&timeout, &first_proof, now] {
+        static_cast<void>(
+            timeout.handle_proof(first_proof, now + std::chrono::milliseconds{6}));
+    }, "proof after deadline rejected");
+
+    expect_error([&server_token, now] {
+        static_cast<void>(lanlink::auth::ServerHandshake(
+            server_token, 0, now + std::chrono::seconds{1}));
+    }, "zero connection binding rejected");
+
+    lanlink::auth::ClientHandshake zero_request(identity, client_token);
+    expect_error([&zero_request] {
+        static_cast<void>(zero_request.begin(0));
+    }, "zero authentication request id rejected");
 }
 
 void test_stream_decoder() {
@@ -328,6 +433,7 @@ int main() {
         test_payloads();
         test_successful_handshake(directory);
         test_rejected_handshake(directory);
+        test_strict_state_timeout_and_replay(directory);
         test_stream_decoder();
     } catch (const std::exception& error) {
         std::cerr << "unexpected error: " << error.what() << '\n';

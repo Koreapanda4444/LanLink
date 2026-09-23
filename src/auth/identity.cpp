@@ -326,6 +326,12 @@ Nonce random_nonce() {
     return nonce;
 }
 
+SessionId random_session_id() {
+    SessionId session_id{};
+    random_fill(session_id);
+    return session_id;
+}
+
 bool verify_signature(const PublicKey& public_key_value,
                       const std::span<const std::byte> message,
                       const Signature& signature) {

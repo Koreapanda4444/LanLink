@@ -1,9 +1,12 @@
 #pragma once
 
+#include "lanlink/auth/identity.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string>
 
@@ -20,6 +23,7 @@ struct QuicServerOptions {
     std::filesystem::path private_key_file;
     std::filesystem::path auth_token_file;
     std::chrono::milliseconds handshake_timeout{10'000};
+    std::chrono::milliseconds authentication_timeout{10'000};
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
 };
@@ -30,6 +34,7 @@ struct QuicClientOptions {
     std::filesystem::path identity_file;
     std::filesystem::path auth_token_file;
     std::chrono::milliseconds handshake_timeout{10'000};
+    std::chrono::milliseconds authentication_timeout{10'000};
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
     std::chrono::milliseconds reconnect_initial_delay{1'000};
@@ -70,6 +75,7 @@ public:
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool connected() const noexcept;
     [[nodiscard]] bool authenticated() const noexcept;
+    [[nodiscard]] std::optional<auth::SessionId> session_id() const noexcept;
 
 private:
     class Impl;

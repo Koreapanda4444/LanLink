@@ -56,6 +56,7 @@ void test_configuration() {
         "device_identity_file=data/test.identity\n"
         "auth_token_file=data/test.token\n"
         "quic_handshake_timeout_ms=8000\n"
+        "authentication_timeout_ms=7000\n"
         "quic_idle_timeout_ms=90000\n"
         "quic_keep_alive_interval_ms=20000\n"
         "reconnect_initial_delay_ms=500\n"
@@ -77,6 +78,7 @@ void test_configuration() {
     expect(config.auth_token_file == std::filesystem::path{"data/test.token"},
            "auth token file");
     expect(config.quic_handshake_timeout_ms == 8000, "handshake timeout");
+    expect(config.authentication_timeout_ms == 7000, "authentication timeout");
     expect(config.quic_idle_timeout_ms == 90000, "idle timeout");
     expect(config.quic_keep_alive_interval_ms == 20000, "keep alive interval");
     expect(config.reconnect_initial_delay_ms == 500, "initial reconnect delay");
@@ -112,6 +114,9 @@ void test_configuration() {
         static_cast<void>(lanlink::core::parse_config(
             "quic_idle_timeout_ms=5000\nquic_keep_alive_interval_ms=5000\n"));
     }, "keep alive shorter than idle timeout");
+    expect_error([] {
+        static_cast<void>(lanlink::core::parse_config("authentication_timeout_ms=999\n"));
+    }, "short authentication timeout");
     expect_error([] {
         static_cast<void>(lanlink::core::parse_config(
             "reconnect_initial_delay_ms=1000\nreconnect_max_delay_ms=999\n"));

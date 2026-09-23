@@ -51,6 +51,8 @@ int main(const int argc, char* argv[]) {
         options.private_key_file = config.tls_private_key_file;
         options.auth_token_file = config.auth_token_file;
         options.handshake_timeout = std::chrono::milliseconds{config.quic_handshake_timeout_ms};
+        options.authentication_timeout =
+            std::chrono::milliseconds{config.authentication_timeout_ms};
         options.idle_timeout = std::chrono::milliseconds{config.quic_idle_timeout_ms};
         options.keep_alive_interval_ms = config.quic_keep_alive_interval_ms;
 

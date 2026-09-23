@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <sstream>
 #include <span>
 #include <stdexcept>
@@ -103,6 +104,25 @@ void complete_send(QUIC_STREAM_EVENT* event) noexcept {
     }
 }
 
+void clear_session_id(std::optional<auth::SessionId>& session_id) noexcept {
+    if (session_id) {
+        session_id->fill(std::byte{0});
+        session_id.reset();
+    }
+}
+
+QUIC_STATUS enable_authenticated_connection(const QUIC_API_TABLE* api,
+                                            const HQUIC connection,
+                                            const std::chrono::milliseconds idle_timeout,
+                                            const std::uint32_t keep_alive_interval_ms) noexcept {
+    QUIC_SETTINGS settings{};
+    settings.IdleTimeoutMs = static_cast<std::uint64_t>(idle_timeout.count());
+    settings.IsSet.IdleTimeoutMs = TRUE;
+    settings.KeepAliveIntervalMs = keep_alive_interval_ms;
+    settings.IsSet.KeepAliveIntervalMs = TRUE;
+    return api->SetParam(connection, QUIC_PARAM_CONN_SETTINGS, sizeof(settings), &settings);
+}
+
 void log_noexcept(core::Logger& logger,
                   const core::LogLevel level,
                   const std::string& message) noexcept {
@@ -130,6 +150,7 @@ void validate_server_options(const QuicServerOptions& options) {
     }
 
     if (options.handshake_timeout <= std::chrono::milliseconds::zero() ||
+        options.authentication_timeout <= std::chrono::milliseconds::zero() ||
         options.idle_timeout <= std::chrono::milliseconds::zero() ||
         options.keep_alive_interval_ms == 0 ||
         options.keep_alive_interval_ms >=
@@ -152,6 +173,7 @@ void validate_client_options(const QuicClientOptions& options) {
     }
 
     if (options.handshake_timeout <= std::chrono::milliseconds::zero() ||
+        options.authentication_timeout <= std::chrono::milliseconds::zero() ||
         options.idle_timeout <= std::chrono::milliseconds::zero() ||
         options.keep_alive_interval_ms == 0 ||
         options.keep_alive_interval_ms >=
@@ -252,20 +274,32 @@ public:
 
 private:
     struct ConnectionContext {
+        ConnectionContext(Impl* owner_value, const HQUIC connection)
+            : owner(owner_value),
+              handshake(*owner_value->auth_token_,
+                        reinterpret_cast<std::uintptr_t>(connection),
+                        auth::ServerHandshake::Clock::now() +
+                            owner_value->options_.authentication_timeout) {
+        }
+
         Impl* owner;
+        std::mutex handshake_mutex;
+        auth::ServerHandshake handshake;
         std::atomic_bool control_stream_started = false;
     };
 
     struct StreamContext {
         StreamContext(Impl* owner_value,
                       const HQUIC connection_value,
-                      const auth::AuthToken& token)
-            : owner(owner_value), connection(connection_value), handshake(token) {
+                      ConnectionContext* connection_context_value)
+            : owner(owner_value),
+              connection(connection_value),
+              connection_context(connection_context_value) {
         }
 
         Impl* owner;
         HQUIC connection;
-        auth::ServerHandshake handshake;
+        ConnectionContext* connection_context;
         protocol::FrameStreamDecoder decoder;
     };
 
@@ -292,10 +326,9 @@ private:
         settings.HandshakeIdleTimeoutMs =
             static_cast<std::uint64_t>(options_.handshake_timeout.count());
         settings.IsSet.HandshakeIdleTimeoutMs = TRUE;
-        settings.IdleTimeoutMs = static_cast<std::uint64_t>(options_.idle_timeout.count());
+        settings.IdleTimeoutMs =
+            static_cast<std::uint64_t>(options_.authentication_timeout.count());
         settings.IsSet.IdleTimeoutMs = TRUE;
-        settings.KeepAliveIntervalMs = options_.keep_alive_interval_ms;
-        settings.IsSet.KeepAliveIntervalMs = TRUE;
         settings.PeerBidiStreamCount = 1;
         settings.IsSet.PeerBidiStreamCount = TRUE;
 
@@ -385,7 +418,8 @@ private:
             return QUIC_STATUS_SUCCESS;
         }
 
-        auto context = std::unique_ptr<ConnectionContext>(new (std::nothrow) ConnectionContext{this});
+        auto context = std::unique_ptr<ConnectionContext>(new (std::nothrow) ConnectionContext(
+            this, event->NEW_CONNECTION.Connection));
 
         if (!context) {
             return QUIC_STATUS_OUT_OF_MEMORY;
@@ -427,6 +461,9 @@ private:
                 break;
             case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED: {
                 if (context->control_stream_started.exchange(true)) {
+                    log_noexcept(logger_,
+                                 core::LogLevel::warning,
+                                 "duplicate authentication stream rejected");
                     api_->ConnectionShutdown(connection,
                                              QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                              authentication_shutdown_code);
@@ -434,7 +471,7 @@ private:
                 }
 
                 auto stream_context = std::unique_ptr<StreamContext>(
-                    new (std::nothrow) StreamContext(this, connection, *auth_token_));
+                    new (std::nothrow) StreamContext(this, connection, context));
 
                 if (!stream_context) {
                     api_->ConnectionShutdown(connection,
@@ -452,6 +489,11 @@ private:
                 break;
             }
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+                {
+                    std::lock_guard lock(context->handshake_mutex);
+                    context->handshake.close();
+                }
+
                 api_->ConnectionClose(connection);
                 delete context;
                 break;
@@ -471,6 +513,25 @@ private:
                     const auto& input = event->RECEIVE.Buffers[index];
 
                     try {
+                        bool authentication_expired = false;
+
+                        {
+                            std::lock_guard lock(
+                                context->connection_context->handshake_mutex);
+                            authentication_expired =
+                                context->connection_context->handshake.expire();
+                        }
+
+                        if (authentication_expired) {
+                            log_noexcept(logger_,
+                                         core::LogLevel::warning,
+                                         "relay authentication deadline expired");
+                            api_->ConnectionShutdown(context->connection,
+                                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                                     authentication_shutdown_code);
+                            return QUIC_STATUS_SUCCESS;
+                        }
+
                         const auto frames = context->decoder.push(std::span<const std::byte>(
                             reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
 
@@ -516,22 +577,47 @@ private:
                            const protocol::Frame& frame) {
         protocol::Frame response;
         bool shutdown_after_send = false;
+        bool authenticated = false;
+        std::string device_id;
 
-        if (frame.type == protocol::MessageType::client_hello) {
-            response = context->handshake.handle_hello(frame);
-        } else if (frame.type == protocol::MessageType::client_auth) {
-            response = context->handshake.handle_proof(frame);
-            shutdown_after_send = context->handshake.rejected();
+        {
+            std::lock_guard lock(context->connection_context->handshake_mutex);
+            auto& handshake = context->connection_context->handshake;
 
-            if (context->handshake.authenticated()) {
+            if (frame.type == protocol::MessageType::client_hello) {
+                response = handshake.handle_hello(frame);
+            } else if (frame.type == protocol::MessageType::client_auth) {
+                response = handshake.handle_proof(frame);
+                shutdown_after_send = handshake.rejected();
+                authenticated = handshake.authenticated();
+
+                if (authenticated) {
+                    device_id = handshake.device_id_hex();
+                }
+            } else {
+                throw std::runtime_error("unexpected frame before authentication");
+            }
+        }
+
+        if (frame.type == protocol::MessageType::client_auth) {
+            if (authenticated) {
+                const auto settings_status = enable_authenticated_connection(
+                    api_,
+                    context->connection,
+                    options_.idle_timeout,
+                    options_.keep_alive_interval_ms);
+
+                if (QUIC_FAILED(settings_status)) {
+                    throw std::runtime_error("authenticated connection settings failed: " +
+                                             status_text(settings_status));
+                }
+
                 log_noexcept(logger_,
                              core::LogLevel::info,
-                             "device authenticated: " + context->handshake.device_id_hex());
+                             "device authenticated: " + device_id);
             } else {
                 log_noexcept(logger_, core::LogLevel::warning, "device authentication rejected");
             }
-        } else {
-            throw std::runtime_error("unexpected frame before authentication");
         }
 
         const auto status = send_frame(api_,
@@ -646,6 +732,11 @@ public:
         return authenticated_.load();
     }
 
+    [[nodiscard]] std::optional<auth::SessionId> session_id() const noexcept {
+        std::lock_guard lock(session_mutex_);
+        return session_id_;
+    }
+
 private:
     struct AttemptState {
         std::mutex mutex;
@@ -654,6 +745,7 @@ private:
         bool complete = false;
         bool ever_authenticated = false;
         bool shutdown_requested = false;
+        std::optional<auth::SessionId> session_id;
     };
 
     struct ConnectionContext {
@@ -666,17 +758,20 @@ private:
                       const HQUIC connection_value,
                       std::shared_ptr<AttemptState> state_value,
                       const auth::DeviceIdentity& identity,
-                      const auth::AuthToken& token)
+                      const auth::AuthToken& token,
+                      const auth::ServerHandshake::Clock::time_point deadline_value)
             : owner(owner_value),
               connection(connection_value),
               state(std::move(state_value)),
-              handshake(identity, token) {
+              handshake(identity, token),
+              deadline(deadline_value) {
         }
 
         Impl* owner;
         HQUIC connection;
         std::shared_ptr<AttemptState> state;
         auth::ClientHandshake handshake;
+        auth::ServerHandshake::Clock::time_point deadline;
         protocol::FrameStreamDecoder decoder;
     };
 
@@ -703,10 +798,9 @@ private:
         settings.HandshakeIdleTimeoutMs =
             static_cast<std::uint64_t>(options_.handshake_timeout.count());
         settings.IsSet.HandshakeIdleTimeoutMs = TRUE;
-        settings.IdleTimeoutMs = static_cast<std::uint64_t>(options_.idle_timeout.count());
+        settings.IdleTimeoutMs =
+            static_cast<std::uint64_t>(options_.authentication_timeout.count());
         settings.IsSet.IdleTimeoutMs = TRUE;
-        settings.KeepAliveIntervalMs = options_.keep_alive_interval_ms;
-        settings.IsSet.KeepAliveIntervalMs = TRUE;
 
         auto alpn = alpn_buffer();
         status = api_->ConfigurationOpen(registration_,
@@ -885,8 +979,19 @@ private:
     void finish_run() noexcept {
         connected_.store(false);
         authenticated_.store(false);
+        clear_session();
         running_.store(false);
         run_complete_.notify_all();
+    }
+
+    void set_session(const auth::SessionId& session_id) noexcept {
+        std::lock_guard lock(session_mutex_);
+        session_id_ = session_id;
+    }
+
+    void clear_session() noexcept {
+        std::lock_guard lock(session_mutex_);
+        clear_session_id(session_id_);
     }
 
     static QUIC_STATUS QUIC_API connection_callback(HQUIC connection,
@@ -919,12 +1024,14 @@ private:
             case QUIC_CONNECTION_EVENT_CONNECTED:
                 connected_.store(true);
                 authenticated_.store(false);
+                clear_session();
                 log_noexcept(logger_, core::LogLevel::info, "connected to QUIC relay");
                 open_control_stream(connection, context->state);
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
                 connected_.store(false);
                 authenticated_.store(false);
+                clear_session();
                 log_noexcept(logger_,
                              core::LogLevel::warning,
                              "relay transport shutdown: " +
@@ -933,14 +1040,17 @@ private:
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
                 connected_.store(false);
                 authenticated_.store(false);
+                clear_session();
                 log_noexcept(logger_, core::LogLevel::warning, "relay closed the connection");
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
                 connected_.store(false);
                 authenticated_.store(false);
+                clear_session();
 
                 {
                     std::lock_guard lock(context->state->mutex);
+                    clear_session_id(context->state->session_id);
                     context->state->connection = nullptr;
                 }
 
@@ -969,7 +1079,9 @@ private:
                                              connection,
                                              state,
                                              *identity_,
-                                             *auth_token_));
+                                             *auth_token_,
+                                             auth::ServerHandshake::Clock::now() +
+                                                 options_.authentication_timeout));
 
         if (!context) {
             api_->ConnectionShutdown(connection,
@@ -1042,6 +1154,17 @@ private:
                     const auto& input = event->RECEIVE.Buffers[index];
 
                     try {
+                        if (!context->handshake.authenticated() &&
+                            auth::ServerHandshake::Clock::now() >= context->deadline) {
+                            log_noexcept(logger_,
+                                         core::LogLevel::warning,
+                                         "relay authentication deadline expired");
+                            api_->ConnectionShutdown(context->connection,
+                                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                                     authentication_shutdown_code);
+                            return QUIC_STATUS_SUCCESS;
+                        }
+
                         const auto frames = context->decoder.push(std::span<const std::byte>(
                             reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
 
@@ -1110,9 +1233,28 @@ private:
             return;
         }
 
+        const auto session_id = context->handshake.session_id();
+
+        if (!session_id) {
+            throw std::runtime_error("relay accepted authentication without a session id");
+        }
+
+        const auto settings_status = enable_authenticated_connection(api_,
+                                                                      context->connection,
+                                                                      options_.idle_timeout,
+                                                                      options_.keep_alive_interval_ms);
+
+        if (QUIC_FAILED(settings_status)) {
+            throw std::runtime_error("authenticated connection settings failed: " +
+                                     status_text(settings_status));
+        }
+
+        set_session(*session_id);
+
         {
             std::lock_guard lock(context->state->mutex);
             context->state->ever_authenticated = true;
+            context->state->session_id = *session_id;
         }
 
         authenticated_.store(true);
@@ -1134,6 +1276,8 @@ private:
     std::atomic_bool connected_ = false;
     std::atomic_bool authenticated_ = false;
     std::atomic_bool stop_requested_ = false;
+    mutable std::mutex session_mutex_;
+    std::optional<auth::SessionId> session_id_;
     std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
     std::mutex delay_mutex_;
@@ -1184,6 +1328,10 @@ bool QuicRelayClient::connected() const noexcept {
 
 bool QuicRelayClient::authenticated() const noexcept {
     return impl_->authenticated();
+}
+
+std::optional<auth::SessionId> QuicRelayClient::session_id() const noexcept {
+    return impl_->session_id();
 }
 
 }

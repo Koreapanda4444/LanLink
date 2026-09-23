@@ -16,6 +16,7 @@ inline constexpr std::size_t signature_size = 64;
 inline constexpr std::size_t nonce_size = 32;
 inline constexpr std::size_t token_proof_size = 32;
 inline constexpr std::size_t device_id_size = 32;
+inline constexpr std::size_t session_id_size = 32;
 
 using PublicKey = std::array<std::byte, public_key_size>;
 using SecretKey = std::array<std::byte, secret_key_size>;
@@ -23,6 +24,7 @@ using Signature = std::array<std::byte, signature_size>;
 using Nonce = std::array<std::byte, nonce_size>;
 using TokenProof = std::array<std::byte, token_proof_size>;
 using DeviceId = std::array<std::byte, device_id_size>;
+using SessionId = std::array<std::byte, session_id_size>;
 
 class DeviceIdentity {
 public:
@@ -68,6 +70,7 @@ private:
 };
 
 [[nodiscard]] Nonce random_nonce();
+[[nodiscard]] SessionId random_session_id();
 [[nodiscard]] bool verify_signature(const PublicKey& public_key,
                                     std::span<const std::byte> message,
                                     const Signature& signature);

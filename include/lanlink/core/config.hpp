@@ -19,6 +19,7 @@ struct RuntimeConfig {
     std::filesystem::path device_identity_file = "data/device.identity";
     std::filesystem::path auth_token_file = "data/auth.token";
     std::uint32_t quic_handshake_timeout_ms = 10'000;
+    std::uint32_t authentication_timeout_ms = 10'000;
     std::uint32_t quic_idle_timeout_ms = 60'000;
     std::uint32_t quic_keep_alive_interval_ms = 15'000;
     std::uint32_t reconnect_initial_delay_ms = 1'000;
