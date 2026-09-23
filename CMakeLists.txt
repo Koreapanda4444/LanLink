@@ -101,6 +101,10 @@ target_link_libraries(lanlink_transport
         ${LANLINK_MSQUIC_TARGET}
 )
 
+if(WIN32)
+    target_link_libraries(lanlink_transport PRIVATE ntdll)
+endif()
+
 lanlink_enable_warnings(lanlink_transport)
 
 add_executable(lanlink_relay
