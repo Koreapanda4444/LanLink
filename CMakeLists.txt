@@ -9,6 +9,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Threads REQUIRED)
 find_package(msquic CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(SQLite3 REQUIRED)
+
+if(TARGET SQLite3::SQLite3)
+    set(LANLINK_SQLITE_TARGET SQLite3::SQLite3)
+elseif(TARGET SQLite::SQLite3)
+    set(LANLINK_SQLITE_TARGET SQLite::SQLite3)
+else()
+    message(FATAL_ERROR "The SQLite3 package did not export a supported CMake target")
+endif()
 
 if(TARGET msquic::msquic)
     set(LANLINK_MSQUIC_TARGET msquic::msquic)
@@ -81,6 +90,19 @@ if(WIN32)
 endif()
 
 lanlink_enable_warnings(lanlink_auth)
+
+add_library(lanlink_storage STATIC
+    src/storage/relay_store.cpp
+)
+
+target_include_directories(lanlink_storage
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET})
+
+lanlink_enable_warnings(lanlink_storage)
 
 add_library(lanlink_transport STATIC
     src/transport/quic.cpp
@@ -167,4 +189,17 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_transport_tests PRIVATE lanlink_transport)
     lanlink_enable_warnings(lanlink_transport_tests)
     add_test(NAME lanlink-transport COMMAND lanlink_transport_tests)
+
+    add_executable(lanlink_storage_tests
+        tests/storage_tests.cpp
+    )
+
+    target_link_libraries(
+        lanlink_storage_tests
+        PRIVATE
+            lanlink_storage
+            ${LANLINK_SQLITE_TARGET}
+    )
+    lanlink_enable_warnings(lanlink_storage_tests)
+    add_test(NAME lanlink-storage COMMAND lanlink_storage_tests)
 endif()
