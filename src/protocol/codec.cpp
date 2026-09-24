@@ -43,6 +43,16 @@ bool is_known_message_type(const MessageType type) noexcept {
         case MessageType::disconnect:
         case MessageType::client_auth:
         case MessageType::auth_result:
+        case MessageType::network_create_request:
+        case MessageType::network_list_request:
+        case MessageType::network_join_request:
+        case MessageType::network_leave_request:
+        case MessageType::network_invite_request:
+        case MessageType::network_approve_request:
+        case MessageType::network_kick_request:
+        case MessageType::network_operation_result:
+        case MessageType::network_list_result:
+        case MessageType::network_event:
         case MessageType::error:
             return true;
     }
@@ -66,6 +76,26 @@ std::string_view message_type_name(const MessageType type) noexcept {
             return "client_auth";
         case MessageType::auth_result:
             return "auth_result";
+        case MessageType::network_create_request:
+            return "network_create_request";
+        case MessageType::network_list_request:
+            return "network_list_request";
+        case MessageType::network_join_request:
+            return "network_join_request";
+        case MessageType::network_leave_request:
+            return "network_leave_request";
+        case MessageType::network_invite_request:
+            return "network_invite_request";
+        case MessageType::network_approve_request:
+            return "network_approve_request";
+        case MessageType::network_kick_request:
+            return "network_kick_request";
+        case MessageType::network_operation_result:
+            return "network_operation_result";
+        case MessageType::network_list_result:
+            return "network_list_result";
+        case MessageType::network_event:
+            return "network_event";
         case MessageType::error:
             return "error";
     }

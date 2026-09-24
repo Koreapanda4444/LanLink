@@ -27,6 +27,16 @@ enum class MessageType : std::uint16_t {
     disconnect = 0x0005,
     client_auth = 0x0006,
     auth_result = 0x0007,
+    network_create_request = 0x0100,
+    network_list_request = 0x0101,
+    network_join_request = 0x0102,
+    network_leave_request = 0x0103,
+    network_invite_request = 0x0104,
+    network_approve_request = 0x0105,
+    network_kick_request = 0x0106,
+    network_operation_result = 0x0180,
+    network_list_result = 0x0181,
+    network_event = 0x0182,
     error = 0x00ff,
 };
 

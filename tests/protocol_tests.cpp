@@ -53,6 +53,14 @@ void test_constants() {
     expect(message_type_name(MessageType::client_hello) == "client_hello", "client hello name");
     expect(message_type_name(MessageType::client_auth) == "client_auth", "client auth name");
     expect(message_type_name(MessageType::auth_result) == "auth_result", "auth result name");
+    expect(message_type_name(MessageType::network_create_request) ==
+               "network_create_request",
+           "network create name");
+    expect(message_type_name(MessageType::network_operation_result) ==
+               "network_operation_result",
+           "network result name");
+    expect(message_type_name(MessageType::network_event) == "network_event",
+           "network event name");
     expect(message_type_name(MessageType::error) == "error", "error name");
     expect(message_type_name(static_cast<MessageType>(0x7777)) == "unknown", "unknown type name");
     expect(is_known_message_type(MessageType::heartbeat), "known message type");
@@ -97,6 +105,16 @@ void test_message_round_trips() {
         MessageType::disconnect,
         MessageType::client_auth,
         MessageType::auth_result,
+        MessageType::network_create_request,
+        MessageType::network_list_request,
+        MessageType::network_join_request,
+        MessageType::network_leave_request,
+        MessageType::network_invite_request,
+        MessageType::network_approve_request,
+        MessageType::network_kick_request,
+        MessageType::network_operation_result,
+        MessageType::network_list_result,
+        MessageType::network_event,
         MessageType::error,
     };
 
@@ -233,6 +251,16 @@ void test_generated_frames() {
         MessageType::disconnect,
         MessageType::client_auth,
         MessageType::auth_result,
+        MessageType::network_create_request,
+        MessageType::network_list_request,
+        MessageType::network_join_request,
+        MessageType::network_leave_request,
+        MessageType::network_invite_request,
+        MessageType::network_approve_request,
+        MessageType::network_kick_request,
+        MessageType::network_operation_result,
+        MessageType::network_list_result,
+        MessageType::network_event,
         MessageType::error,
     };
     std::uint32_t state = 0x13579bdfU;

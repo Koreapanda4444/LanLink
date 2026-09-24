@@ -57,6 +57,7 @@ lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
     src/protocol/codec.cpp
+    src/protocol/network_messages.cpp
     src/protocol/stream_decoder.cpp
 )
 
@@ -173,6 +174,14 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_protocol_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_protocol_tests)
     add_test(NAME lanlink-protocol COMMAND lanlink_protocol_tests)
+
+    add_executable(lanlink_network_protocol_tests
+        tests/network_protocol_tests.cpp
+    )
+
+    target_link_libraries(lanlink_network_protocol_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_network_protocol_tests)
+    add_test(NAME lanlink-network-protocol COMMAND lanlink_network_protocol_tests)
 
     add_executable(lanlink_auth_tests
         tests/auth_tests.cpp
