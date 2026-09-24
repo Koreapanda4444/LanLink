@@ -105,6 +105,25 @@ target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET})
 
 lanlink_enable_warnings(lanlink_storage)
 
+add_library(lanlink_relay_domain STATIC
+    src/relay/network_service.cpp
+)
+
+target_include_directories(lanlink_relay_domain
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(lanlink_relay_domain
+    PUBLIC
+        lanlink_protocol
+        lanlink_storage
+    PRIVATE
+        OpenSSL::Crypto
+)
+
+lanlink_enable_warnings(lanlink_relay_domain)
+
 add_library(lanlink_transport STATIC
     src/transport/quic.cpp
     src/transport/reconnect.cpp
@@ -211,4 +230,12 @@ if(BUILD_TESTING)
     )
     lanlink_enable_warnings(lanlink_storage_tests)
     add_test(NAME lanlink-storage COMMAND lanlink_storage_tests)
+
+    add_executable(lanlink_network_service_tests
+        tests/network_service_tests.cpp
+    )
+
+    target_link_libraries(lanlink_network_service_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_network_service_tests)
+    add_test(NAME lanlink-network-service COMMAND lanlink_network_service_tests)
 endif()
