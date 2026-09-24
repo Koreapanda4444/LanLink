@@ -315,6 +315,22 @@ MembershipRecord read_membership(const Statement& statement) {
     return result;
 }
 
+InvitationRecord read_invitation(const Statement& statement) {
+    InvitationRecord result;
+    result.network_id = statement.column_blob<network_id_size>(0);
+    result.device_id = statement.column_blob<auth::device_id_size>(1);
+    result.invited_at_ms = statement.column_integer(2);
+    return result;
+}
+
+JoinRequestRecord read_join_request(const Statement& statement) {
+    JoinRequestRecord result;
+    result.network_id = statement.column_blob<network_id_size>(0);
+    result.device_id = statement.column_blob<auth::device_id_size>(1);
+    result.requested_at_ms = statement.column_integer(2);
+    return result;
+}
+
 std::vector<DeviceRecord> list_devices(sqlite3* database) {
     Statement statement(database,
                         "SELECT device_id, first_seen_at_ms, last_seen_at_ms "
@@ -349,6 +365,32 @@ std::vector<MembershipRecord> list_memberships(sqlite3* database) {
 
     while (statement.step_row()) {
         result.push_back(read_membership(statement));
+    }
+
+    return result;
+}
+
+std::vector<InvitationRecord> list_invitations(sqlite3* database) {
+    Statement statement(database,
+                        "SELECT network_id, device_id, invited_at_ms "
+                        "FROM network_invitations ORDER BY network_id, device_id;");
+    std::vector<InvitationRecord> result;
+
+    while (statement.step_row()) {
+        result.push_back(read_invitation(statement));
+    }
+
+    return result;
+}
+
+std::vector<JoinRequestRecord> list_join_requests(sqlite3* database) {
+    Statement statement(database,
+                        "SELECT network_id, device_id, requested_at_ms "
+                        "FROM network_join_requests ORDER BY network_id, device_id;");
+    std::vector<JoinRequestRecord> result;
+
+    while (statement.step_row()) {
+        result.push_back(read_join_request(statement));
     }
 
     return result;
@@ -638,6 +680,204 @@ public:
         return result;
     }
 
+    [[nodiscard]] bool add_invitation(const NetworkId& network_id,
+                                      const auth::DeviceId& device_id,
+                                      const std::int64_t invited_at_ms) {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        require_timestamp(invited_at_ms);
+        std::lock_guard lock(mutex_);
+        Statement statement(
+            database_,
+            "INSERT INTO network_invitations(network_id, device_id, invited_at_ms) "
+            "SELECT ?1, ?2, ?3 "
+            "WHERE NOT EXISTS(SELECT 1 FROM memberships "
+            "WHERE network_id = ?1 AND device_id = ?2) "
+            "AND NOT EXISTS(SELECT 1 FROM network_join_requests "
+            "WHERE network_id = ?1 AND device_id = ?2) "
+            "ON CONFLICT(network_id, device_id) DO NOTHING;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+        statement.bind_integer(3, invited_at_ms);
+        statement.step_done();
+        return sqlite3_changes(database_) == 1;
+    }
+
+    [[nodiscard]] bool remove_invitation(const NetworkId& network_id,
+                                         const auth::DeviceId& device_id) {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "DELETE FROM network_invitations "
+                            "WHERE network_id = ?1 AND device_id = ?2;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+        statement.step_done();
+        return sqlite3_changes(database_) == 1;
+    }
+
+    [[nodiscard]] std::optional<InvitationRecord> find_invitation(
+        const NetworkId& network_id,
+        const auth::DeviceId& device_id) const {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, invited_at_ms "
+                            "FROM network_invitations "
+                            "WHERE network_id = ?1 AND device_id = ?2;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+
+        if (!statement.step_row()) {
+            return std::nullopt;
+        }
+
+        auto result = read_invitation(statement);
+
+        if (statement.step_row()) {
+            throw std::runtime_error("invitation query returned duplicate rows");
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] std::vector<InvitationRecord> list_invitations_for_network(
+        const NetworkId& network_id) const {
+        require_network_id(network_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, invited_at_ms "
+                            "FROM network_invitations WHERE network_id = ?1 "
+                            "ORDER BY invited_at_ms, device_id;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        std::vector<InvitationRecord> result;
+
+        while (statement.step_row()) {
+            result.push_back(read_invitation(statement));
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] std::vector<InvitationRecord> list_invitations_for_device(
+        const auth::DeviceId& device_id) const {
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, invited_at_ms "
+                            "FROM network_invitations WHERE device_id = ?1 "
+                            "ORDER BY invited_at_ms, network_id;");
+        statement.bind_blob(1, device_id.data(), device_id.size());
+        std::vector<InvitationRecord> result;
+
+        while (statement.step_row()) {
+            result.push_back(read_invitation(statement));
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] bool add_join_request(const NetworkId& network_id,
+                                        const auth::DeviceId& device_id,
+                                        const std::int64_t requested_at_ms) {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        require_timestamp(requested_at_ms);
+        std::lock_guard lock(mutex_);
+        Statement statement(
+            database_,
+            "INSERT INTO network_join_requests(network_id, device_id, requested_at_ms) "
+            "SELECT ?1, ?2, ?3 "
+            "WHERE NOT EXISTS(SELECT 1 FROM memberships "
+            "WHERE network_id = ?1 AND device_id = ?2) "
+            "AND NOT EXISTS(SELECT 1 FROM network_invitations "
+            "WHERE network_id = ?1 AND device_id = ?2) "
+            "ON CONFLICT(network_id, device_id) DO NOTHING;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+        statement.bind_integer(3, requested_at_ms);
+        statement.step_done();
+        return sqlite3_changes(database_) == 1;
+    }
+
+    [[nodiscard]] bool remove_join_request(const NetworkId& network_id,
+                                           const auth::DeviceId& device_id) {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "DELETE FROM network_join_requests "
+                            "WHERE network_id = ?1 AND device_id = ?2;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+        statement.step_done();
+        return sqlite3_changes(database_) == 1;
+    }
+
+    [[nodiscard]] std::optional<JoinRequestRecord> find_join_request(
+        const NetworkId& network_id,
+        const auth::DeviceId& device_id) const {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, requested_at_ms "
+                            "FROM network_join_requests "
+                            "WHERE network_id = ?1 AND device_id = ?2;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+
+        if (!statement.step_row()) {
+            return std::nullopt;
+        }
+
+        auto result = read_join_request(statement);
+
+        if (statement.step_row()) {
+            throw std::runtime_error("join request query returned duplicate rows");
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_network(
+        const NetworkId& network_id) const {
+        require_network_id(network_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, requested_at_ms "
+                            "FROM network_join_requests WHERE network_id = ?1 "
+                            "ORDER BY requested_at_ms, device_id;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        std::vector<JoinRequestRecord> result;
+
+        while (statement.step_row()) {
+            result.push_back(read_join_request(statement));
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_device(
+        const auth::DeviceId& device_id) const {
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, requested_at_ms "
+                            "FROM network_join_requests WHERE device_id = ?1 "
+                            "ORDER BY requested_at_ms, network_id;");
+        statement.bind_blob(1, device_id.data(), device_id.size());
+        std::vector<JoinRequestRecord> result;
+
+        while (statement.step_row()) {
+            result.push_back(read_join_request(statement));
+        }
+
+        return result;
+    }
+
     [[nodiscard]] RelayState load_state() const {
         std::lock_guard lock(mutex_);
         Transaction transaction(database_, false);
@@ -645,26 +885,37 @@ public:
         result.devices = list_devices(database_);
         result.networks = list_networks(database_);
         result.memberships = list_memberships(database_);
+        result.invitations = list_invitations(database_);
+        result.join_requests = list_join_requests(database_);
         transaction.commit();
         return result;
     }
 
 private:
     void migrate() {
-        const auto version = query_integer(database_, "PRAGMA user_version;");
+        auto version = query_integer(database_, "PRAGMA user_version;");
 
         if (version > current_schema_version) {
             throw std::runtime_error("relay database schema is newer than this LanLink build");
         }
 
-        if (version == current_schema_version) {
-            return;
+        if (version == 0) {
+            migrate_to_v1();
+            version = 1;
         }
 
-        if (version != 0) {
+        if (version == 1) {
+            validate_schema_v1();
+            migrate_to_v2();
+            version = 2;
+        }
+
+        if (version != current_schema_version) {
             throw std::runtime_error("relay database has an unsupported schema version");
         }
+    }
 
+    void migrate_to_v1() {
         Transaction transaction(database_, true);
         execute(database_,
                 "CREATE TABLE devices("
@@ -711,7 +962,73 @@ private:
         transaction.commit();
     }
 
-    void validate_schema() {
+    void migrate_to_v2() {
+        Transaction transaction(database_, true);
+        execute(database_,
+                "CREATE TABLE network_invitations("
+                "network_id BLOB NOT NULL CHECK(length(network_id) = 16),"
+                "device_id BLOB NOT NULL CHECK(length(device_id) = 32),"
+                "invited_at_ms INTEGER NOT NULL CHECK(invited_at_ms >= 0),"
+                "PRIMARY KEY(network_id, device_id),"
+                "FOREIGN KEY(network_id) REFERENCES networks(network_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE,"
+                "FOREIGN KEY(device_id) REFERENCES devices(device_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE"
+                ") WITHOUT ROWID;"
+                "CREATE TABLE network_join_requests("
+                "network_id BLOB NOT NULL CHECK(length(network_id) = 16),"
+                "device_id BLOB NOT NULL CHECK(length(device_id) = 32),"
+                "requested_at_ms INTEGER NOT NULL CHECK(requested_at_ms >= 0),"
+                "PRIMARY KEY(network_id, device_id),"
+                "FOREIGN KEY(network_id) REFERENCES networks(network_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE,"
+                "FOREIGN KEY(device_id) REFERENCES devices(device_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE"
+                ") WITHOUT ROWID;"
+                "CREATE INDEX network_invitations_device_idx "
+                "ON network_invitations(device_id, invited_at_ms, network_id);"
+                "CREATE INDEX network_join_requests_device_idx "
+                "ON network_join_requests(device_id, requested_at_ms, network_id);"
+                "CREATE TRIGGER invitation_requires_nonmember "
+                "BEFORE INSERT ON network_invitations WHEN EXISTS("
+                "SELECT 1 FROM memberships WHERE network_id = NEW.network_id "
+                "AND device_id = NEW.device_id"
+                ") BEGIN "
+                "SELECT RAISE(ABORT, 'network member cannot have an invitation');"
+                "END;"
+                "CREATE TRIGGER invitation_conflicts_with_join_request "
+                "BEFORE INSERT ON network_invitations WHEN EXISTS("
+                "SELECT 1 FROM network_join_requests WHERE network_id = NEW.network_id "
+                "AND device_id = NEW.device_id"
+                ") BEGIN "
+                "SELECT RAISE(ABORT, 'join request already exists for invitation');"
+                "END;"
+                "CREATE TRIGGER join_request_requires_nonmember "
+                "BEFORE INSERT ON network_join_requests WHEN EXISTS("
+                "SELECT 1 FROM memberships WHERE network_id = NEW.network_id "
+                "AND device_id = NEW.device_id"
+                ") BEGIN "
+                "SELECT RAISE(ABORT, 'network member cannot have a join request');"
+                "END;"
+                "CREATE TRIGGER join_request_conflicts_with_invitation "
+                "BEFORE INSERT ON network_join_requests WHEN EXISTS("
+                "SELECT 1 FROM network_invitations WHERE network_id = NEW.network_id "
+                "AND device_id = NEW.device_id"
+                ") BEGIN "
+                "SELECT RAISE(ABORT, 'invitation already exists for join request');"
+                "END;"
+                "CREATE TRIGGER membership_clears_pending_access "
+                "AFTER INSERT ON memberships BEGIN "
+                "DELETE FROM network_invitations WHERE network_id = NEW.network_id "
+                "AND device_id = NEW.device_id;"
+                "DELETE FROM network_join_requests WHERE network_id = NEW.network_id "
+                "AND device_id = NEW.device_id;"
+                "END;"
+                "PRAGMA user_version = 2;");
+        transaction.commit();
+    }
+
+    void validate_schema_v1() {
         const auto tables = query_integer(
             database_,
             "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' "
@@ -728,6 +1045,31 @@ private:
             "AND name = 'membership_owner_matches_network';");
 
         if (tables != 3 || indexes != 5 || triggers != 1) {
+            throw std::runtime_error("relay database schema is incomplete");
+        }
+    }
+
+    void validate_schema() {
+        validate_schema_v1();
+        const auto tables = query_integer(
+            database_,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' "
+            "AND name IN ('network_invitations', 'network_join_requests');");
+        const auto indexes = query_integer(
+            database_,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' "
+            "AND name IN ('network_invitations_device_idx', "
+            "'network_join_requests_device_idx');");
+        const auto triggers = query_integer(
+            database_,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger' "
+            "AND name IN ('invitation_requires_nonmember', "
+            "'invitation_conflicts_with_join_request', "
+            "'join_request_requires_nonmember', "
+            "'join_request_conflicts_with_invitation', "
+            "'membership_clears_pending_access');");
+
+        if (tables != 2 || indexes != 2 || triggers != 5) {
             throw std::runtime_error("relay database schema is incomplete");
         }
     }
@@ -793,6 +1135,60 @@ std::vector<MembershipRecord> RelayStore::list_members(const NetworkId& network_
 std::vector<NetworkRecord> RelayStore::list_networks_for_device(
     const auth::DeviceId& device_id) const {
     return impl_->list_networks_for_device(device_id);
+}
+
+bool RelayStore::add_invitation(const NetworkId& network_id,
+                                const auth::DeviceId& device_id,
+                                const std::int64_t invited_at_ms) {
+    return impl_->add_invitation(network_id, device_id, invited_at_ms);
+}
+
+bool RelayStore::remove_invitation(const NetworkId& network_id,
+                                   const auth::DeviceId& device_id) {
+    return impl_->remove_invitation(network_id, device_id);
+}
+
+std::optional<InvitationRecord> RelayStore::find_invitation(
+    const NetworkId& network_id,
+    const auth::DeviceId& device_id) const {
+    return impl_->find_invitation(network_id, device_id);
+}
+
+std::vector<InvitationRecord> RelayStore::list_invitations_for_network(
+    const NetworkId& network_id) const {
+    return impl_->list_invitations_for_network(network_id);
+}
+
+std::vector<InvitationRecord> RelayStore::list_invitations_for_device(
+    const auth::DeviceId& device_id) const {
+    return impl_->list_invitations_for_device(device_id);
+}
+
+bool RelayStore::add_join_request(const NetworkId& network_id,
+                                  const auth::DeviceId& device_id,
+                                  const std::int64_t requested_at_ms) {
+    return impl_->add_join_request(network_id, device_id, requested_at_ms);
+}
+
+bool RelayStore::remove_join_request(const NetworkId& network_id,
+                                     const auth::DeviceId& device_id) {
+    return impl_->remove_join_request(network_id, device_id);
+}
+
+std::optional<JoinRequestRecord> RelayStore::find_join_request(
+    const NetworkId& network_id,
+    const auth::DeviceId& device_id) const {
+    return impl_->find_join_request(network_id, device_id);
+}
+
+std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_network(
+    const NetworkId& network_id) const {
+    return impl_->list_join_requests_for_network(network_id);
+}
+
+std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_device(
+    const auth::DeviceId& device_id) const {
+    return impl_->list_join_requests_for_device(device_id);
 }
 
 RelayState RelayStore::load_state() const {

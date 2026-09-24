@@ -14,7 +14,7 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 1;
+inline constexpr int current_schema_version = 2;
 
 using NetworkId = std::array<std::byte, network_id_size>;
 
@@ -49,10 +49,28 @@ struct MembershipRecord {
     bool operator==(const MembershipRecord&) const = default;
 };
 
+struct InvitationRecord {
+    NetworkId network_id{};
+    auth::DeviceId device_id{};
+    std::int64_t invited_at_ms = 0;
+
+    bool operator==(const InvitationRecord&) const = default;
+};
+
+struct JoinRequestRecord {
+    NetworkId network_id{};
+    auth::DeviceId device_id{};
+    std::int64_t requested_at_ms = 0;
+
+    bool operator==(const JoinRequestRecord&) const = default;
+};
+
 struct RelayState {
     std::vector<DeviceRecord> devices;
     std::vector<NetworkRecord> networks;
     std::vector<MembershipRecord> memberships;
+    std::vector<InvitationRecord> invitations;
+    std::vector<JoinRequestRecord> join_requests;
 
     bool operator==(const RelayState&) const = default;
 };
@@ -88,6 +106,32 @@ public:
     [[nodiscard]] std::vector<MembershipRecord> list_members(
         const NetworkId& network_id) const;
     [[nodiscard]] std::vector<NetworkRecord> list_networks_for_device(
+        const auth::DeviceId& device_id) const;
+
+    [[nodiscard]] bool add_invitation(const NetworkId& network_id,
+                                      const auth::DeviceId& device_id,
+                                      std::int64_t invited_at_ms);
+    [[nodiscard]] bool remove_invitation(const NetworkId& network_id,
+                                         const auth::DeviceId& device_id);
+    [[nodiscard]] std::optional<InvitationRecord> find_invitation(
+        const NetworkId& network_id,
+        const auth::DeviceId& device_id) const;
+    [[nodiscard]] std::vector<InvitationRecord> list_invitations_for_network(
+        const NetworkId& network_id) const;
+    [[nodiscard]] std::vector<InvitationRecord> list_invitations_for_device(
+        const auth::DeviceId& device_id) const;
+
+    [[nodiscard]] bool add_join_request(const NetworkId& network_id,
+                                        const auth::DeviceId& device_id,
+                                        std::int64_t requested_at_ms);
+    [[nodiscard]] bool remove_join_request(const NetworkId& network_id,
+                                           const auth::DeviceId& device_id);
+    [[nodiscard]] std::optional<JoinRequestRecord> find_join_request(
+        const NetworkId& network_id,
+        const auth::DeviceId& device_id) const;
+    [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_network(
+        const NetworkId& network_id) const;
+    [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_device(
         const auth::DeviceId& device_id) const;
 
     [[nodiscard]] RelayState load_state() const;
