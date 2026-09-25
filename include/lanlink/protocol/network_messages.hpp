@@ -14,6 +14,7 @@ inline constexpr std::size_t network_id_size = 16;
 inline constexpr std::size_t network_device_id_size = 32;
 inline constexpr std::size_t max_network_name_size = 128;
 inline constexpr std::size_t max_network_list_entries = 1024;
+inline constexpr std::size_t max_network_peer_entries = 253;
 
 using NetworkId = std::array<std::byte, network_id_size>;
 using NetworkDeviceId = std::array<std::byte, network_device_id_size>;
@@ -31,6 +32,7 @@ enum class NetworkOperation : std::uint8_t {
     invite = 5,
     approve = 6,
     kick = 7,
+    peer_state = 8,
 };
 
 enum class NetworkResultCode : std::uint16_t {
@@ -112,6 +114,31 @@ struct NetworkEvent {
     bool operator==(const NetworkEvent&) const = default;
 };
 
+struct NetworkPeer {
+    NetworkDeviceId device_id{};
+    std::uint32_t ipv4_address = 0;
+
+    bool operator==(const NetworkPeer&) const = default;
+};
+
+struct NetworkPeerState {
+    NetworkId network_id{};
+    std::uint64_t revision = 0;
+    std::uint32_t subnet_address = 0;
+    std::uint8_t prefix_length = 24;
+    std::uint32_t own_address = 0;
+    std::vector<NetworkPeer> peers;
+
+    bool operator==(const NetworkPeerState&) const = default;
+};
+
+struct NetworkPeerRevocation {
+    NetworkId network_id{};
+    std::uint64_t revision = 0;
+
+    bool operator==(const NetworkPeerRevocation&) const = default;
+};
+
 [[nodiscard]] std::vector<std::byte> encode_network_create_request(
     const NetworkCreateRequest& request);
 [[nodiscard]] NetworkCreateRequest decode_network_create_request(
@@ -144,6 +171,15 @@ struct NetworkEvent {
 
 [[nodiscard]] std::vector<std::byte> encode_network_event(const NetworkEvent& event);
 [[nodiscard]] NetworkEvent decode_network_event(std::span<const std::byte> payload);
+
+[[nodiscard]] std::vector<std::byte> encode_network_peer_state(
+    const NetworkPeerState& state);
+[[nodiscard]] NetworkPeerState decode_network_peer_state(
+    std::span<const std::byte> payload);
+[[nodiscard]] std::vector<std::byte> encode_network_peer_revocation(
+    const NetworkPeerRevocation& revocation);
+[[nodiscard]] NetworkPeerRevocation decode_network_peer_revocation(
+    std::span<const std::byte> payload);
 
 [[nodiscard]] bool is_known_network_operation(NetworkOperation operation) noexcept;
 [[nodiscard]] bool is_known_network_result_code(NetworkResultCode code) noexcept;

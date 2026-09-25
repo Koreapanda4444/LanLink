@@ -162,6 +162,16 @@ void test_network_management(const std::filesystem::path& directory) {
                store.find_virtual_ipv4_lease(id, owner_identity.device_id())->address ==
                    storage::virtual_ipv4_pool_first + 1,
            "network creation must allocate and persist owner virtual IPv4 lease");
+    wait_until([&] {
+        const auto state = owner.cached_peer_state(id);
+        return state && state->own_address == storage::virtual_ipv4_pool_first + 1 &&
+               state->peers.empty();
+    }, "network creation must push owner peer state");
+    const auto owner_initial = owner.fetch_peer_state(id);
+    expect(owner_initial.code == protocol::NetworkResultCode::success &&
+               owner_initial.state && owner_initial.state->revision == 1 &&
+               owner_initial.state->own_address == storage::virtual_ipv4_pool_first + 1,
+           "owner can fetch live peer state over authenticated control");
     expect_error([&] { static_cast<void>(owner.create_network("")); },
                  "invalid network name must fail locally");
 
@@ -190,6 +200,9 @@ void test_network_management(const std::filesystem::path& directory) {
            "network event handler must be able to request through relay");
     expect(store.find_join_request(id, member_identity.device_id()).has_value(),
            "join request must persist");
+    expect(member.fetch_peer_state(id).code == protocol::NetworkResultCode::not_member &&
+               !member.cached_peer_state(id),
+           "pending member cannot see peer addresses");
 
     const auto approved = owner.approve_member(id, member_identity.device_id());
     expect(approved.code == protocol::NetworkResultCode::success,
@@ -205,6 +218,19 @@ void test_network_management(const std::filesystem::path& directory) {
                store.find_virtual_ipv4_lease(id, member_identity.device_id())->address ==
                    storage::virtual_ipv4_pool_first + 2,
            "approved member must receive an IPv4 lease in same subnet");
+    wait_until([&] {
+        const auto a = owner.cached_peer_state(id);
+        const auto b = member.cached_peer_state(id);
+        return a && b && a->revision == 2 && b->revision == 2 &&
+               a->own_address == storage::virtual_ipv4_pool_first + 1 &&
+               b->own_address == storage::virtual_ipv4_pool_first + 2 &&
+               a->peers == std::vector<protocol::NetworkPeer>{
+                               {member_identity.device_id(),
+                                storage::virtual_ipv4_pool_first + 2}} &&
+               b->peers == std::vector<protocol::NetworkPeer>{
+                               {owner_identity.device_id(),
+                                storage::virtual_ipv4_pool_first + 1}};
+    }, "both authenticated clients must receive matched peer IP snapshots");
 
     const auto kicked = owner.kick_member(id, member_identity.device_id());
     expect(kicked.code == protocol::NetworkResultCode::success,
@@ -213,6 +239,13 @@ void test_network_management(const std::filesystem::path& directory) {
            "kicked member must no longer list network");
     expect(!store.find_virtual_ipv4_lease(id, member_identity.device_id()),
            "kicking member releases their IPv4 lease");
+    wait_until([&] {
+        const auto a = owner.cached_peer_state(id);
+        return a && a->revision == 3 && a->peers.empty() &&
+               !member.cached_peer_state(id);
+    }, "kick must revoke member peer state and update owner");
+    expect(member.fetch_peer_state(id).code == protocol::NetworkResultCode::not_member,
+           "kicked member cannot refetch peer addresses");
 
     const auto invited = owner.invite_member(id, member_identity.device_id());
     expect(invited.code == protocol::NetworkResultCode::success,
@@ -226,16 +259,29 @@ void test_network_management(const std::filesystem::path& directory) {
     expect(store.find_virtual_ipv4_lease(id, member_identity.device_id())->address ==
                storage::virtual_ipv4_pool_first + 2,
            "rejoined member receives available IPv4 host");
+    wait_until([&] {
+        const auto a = owner.cached_peer_state(id);
+        const auto b = member.cached_peer_state(id);
+        return a && b && a->revision == 4 && b->revision == 4 &&
+               a->peers.size() == 1 && b->peers.size() == 1;
+    }, "invited rejoin must repopulate both peer caches");
     expect(member.leave_network(id).code == protocol::NetworkResultCode::success,
            "member must leave over relay");
     expect(store.list_members(id).size() == 1,
            "leave must remove member from SQLite");
     expect(!store.find_virtual_ipv4_lease(id, member_identity.device_id()),
            "leaving releases member IPv4 lease");
+    wait_until([&] {
+        const auto a = owner.cached_peer_state(id);
+        return a && a->revision == 5 && a->peers.empty() &&
+               !member.cached_peer_state(id);
+    }, "leave must revoke local state and refresh remaining peers");
 
     server.stop();
     wait_until([&] { return !owner.authenticated() && !member.authenticated(); },
                "server stop must invalidate authenticated client state");
+    expect(owner.cached_peer_states().empty() && member.cached_peer_states().empty(),
+           "disconnect must clear stale peer caches");
     expect_error([&] { static_cast<void>(owner.list_networks(100ms)); },
                  "request after disconnect must fail");
     owner_worker.request_stop();
@@ -260,6 +306,78 @@ void test_network_management(const std::filesystem::path& directory) {
            "network and owner membership must survive reopening SQLite");
 }
 
+void test_peer_state_reconnect(const std::filesystem::path& directory) {
+    const auto identity_path = directory / "reconnect-owner.identity";
+    const auto owner = auth::DeviceIdentity::load_or_create(identity_path).device_id();
+    const auto member = auth::DeviceIdentity::load_or_create(
+        directory / "reconnect-member.identity").device_id();
+    storage::RelayStore store(directory / "reconnect.db");
+    protocol::NetworkId id{};
+    id[0] = std::byte{0x71};
+    store.record_device(owner, 1);
+    store.record_device(member, 1);
+    store.create_network({id, "Reconnect LAN", owner, 1});
+    expect(store.add_member(id, member, 2), "prepare persisted member lease");
+
+    relay::NetworkService service(store);
+    relay::NetworkControlChannel channel(service);
+    core::Logger server_logger(directory / "reconnect-relay.log", "relay-reconnect",
+                               core::LogLevel::info, 1024 * 1024, 2);
+    core::Logger client_logger(directory / "reconnect-client.log", "client-reconnect",
+                               core::LogLevel::info, 1024 * 1024, 2);
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    transport::QuicServerOptions server_options;
+    server_options.listen_host = "127.0.0.1";
+    server_options.port = static_cast<std::uint16_t>(36'000 + (ticks % 19'000));
+    server_options.certificate_file = directory / "cert.pem";
+    server_options.private_key_file = directory / "key.pem";
+    server_options.auth_token_file = directory / "auth.token";
+    server_options.handshake_timeout = 3s;
+    server_options.authentication_timeout = 3s;
+
+    transport::QuicClientOptions client_options;
+    client_options.relay_host = "127.0.0.1";
+    client_options.port = server_options.port;
+    client_options.identity_file = identity_path;
+    client_options.auth_token_file = directory / "auth.token";
+    client_options.handshake_timeout = 3s;
+    client_options.authentication_timeout = 3s;
+
+    transport::QuicRelayServer server(std::move(server_options), server_logger, channel);
+    transport::QuicRelayClient client(std::move(client_options), client_logger);
+    server.start();
+    for (int attempt = 0; attempt != 2; ++attempt) {
+        std::exception_ptr failure;
+        std::jthread worker([&](std::stop_token token) {
+            try {
+                client.run(token);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+        });
+        wait_until([&] {
+            const auto state = client.cached_peer_state(id);
+            return client.authenticated() && state && state->revision == 0 &&
+                   state->own_address == storage::virtual_ipv4_pool_first + 1 &&
+                   state->peers == std::vector<protocol::NetworkPeer>{
+                                       {member, storage::virtual_ipv4_pool_first + 2}};
+        }, "authentication and reconnection must restore persisted peer snapshot");
+        const auto reply = client.fetch_peer_state(id);
+        expect(reply.code == protocol::NetworkResultCode::success && reply.state &&
+                   reply.state == client.cached_peer_state(id),
+               "reconnected peer state request matches pushed snapshot");
+        worker.request_stop();
+        client.stop();
+        worker.join();
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+        expect(client.cached_peer_states().empty(),
+               "stopped session clears its peer state before reconnect");
+    }
+    server.stop();
+}
+
 }
 
 int main(const int argc, char* argv[]) {
@@ -268,6 +386,7 @@ int main(const int argc, char* argv[]) {
             throw std::invalid_argument("usage: network-client-tests fixture-directory");
         }
         test_network_management(argv[1]);
+        test_peer_state_reconnect(argv[1]);
         std::cout << "network management QUIC integration passed\n";
         return 0;
     } catch (const std::exception& error) {

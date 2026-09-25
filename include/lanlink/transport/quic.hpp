@@ -11,6 +11,7 @@
 #include <optional>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 namespace lanlink::core {
 class Logger;
@@ -52,6 +53,13 @@ struct NetworkListReply {
     protocol::NetworkListResult result;
 
     bool operator==(const NetworkListReply&) const = default;
+};
+
+struct NetworkPeerStateReply {
+    protocol::NetworkResultCode code = protocol::NetworkResultCode::success;
+    std::optional<protocol::NetworkPeerState> state;
+
+    bool operator==(const NetworkPeerStateReply&) const = default;
 };
 
 class QuicRelayServer {
@@ -115,6 +123,12 @@ public:
         const protocol::NetworkId& network_id,
         const protocol::NetworkDeviceId& device_id,
         std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] NetworkPeerStateReply fetch_peer_state(
+        const protocol::NetworkId& network_id,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] std::optional<protocol::NetworkPeerState> cached_peer_state(
+        const protocol::NetworkId& network_id) const;
+    [[nodiscard]] std::vector<protocol::NetworkPeerState> cached_peer_states() const;
     void set_network_event_handler(std::function<void(const protocol::NetworkEvent&)> handler);
 
 private:

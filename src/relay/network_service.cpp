@@ -62,7 +62,7 @@ bool valid_member_request(const protocol::NetworkMemberRequest& request) {
 NetworkOperationOutcome operation_outcome(const protocol::NetworkOperation operation,
                                           const protocol::NetworkResultCode code,
                                           const protocol::NetworkId& network_id = {}) {
-    return {{operation, code, network_id}, {}};
+    return {{operation, code, network_id}, {}, {}};
 }
 
 NetworkListOutcome list_outcome(const protocol::NetworkResultCode code) {
@@ -130,6 +130,33 @@ protocol::NetworkSummary make_summary(const storage::NetworkRecord& network,
     return result;
 }
 
+protocol::NetworkPeerState assemble_peer_state(
+    const storage::NetworkSubnetRecord& subnet,
+    const std::vector<storage::VirtualIpv4LeaseRecord>& leases,
+    const auth::DeviceId& actor,
+    const std::uint64_t revision) {
+    const auto own = std::find_if(leases.begin(), leases.end(), [&](const auto& lease) {
+        return lease.device_id == actor;
+    });
+    if (own == leases.end() || leases.size() > protocol::max_network_peer_entries + 1) {
+        throw std::runtime_error("network virtual IPv4 membership state is inconsistent");
+    }
+
+    protocol::NetworkPeerState state;
+    state.network_id = subnet.network_id;
+    state.revision = revision;
+    state.subnet_address = subnet.network_address;
+    state.prefix_length = subnet.prefix_length;
+    state.own_address = own->address;
+    state.peers.reserve(leases.size() - 1);
+    for (const auto& lease : leases) {
+        if (lease.device_id != actor) {
+            state.peers.push_back({lease.device_id, lease.address});
+        }
+    }
+    return state;
+}
+
 }
 
 NetworkService::NetworkService(storage::RelayStore& store,
@@ -186,9 +213,12 @@ NetworkOperationOutcome NetworkService::create_network(
                 throw;
             }
 
-            return operation_outcome(protocol::NetworkOperation::create,
-                                     protocol::NetworkResultCode::success,
-                                     network_id);
+            auto outcome = operation_outcome(protocol::NetworkOperation::create,
+                                             protocol::NetworkResultCode::success,
+                                             network_id);
+            outcome.peer_changes = changes_for_members(network_id,
+                                                       advance_revision(network_id));
+            return outcome;
         }
 
         return operation_outcome(protocol::NetworkOperation::create,
@@ -278,6 +308,8 @@ NetworkOperationOutcome NetworkService::join_network(
                                                 protocol::NetworkEventKind::member_joined,
                                                 request.network_id,
                                                 actor);
+            outcome.peer_changes = changes_for_members(
+                request.network_id, advance_revision(request.network_id));
             return outcome;
         }
 
@@ -356,6 +388,9 @@ NetworkOperationOutcome NetworkService::leave_network(
                                             protocol::NetworkEventKind::member_left,
                                             request.network_id,
                                             actor);
+        const auto revision = advance_revision(request.network_id);
+        outcome.peer_changes = changes_for_members(request.network_id, revision);
+        outcome.peer_changes.push_back({actor, std::nullopt, {request.network_id, revision}});
         return outcome;
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::leave,
@@ -502,6 +537,8 @@ NetworkOperationOutcome NetworkService::approve_member(
                                             protocol::NetworkEventKind::member_joined,
                                             request.network_id,
                                             request.device_id);
+        outcome.peer_changes = changes_for_members(
+            request.network_id, advance_revision(request.network_id));
         return outcome;
     } catch (const std::length_error&) {
         return operation_outcome(protocol::NetworkOperation::approve,
@@ -581,12 +618,99 @@ NetworkOperationOutcome NetworkService::kick_member(
         outcome.events.insert(outcome.events.end(),
                               member_events.begin(),
                               member_events.end());
+        const auto revision = advance_revision(request.network_id);
+        outcome.peer_changes = changes_for_members(request.network_id, revision);
+        outcome.peer_changes.push_back(
+            {request.device_id, std::nullopt, {request.network_id, revision}});
         return outcome;
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::kick,
                                  protocol::NetworkResultCode::internal_error,
                                  request.network_id);
     }
+}
+
+std::uint64_t NetworkService::revision_for(const storage::NetworkId& network_id) const {
+    const auto found = revisions_.find(network_id);
+    return found == revisions_.end() ? 0 : found->second;
+}
+
+std::uint64_t NetworkService::advance_revision(const storage::NetworkId& network_id) {
+    auto& revision = revisions_[network_id];
+    if (revision == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::overflow_error("network peer state revision exhausted");
+    }
+    return ++revision;
+}
+
+protocol::NetworkPeerState NetworkService::make_peer_state(
+    const storage::NetworkId& network_id,
+    const auth::DeviceId& actor,
+    const std::uint64_t revision) const {
+    const auto subnet = store_.find_subnet(network_id);
+    if (!subnet) {
+        throw std::runtime_error("network virtual IPv4 subnet is missing");
+    }
+    return assemble_peer_state(*subnet, store_.list_virtual_ipv4_leases(network_id),
+                               actor, revision);
+}
+
+std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
+    const storage::NetworkId& network_id, const std::uint64_t revision) const {
+    const auto subnet = store_.find_subnet(network_id);
+    if (!subnet) {
+        throw std::runtime_error("network virtual IPv4 subnet is missing");
+    }
+    const auto leases = store_.list_virtual_ipv4_leases(network_id);
+    std::vector<RoutedPeerStateChange> result;
+    result.reserve(leases.size());
+    for (const auto& lease : leases) {
+        result.push_back({lease.device_id,
+                          assemble_peer_state(*subnet, leases, lease.device_id, revision),
+                          {}});
+    }
+    return result;
+}
+
+NetworkPeerStateOutcome NetworkService::peer_state(
+    const auth::DeviceId& actor,
+    const protocol::NetworkSelectionRequest& request,
+    const std::int64_t now_ms) {
+    require_actor_and_time(actor, now_ms);
+    require_selection_request(request);
+    std::lock_guard lock(mutex_);
+
+    try {
+        store_.record_device(actor, now_ms);
+        if (!store_.find_network(request.network_id)) {
+            return {protocol::NetworkResultCode::not_found, std::nullopt};
+        }
+        if (!store_.find_virtual_ipv4_lease(request.network_id, actor)) {
+            return {protocol::NetworkResultCode::not_member, std::nullopt};
+        }
+        return {protocol::NetworkResultCode::success,
+                make_peer_state(request.network_id, actor,
+                                revision_for(request.network_id))};
+    } catch (const std::exception&) {
+        return {protocol::NetworkResultCode::internal_error, std::nullopt};
+    }
+}
+
+std::vector<RoutedPeerStateChange> NetworkService::peer_states_for_device(
+    const auth::DeviceId& actor) {
+    if (is_zero(actor)) {
+        throw std::invalid_argument("peer state requires an authenticated device");
+    }
+    std::lock_guard lock(mutex_);
+    const auto networks = store_.list_networks_for_device(actor);
+    std::vector<RoutedPeerStateChange> result;
+    result.reserve(networks.size());
+    for (const auto& network : networks) {
+        result.push_back({actor,
+                          make_peer_state(network.id, actor, revision_for(network.id)),
+                          {}});
+    }
+    return result;
 }
 
 }

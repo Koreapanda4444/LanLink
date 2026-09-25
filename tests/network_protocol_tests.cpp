@@ -85,6 +85,7 @@ void test_constants_and_names() {
     expect(network_device_id_size == 32, "device id size");
     expect(max_network_name_size == 128, "network name limit");
     expect(max_network_list_entries == 1024, "network list limit");
+    expect(max_network_peer_entries == 253, "network peer limit");
 
     constexpr std::array operations{
         NetworkOperation::create,
@@ -94,6 +95,7 @@ void test_constants_and_names() {
         NetworkOperation::invite,
         NetworkOperation::approve,
         NetworkOperation::kick,
+        NetworkOperation::peer_state,
     };
 
     for (const auto operation : operations) {
@@ -256,6 +258,8 @@ void test_round_trips() {
             NetworkOperation::approve, NetworkResultCode::permission_denied, network_id(5)},
         NetworkOperationResult{
             NetworkOperation::kick, NetworkResultCode::not_member, network_id(6)},
+        NetworkOperationResult{
+            NetworkOperation::peer_state, NetworkResultCode::not_member, network_id(7)},
     };
 
     for (const auto& result : results) {
@@ -283,6 +287,87 @@ void test_round_trips() {
         expect(decode_network_event(encode_network_event(event)) == event,
                "network event round trip");
     }
+
+    const NetworkPeerState peers{network_id(9), 0x0102030405060708ULL,
+                                 0x0a400000U, 24, 0x0a400001U,
+                                 {{device_id(2), 0x0a400002U},
+                                  {device_id(3), 0x0a400003U}}};
+    const auto wire = encode_network_peer_state(peers);
+    expect(decode_network_peer_state(wire) == peers, "peer snapshot round trip");
+    expect(wire.size() == 35 + 2 * 36 && wire[16] == std::byte{1} &&
+               wire[23] == std::byte{8} && wire[24] == std::byte{10} &&
+               wire[26] == std::byte{0} && wire[28] == std::byte{24} &&
+               wire[33] == std::byte{0} && wire[34] == std::byte{2},
+           "peer snapshot network-order wire fields");
+    const NetworkPeerRevocation revoked{network_id(9), 0x0102030405060708ULL};
+    expect(decode_network_peer_revocation(encode_network_peer_revocation(revoked)) ==
+               revoked,
+           "peer revocation round trip");
+}
+
+void test_peer_state_validation() {
+    using namespace lanlink::protocol;
+
+    NetworkPeerState state{network_id(1), 1, 0x0a400000U, 24,
+                           0x0a400001U, {{device_id(2), 0x0a400002U}}};
+    auto invalid = state;
+    invalid.prefix_length = 16;
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "peer subnet prefix validated");
+    invalid = state;
+    invalid.subnet_address = 0x0a400001U;
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "peer subnet alignment validated");
+    invalid = state;
+    invalid.own_address = 0x0a4000ffU;
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "broadcast cannot be own address");
+    invalid = state;
+    invalid.peers.push_back({device_id(2), 0x0a400003U});
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "duplicate peer identity rejected");
+    invalid = state;
+    invalid.peers.push_back({device_id(3), 0x0a400002U});
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "duplicate peer address rejected");
+    invalid = state;
+    invalid.peers[0].ipv4_address = 0x0a400001U;
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "own and peer address cannot overlap");
+    invalid = state;
+    invalid.peers[0].ipv4_address = 0x0a400102U;
+    expect_error([&] { static_cast<void>(encode_network_peer_state(invalid)); },
+                 "peer from another subnet rejected");
+
+    const auto wire = encode_network_peer_state(state);
+    auto truncated = wire;
+    truncated.pop_back();
+    expect_error([&] { static_cast<void>(decode_network_peer_state(truncated)); },
+                 "truncated peer state rejected");
+    auto trailing = wire;
+    trailing.push_back(std::byte{0});
+    expect_error([&] { static_cast<void>(decode_network_peer_state(trailing)); },
+                 "trailing peer state bytes rejected");
+    auto many = wire;
+    many[33] = std::byte{0};
+    many[34] = std::byte{254};
+    expect_error([&] { static_cast<void>(decode_network_peer_state(many)); },
+                 "oversized peer count rejected before allocation");
+    auto zero_id = wire;
+    std::fill_n(zero_id.begin(), network_id_size, std::byte{0});
+    expect_error([&] { static_cast<void>(decode_network_peer_state(zero_id)); },
+                 "zero peer state network rejected");
+    auto bad_ip = wire;
+    bad_ip.back() = std::byte{255};
+    expect_error([&] { static_cast<void>(decode_network_peer_state(bad_ip)); },
+                 "broadcast peer address rejected on decode");
+
+    expect_error([] { static_cast<void>(encode_network_peer_revocation({})); },
+                 "zero revocation network rejected");
+    auto revoked = encode_network_peer_revocation({network_id(1), 2});
+    revoked.push_back(std::byte{0});
+    expect_error([&] { static_cast<void>(decode_network_peer_revocation(revoked)); },
+                 "trailing revocation bytes rejected");
 }
 
 void test_request_validation() {
@@ -577,6 +662,7 @@ int main() {
     test_constants_and_names();
     test_golden_payloads();
     test_round_trips();
+    test_peer_state_validation();
     test_request_validation();
     test_operation_result_validation();
     test_list_validation();

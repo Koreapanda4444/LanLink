@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 
@@ -38,6 +39,7 @@ bool is_network_request(const protocol::MessageType type) noexcept {
         case protocol::MessageType::network_invite_request:
         case protocol::MessageType::network_approve_request:
         case protocol::MessageType::network_kick_request:
+        case protocol::MessageType::network_peer_state_request:
             return true;
         default:
             return false;
@@ -61,6 +63,25 @@ std::vector<RoutedControlFrame> encode_events(
     return result;
 }
 
+std::vector<RoutedControlFrame> encode_peer_changes(
+    const std::vector<RoutedPeerStateChange>& changes) {
+    std::vector<RoutedControlFrame> result;
+    result.reserve(changes.size());
+    for (const auto& change : changes) {
+        if (change.state) {
+            result.push_back({change.recipient_device_id,
+                              {protocol::MessageType::network_peer_state_update, 0,
+                               protocol::encode_network_peer_state(*change.state)}});
+        } else {
+            result.push_back({change.recipient_device_id,
+                              {protocol::MessageType::network_peer_state_revoked, 0,
+                               protocol::encode_network_peer_revocation(
+                                   change.revocation)}});
+        }
+    }
+    return result;
+}
+
 ControlDispatch operation_response(const std::uint32_t request_id,
                                    NetworkOperationOutcome outcome) {
     protocol::Frame response{
@@ -68,7 +89,28 @@ ControlDispatch operation_response(const std::uint32_t request_id,
         request_id,
         protocol::encode_network_operation_result(outcome.result),
     };
-    return {std::move(response), encode_events(outcome.events)};
+    auto events = encode_events(outcome.events);
+    auto peer_changes = encode_peer_changes(outcome.peer_changes);
+    events.insert(events.end(),
+                  std::make_move_iterator(peer_changes.begin()),
+                  std::make_move_iterator(peer_changes.end()));
+    return {std::move(response), std::move(events)};
+}
+
+ControlDispatch peer_state_response(const std::uint32_t request_id,
+                                    const protocol::NetworkId& network_id,
+                                    NetworkPeerStateOutcome outcome) {
+    if (outcome.code == protocol::NetworkResultCode::success && outcome.state) {
+        return {{protocol::MessageType::network_peer_state_result,
+                 request_id,
+                 protocol::encode_network_peer_state(*outcome.state)},
+                {}};
+    }
+    return {{protocol::MessageType::network_operation_result,
+             request_id,
+             protocol::encode_network_operation_result(
+                 {protocol::NetworkOperation::peer_state, outcome.code, network_id})},
+            {}};
 }
 
 ControlDispatch list_response(const std::uint32_t request_id, NetworkListOutcome outcome) {
@@ -99,6 +141,11 @@ NetworkControlChannel::NetworkControlChannel(NetworkService& service, TimeSource
 
 void NetworkControlChannel::note_authenticated(const auth::DeviceId& actor) {
     service_.record_authenticated_device(actor, now_ms());
+}
+
+std::vector<RoutedControlFrame> NetworkControlChannel::initial_peer_states(
+    const auth::DeviceId& actor) {
+    return encode_peer_changes(service_.peer_states_for_device(actor));
 }
 
 ControlDispatch NetworkControlChannel::handle_authenticated(
@@ -165,6 +212,13 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
                         actor,
                         protocol::decode_network_member_request(request.payload),
                         now_ms()));
+            case protocol::MessageType::network_peer_state_request: {
+                const auto selection =
+                    protocol::decode_network_selection_request(request.payload);
+                return peer_state_response(request.request_id,
+                                           selection.network_id,
+                                           service_.peer_state(actor, selection, now_ms()));
+            }
             default:
                 throw std::runtime_error("unexpected frame on authenticated control channel");
         }

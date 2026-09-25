@@ -21,6 +21,7 @@
 #include <functional>
 #include <iomanip>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -730,6 +731,10 @@ private:
                                      authenticated_device_id)) {
             throw std::runtime_error("authentication connection already closed");
         }
+        if (authenticated) {
+            route_control_events(control_channel_.initial_peer_states(
+                authenticated_device_id));
+        }
     }
 
     void handle_control_frame(const HQUIC stream,
@@ -811,6 +816,7 @@ public:
         stop_requested_.store(false);
         connected_.store(false);
         authenticated_.store(false);
+        clear_peer_states();
         std::stop_callback stop_callback(stop_token, [this] { stop(); });
 
         try {
@@ -846,6 +852,7 @@ public:
                                          application_shutdown_code);
             }
         }
+        clear_peer_states();
     }
 
     [[nodiscard]] bool running() const noexcept {
@@ -927,6 +934,38 @@ public:
                                  protocol::encode_network_member_request({id, device}), timeout);
     }
 
+    [[nodiscard]] NetworkPeerStateReply fetch_peer_state(
+        const protocol::NetworkId& id, const std::chrono::milliseconds timeout) {
+        const auto frame = request_control(
+            protocol::MessageType::network_peer_state_request,
+            protocol::encode_network_selection_request({id}),
+            protocol::NetworkOperation::peer_state, timeout, id);
+        if (frame.type == protocol::MessageType::network_peer_state_result) {
+            return {protocol::NetworkResultCode::success,
+                    protocol::decode_network_peer_state(frame.payload)};
+        }
+        return {protocol::decode_network_operation_result(frame.payload).code, std::nullopt};
+    }
+
+    [[nodiscard]] std::optional<protocol::NetworkPeerState> cached_peer_state(
+        const protocol::NetworkId& id) const {
+        std::lock_guard lock(peer_state_mutex_);
+        const auto found = peer_states_.find(id);
+        return found == peer_states_.end() ? std::nullopt
+                                           : std::optional{found->second};
+    }
+
+    [[nodiscard]] std::vector<protocol::NetworkPeerState> cached_peer_states() const {
+        std::lock_guard lock(peer_state_mutex_);
+        std::vector<protocol::NetworkPeerState> result;
+        result.reserve(peer_states_.size());
+        for (const auto& [id, state] : peer_states_) {
+            static_cast<void>(id);
+            result.push_back(state);
+        }
+        return result;
+    }
+
     void set_network_event_handler(
         std::function<void(const protocol::NetworkEvent&)> handler) {
         std::lock_guard lock(event_handler_mutex_);
@@ -934,6 +973,41 @@ public:
     }
 
 private:
+    void clear_peer_states() noexcept {
+        std::lock_guard lock(peer_state_mutex_);
+        peer_states_.clear();
+        peer_revisions_.clear();
+    }
+
+    void apply_peer_state(protocol::NetworkPeerState state) {
+        std::lock_guard lock(peer_state_mutex_);
+        if (!authenticated_.load() || stop_requested_.load()) {
+            return;
+        }
+        const auto found = peer_revisions_.find(state.network_id);
+        if (found != peer_revisions_.end() &&
+            (state.revision < found->second ||
+             (state.revision == found->second &&
+              !peer_states_.contains(state.network_id)))) {
+            return;
+        }
+        peer_revisions_[state.network_id] = state.revision;
+        peer_states_[state.network_id] = std::move(state);
+    }
+
+    void apply_peer_revocation(const protocol::NetworkPeerRevocation& revocation) {
+        std::lock_guard lock(peer_state_mutex_);
+        if (!authenticated_.load() || stop_requested_.load()) {
+            return;
+        }
+        const auto found = peer_revisions_.find(revocation.network_id);
+        if (found != peer_revisions_.end() && revocation.revision < found->second) {
+            return;
+        }
+        peer_revisions_[revocation.network_id] = revocation.revision;
+        peer_states_.erase(revocation.network_id);
+    }
+
     void dispatch_network_events() noexcept {
         while (true) {
             protocol::NetworkEvent event;
@@ -970,6 +1044,7 @@ private:
 
     struct PendingControl {
         protocol::NetworkOperation operation;
+        std::optional<protocol::NetworkId> network_id;
         std::condition_variable wake;
         std::optional<protocol::Frame> response;
         std::string_view failure;
@@ -1030,7 +1105,8 @@ private:
         const protocol::MessageType type,
         std::vector<std::byte> payload,
         const protocol::NetworkOperation operation,
-        const std::chrono::milliseconds timeout) {
+        const std::chrono::milliseconds timeout,
+        const std::optional<protocol::NetworkId> network_id = std::nullopt) {
         if (timeout <= std::chrono::milliseconds::zero()) {
             throw std::invalid_argument("network control timeout must be positive");
         }
@@ -1058,6 +1134,7 @@ private:
 
         auto pending = std::make_shared<PendingControl>();
         pending->operation = operation;
+        pending->network_id = network_id;
         state->pending.emplace(request_id, pending);
         const auto status = send_frame(api_, state->control_stream,
                                        {type, request_id, std::move(payload)});
@@ -1290,6 +1367,7 @@ private:
         connected_.store(false);
         authenticated_.store(false);
         clear_session();
+        clear_peer_states();
         running_.store(false);
         run_complete_.notify_all();
     }
@@ -1335,6 +1413,7 @@ private:
                 connected_.store(true);
                 authenticated_.store(false);
                 clear_session();
+                clear_peer_states();
                 log_noexcept(logger_, core::LogLevel::info, "connected to QUIC relay");
                 open_control_stream(connection, context->state);
                 break;
@@ -1342,6 +1421,7 @@ private:
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
+                clear_peer_states();
                 {
                     std::lock_guard lock(context->state->mutex);
                     context->state->authenticated = false;
@@ -1357,6 +1437,7 @@ private:
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
+                clear_peer_states();
                 {
                     std::lock_guard lock(context->state->mutex);
                     context->state->authenticated = false;
@@ -1369,6 +1450,7 @@ private:
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
+                clear_peer_states();
 
                 {
                     std::lock_guard lock(context->state->mutex);
@@ -1529,6 +1611,7 @@ private:
                         context->state->control_stream = nullptr;
                         context->state->authenticated = false;
                         authenticated_.store(false);
+                        clear_peer_states();
                         fail_pending(*context->state, "relay control stream ended");
                     }
                 }
@@ -1607,6 +1690,19 @@ private:
     }
 
     void handle_control_frame(StreamContext* context, const protocol::Frame& frame) {
+        if (frame.type == protocol::MessageType::network_peer_state_update ||
+            frame.type == protocol::MessageType::network_peer_state_revoked) {
+            if (frame.request_id != 0) {
+                throw std::runtime_error("network peer update has a request id");
+            }
+            if (frame.type == protocol::MessageType::network_peer_state_update) {
+                apply_peer_state(protocol::decode_network_peer_state(frame.payload));
+            } else {
+                apply_peer_revocation(
+                    protocol::decode_network_peer_revocation(frame.payload));
+            }
+            return;
+        }
         if (frame.type == protocol::MessageType::network_event) {
             if (frame.request_id != 0) {
                 throw std::runtime_error("network event has a request id");
@@ -1647,9 +1743,20 @@ private:
             if (result.operation != expected) {
                 throw std::runtime_error("network control response operation mismatch");
             }
+            if (found->second->network_id &&
+                result.network_id != *found->second->network_id) {
+                throw std::runtime_error("network control response network mismatch");
+            }
         } else if (frame.type == protocol::MessageType::network_list_result &&
                    expected == protocol::NetworkOperation::list) {
             static_cast<void>(protocol::decode_network_list_result(frame.payload));
+        } else if (frame.type == protocol::MessageType::network_peer_state_result &&
+                   expected == protocol::NetworkOperation::peer_state) {
+            const auto state = protocol::decode_network_peer_state(frame.payload);
+            if (!found->second->network_id ||
+                state.network_id != *found->second->network_id) {
+                throw std::runtime_error("network peer state response network mismatch");
+            }
         } else if (frame.type == protocol::MessageType::error) {
             if (!frame.payload.empty()) {
                 throw std::runtime_error("network control error has an invalid payload");
@@ -1683,6 +1790,9 @@ private:
     std::weak_ptr<AttemptState> active_attempt_;
     std::atomic<std::uint32_t> next_request_id_ = 2;
     std::mutex event_handler_mutex_;
+    mutable std::mutex peer_state_mutex_;
+    std::map<protocol::NetworkId, protocol::NetworkPeerState> peer_states_;
+    std::map<protocol::NetworkId, std::uint64_t> peer_revisions_;
     std::function<void(const protocol::NetworkEvent&)> event_handler_;
     std::mutex event_queue_mutex_;
     std::condition_variable event_queue_wake_;
@@ -1783,6 +1893,21 @@ protocol::NetworkOperationResult QuicRelayClient::kick_member(
     const protocol::NetworkDeviceId& device_id,
     const std::chrono::milliseconds timeout) {
     return impl_->kick_member(network_id, device_id, timeout);
+}
+
+NetworkPeerStateReply QuicRelayClient::fetch_peer_state(
+    const protocol::NetworkId& network_id,
+    const std::chrono::milliseconds timeout) {
+    return impl_->fetch_peer_state(network_id, timeout);
+}
+
+std::optional<protocol::NetworkPeerState> QuicRelayClient::cached_peer_state(
+    const protocol::NetworkId& network_id) const {
+    return impl_->cached_peer_state(network_id);
+}
+
+std::vector<protocol::NetworkPeerState> QuicRelayClient::cached_peer_states() const {
+    return impl_->cached_peer_states();
 }
 
 void QuicRelayClient::set_network_event_handler(

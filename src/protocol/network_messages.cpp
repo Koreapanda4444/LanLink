@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -13,6 +14,9 @@ constexpr std::size_t network_selection_size = network_id_size;
 constexpr std::size_t network_member_size = network_id_size + network_device_id_size;
 constexpr std::size_t network_operation_result_size = 1 + 2 + network_id_size;
 constexpr std::size_t network_event_size = 1 + network_id_size + network_device_id_size;
+constexpr std::uint32_t peer_pool_first = 0x0a400000U;
+constexpr std::uint32_t peer_pool_end = 0x0a800000U;
+constexpr std::uint32_t peer_subnet_size = 256;
 
 template <typename Integer>
 void append_integer(std::vector<std::byte>& output, const Integer value) {
@@ -314,6 +318,31 @@ NetworkSummary read_summary(Reader& reader) {
     return summary;
 }
 
+bool valid_peer_state(const NetworkPeerState& state) {
+    if (is_zero(state.network_id) || state.prefix_length != 24 ||
+        state.subnet_address < peer_pool_first ||
+        state.subnet_address >= peer_pool_end ||
+        state.subnet_address % peer_subnet_size != 0 ||
+        state.own_address <= state.subnet_address ||
+        state.own_address >= state.subnet_address + peer_subnet_size - 1 ||
+        state.peers.size() > max_network_peer_entries) {
+        return false;
+    }
+
+    std::set<NetworkDeviceId> device_ids;
+    std::set<std::uint32_t> addresses{state.own_address};
+    for (const auto& peer : state.peers) {
+        if (is_zero(peer.device_id) ||
+            peer.ipv4_address <= state.subnet_address ||
+            peer.ipv4_address >= state.subnet_address + peer_subnet_size - 1 ||
+            !device_ids.insert(peer.device_id).second ||
+            !addresses.insert(peer.ipv4_address).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }
 
 std::vector<std::byte> encode_network_create_request(const NetworkCreateRequest& request) {
@@ -489,6 +518,71 @@ std::vector<std::byte> encode_network_event(const NetworkEvent& event) {
     return output;
 }
 
+std::vector<std::byte> encode_network_peer_state(const NetworkPeerState& state) {
+    if (!valid_peer_state(state)) {
+        throw std::invalid_argument("network peer state contains invalid addresses or peers");
+    }
+
+    std::vector<std::byte> output;
+    output.reserve(35 + state.peers.size() * (network_device_id_size + 4));
+    append_array(output, state.network_id);
+    append_integer(output, state.revision);
+    append_integer(output, state.subnet_address);
+    append_integer(output, state.prefix_length);
+    append_integer(output, state.own_address);
+    append_integer(output, static_cast<std::uint16_t>(state.peers.size()));
+    for (const auto& peer : state.peers) {
+        append_array(output, peer.device_id);
+        append_integer(output, peer.ipv4_address);
+    }
+    return output;
+}
+
+NetworkPeerState decode_network_peer_state(const std::span<const std::byte> payload) {
+    Reader reader(payload);
+    NetworkPeerState state;
+    state.network_id = reader.read_array<network_id_size>();
+    state.revision = reader.read_integer<std::uint64_t>();
+    state.subnet_address = reader.read_integer<std::uint32_t>();
+    state.prefix_length = reader.read_integer<std::uint8_t>();
+    state.own_address = reader.read_integer<std::uint32_t>();
+    const auto count = reader.read_integer<std::uint16_t>();
+    if (count > max_network_peer_entries) {
+        throw std::runtime_error("network peer state contains too many peers");
+    }
+    state.peers.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        state.peers.push_back({reader.read_array<network_device_id_size>(),
+                               reader.read_integer<std::uint32_t>()});
+    }
+    reader.require_finished();
+    if (!valid_peer_state(state)) {
+        throw std::runtime_error("network peer state contains invalid addresses or peers");
+    }
+    return state;
+}
+
+std::vector<std::byte> encode_network_peer_revocation(
+    const NetworkPeerRevocation& revocation) {
+    require_network_id_for_encode(revocation.network_id);
+    std::vector<std::byte> output;
+    output.reserve(network_id_size + 8);
+    append_array(output, revocation.network_id);
+    append_integer(output, revocation.revision);
+    return output;
+}
+
+NetworkPeerRevocation decode_network_peer_revocation(
+    const std::span<const std::byte> payload) {
+    Reader reader(payload);
+    NetworkPeerRevocation revocation;
+    revocation.network_id = reader.read_array<network_id_size>();
+    revocation.revision = reader.read_integer<std::uint64_t>();
+    reader.require_finished();
+    require_network_id_for_decode(revocation.network_id);
+    return revocation;
+}
+
 NetworkEvent decode_network_event(const std::span<const std::byte> payload) {
     if (payload.size() != network_event_size) {
         throw std::runtime_error("network event has an invalid size");
@@ -519,6 +613,7 @@ bool is_known_network_operation(const NetworkOperation operation) noexcept {
         case NetworkOperation::invite:
         case NetworkOperation::approve:
         case NetworkOperation::kick:
+        case NetworkOperation::peer_state:
             return true;
     }
 
@@ -574,6 +669,8 @@ std::string_view network_operation_name(const NetworkOperation operation) noexce
             return "approve";
         case NetworkOperation::kick:
             return "kick";
+        case NetworkOperation::peer_state:
+            return "peer_state";
     }
 
     return "unknown";

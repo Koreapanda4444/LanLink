@@ -5,7 +5,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace lanlink::relay {
@@ -17,11 +19,27 @@ struct RoutedNetworkEvent {
     bool operator==(const RoutedNetworkEvent&) const = default;
 };
 
+struct RoutedPeerStateChange {
+    auth::DeviceId recipient_device_id{};
+    std::optional<protocol::NetworkPeerState> state;
+    protocol::NetworkPeerRevocation revocation;
+
+    bool operator==(const RoutedPeerStateChange&) const = default;
+};
+
 struct NetworkOperationOutcome {
     protocol::NetworkOperationResult result;
     std::vector<RoutedNetworkEvent> events;
+    std::vector<RoutedPeerStateChange> peer_changes;
 
     bool operator==(const NetworkOperationOutcome&) const = default;
+};
+
+struct NetworkPeerStateOutcome {
+    protocol::NetworkResultCode code = protocol::NetworkResultCode::success;
+    std::optional<protocol::NetworkPeerState> state;
+
+    bool operator==(const NetworkPeerStateOutcome&) const = default;
 };
 
 struct NetworkListOutcome {
@@ -73,11 +91,27 @@ public:
         const auth::DeviceId& actor,
         const protocol::NetworkMemberRequest& request,
         std::int64_t now_ms);
+    [[nodiscard]] NetworkPeerStateOutcome peer_state(
+        const auth::DeviceId& actor,
+        const protocol::NetworkSelectionRequest& request,
+        std::int64_t now_ms);
+    [[nodiscard]] std::vector<RoutedPeerStateChange> peer_states_for_device(
+        const auth::DeviceId& actor);
 
 private:
+    [[nodiscard]] std::uint64_t revision_for(const storage::NetworkId& network_id) const;
+    [[nodiscard]] std::uint64_t advance_revision(const storage::NetworkId& network_id);
+    [[nodiscard]] protocol::NetworkPeerState make_peer_state(
+        const storage::NetworkId& network_id,
+        const auth::DeviceId& actor,
+        std::uint64_t revision) const;
+    [[nodiscard]] std::vector<RoutedPeerStateChange> changes_for_members(
+        const storage::NetworkId& network_id, std::uint64_t revision) const;
+
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;
     std::mutex mutex_;
+    std::map<storage::NetworkId, std::uint64_t> revisions_;
 };
 
 }

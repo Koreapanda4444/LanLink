@@ -108,6 +108,43 @@ void expect_event(const lanlink::relay::RoutedControlFrame& routed,
            std::string(name) + " event wire round trip");
 }
 
+void expect_peer_state(const lanlink::relay::RoutedControlFrame& routed,
+                       const lanlink::auth::DeviceId& recipient,
+                       const lanlink::protocol::NetworkId& id,
+                       const std::uint32_t own_address,
+                       const std::size_t peer_count,
+                       const std::uint64_t revision,
+                       const std::string_view name) {
+    using namespace lanlink::protocol;
+    expect(routed.recipient_device_id == recipient &&
+               routed.frame.type == MessageType::network_peer_state_update &&
+               routed.frame.request_id == 0,
+           std::string(name) + " routed update");
+    if (routed.frame.type == MessageType::network_peer_state_update) {
+        const auto state = decode_network_peer_state(routed.frame.payload);
+        expect(state.network_id == id && state.revision == revision &&
+                   state.subnet_address == 0x0a400000U &&
+                   state.prefix_length == 24 &&
+                   state.own_address == own_address &&
+                   state.peers.size() == peer_count,
+               name);
+    }
+}
+
+void expect_revocation(const lanlink::relay::RoutedControlFrame& routed,
+                       const lanlink::auth::DeviceId& recipient,
+                       const lanlink::protocol::NetworkId& id,
+                       const std::uint64_t revision,
+                       const std::string_view name) {
+    using namespace lanlink::protocol;
+    expect(routed.recipient_device_id == recipient &&
+               routed.frame.type == MessageType::network_peer_state_revoked &&
+               routed.frame.request_id == 0 &&
+               decode_network_peer_revocation(routed.frame.payload) ==
+                   NetworkPeerRevocation{id, revision},
+           name);
+}
+
 void test_management_flow(const std::filesystem::path& directory) {
     using namespace lanlink;
 
@@ -130,7 +167,11 @@ void test_management_flow(const std::filesystem::path& directory) {
                      protocol::NetworkResultCode::success,
                      id,
                      "owner create");
-    expect(create.events.empty(), "create sends no event");
+    expect(create.events.size() == 1, "create publishes owner peer state");
+    if (create.events.size() == 1) {
+        expect_peer_state(create.events.front(), owner, id, 0x0a400001U, 0, 1,
+                          "owner sees assigned address");
+    }
 
     const auto list = channel.handle_authenticated(
         owner, request(protocol::MessageType::network_list_request, 101, {}));
@@ -150,6 +191,19 @@ void test_management_flow(const std::filesystem::path& directory) {
     const auto selection = protocol::encode_network_selection_request({id});
     const auto membership = protocol::encode_network_member_request({id, member});
     const auto guest_membership = protocol::encode_network_member_request({id, guest});
+
+    const auto owner_peers = channel.handle_authenticated(
+        owner, request(protocol::MessageType::network_peer_state_request, 103, selection));
+    expect(owner_peers.response.type == protocol::MessageType::network_peer_state_result &&
+               owner_peers.response.request_id == 103 &&
+               protocol::decode_network_peer_state(owner_peers.response.payload).own_address ==
+                   0x0a400001U,
+           "owner can request current peer state");
+    const auto outsider_peers = channel.handle_authenticated(
+        guest, request(protocol::MessageType::network_peer_state_request, 103, selection));
+    expect_operation(outsider_peers, 103, protocol::NetworkOperation::peer_state,
+                     protocol::NetworkResultCode::not_member, id,
+                     "nonmember cannot see peer addresses");
 
     const auto join = channel.handle_authenticated(
         member, request(protocol::MessageType::network_join_request, 104, selection));
@@ -187,14 +241,18 @@ void test_management_flow(const std::filesystem::path& directory) {
                      protocol::NetworkResultCode::success,
                      id,
                      "owner approves member");
-    expect(approved.events.size() == 1, "approval notifies member");
-    if (approved.events.size() == 1) {
+    expect(approved.events.size() == 3, "approval notifies member and syncs both peers");
+    if (approved.events.size() == 3) {
         expect_event(approved.events.front(),
                      member,
                      protocol::NetworkEventKind::member_joined,
                      id,
                      member,
                      "member sees approval");
+        expect_peer_state(approved.events[1], owner, id, 0x0a400001U, 1, 2,
+                          "owner sees approved member address");
+        expect_peer_state(approved.events[2], member, id, 0x0a400002U, 1, 2,
+                          "new member sees owner address");
     }
 
     const auto invited = channel.handle_authenticated(
@@ -223,7 +281,22 @@ void test_management_flow(const std::filesystem::path& directory) {
                      protocol::NetworkResultCode::success,
                      id,
                      "invited guest joins");
-    expect(joined.events.size() == 2, "join notifies existing members");
+    expect(joined.events.size() == 5, "join notifies and syncs all three members");
+    if (joined.events.size() == 5) {
+        expect_peer_state(joined.events[2], owner, id, 0x0a400001U, 2, 3,
+                          "owner sees joined guest");
+        expect_peer_state(joined.events[3], member, id, 0x0a400002U, 2, 3,
+                          "member sees joined guest");
+        expect_peer_state(joined.events[4], guest, id, 0x0a400003U, 2, 3,
+                          "guest receives full peer snapshot");
+    }
+
+    const auto initial = channel.initial_peer_states(member);
+    expect(initial.size() == 1, "reconnected member receives current snapshot");
+    if (initial.size() == 1) {
+        expect_peer_state(initial.front(), member, id, 0x0a400002U, 2, 3,
+                          "reconnected member address restored");
+    }
 
     const auto kicked = channel.handle_authenticated(
         owner, request(protocol::MessageType::network_kick_request, 109, membership));
@@ -233,21 +306,29 @@ void test_management_flow(const std::filesystem::path& directory) {
                      protocol::NetworkResultCode::success,
                      id,
                      "owner kicks member");
-    expect(kicked.events.size() == 2, "kick notifies target and guest");
-    if (kicked.events.size() == 2) {
+    expect(kicked.events.size() == 5, "kick notifies and revokes removed member");
+    if (kicked.events.size() == 5) {
         expect_event(kicked.events.front(),
                      member,
                      protocol::NetworkEventKind::member_kicked,
                      id,
                      member,
                      "kicked member notified");
-        expect_event(kicked.events.back(),
+        expect_event(kicked.events[1],
                      guest,
                      protocol::NetworkEventKind::member_kicked,
                      id,
                      member,
                      "other member notified");
+        expect_peer_state(kicked.events[2], owner, id, 0x0a400001U, 1, 4,
+                          "owner drops kicked peer");
+        expect_peer_state(kicked.events[3], guest, id, 0x0a400003U, 1, 4,
+                          "guest drops kicked peer");
+        expect_revocation(kicked.events[4], member, id, 4,
+                          "kicked member address state revoked");
     }
+    expect(channel.initial_peer_states(member).empty(),
+           "kicked member receives no snapshot on reconnect");
 
     const auto left = channel.handle_authenticated(
         guest, request(protocol::MessageType::network_leave_request, 110, selection));
@@ -257,7 +338,15 @@ void test_management_flow(const std::filesystem::path& directory) {
                      protocol::NetworkResultCode::success,
                      id,
                      "guest leaves");
-    expect(left.events.size() == 1, "leave notifies owner");
+    expect(left.events.size() == 3, "leave notifies owner and revokes guest state");
+    if (left.events.size() == 3) {
+        expect_peer_state(left.events[1], owner, id, 0x0a400001U, 0, 5,
+                          "owner drops departed guest");
+        expect_revocation(left.events[2], guest, id, 5,
+                          "departed guest address state revoked");
+    }
+    expect(channel.initial_peer_states(guest).empty(),
+           "departed guest receives no snapshot on reconnect");
 
     const auto owner_leave = channel.handle_authenticated(
         owner, request(protocol::MessageType::network_leave_request, 111, selection));
@@ -302,6 +391,10 @@ void test_invalid_frames(const std::filesystem::path& directory) {
         static_cast<void>(channel.handle_authenticated(
             owner, request(protocol::MessageType::network_event, 3, {})));
     }, "server event as client request rejected");
+    expect_error([&] {
+        static_cast<void>(channel.handle_authenticated(
+            owner, request(protocol::MessageType::network_peer_state_update, 4, {})));
+    }, "server peer update as client request rejected");
 
     const auto malformed_list = channel.handle_authenticated(
         owner,
@@ -326,6 +419,14 @@ void test_invalid_frames(const std::filesystem::path& directory) {
                protocol::Frame{protocol::MessageType::error, 23, {}} &&
                malformed_member.events.empty(),
            "truncated member request returns correlated error");
+    const auto malformed_peers = channel.handle_authenticated(
+        owner,
+        request(protocol::MessageType::network_peer_state_request, 25,
+                std::vector<std::byte>(protocol::network_id_size)));
+    expect(malformed_peers.response ==
+               protocol::Frame{protocol::MessageType::error, 25, {}} &&
+               malformed_peers.events.empty(),
+           "zero peer state network returns correlated error");
     expect(!store.find_device(owner), "rejected malformed requests have no storage effects");
 
     relay::NetworkControlChannel bad_clock(service, [] { return -1; });
