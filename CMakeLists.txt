@@ -254,4 +254,33 @@ if(BUILD_TESTING)
     )
     lanlink_enable_warnings(lanlink_network_control_channel_tests)
     add_test(NAME lanlink-network-control-channel COMMAND lanlink_network_control_channel_tests)
+
+    if(UNIX)
+        find_program(LANLINK_OPENSSL_EXECUTABLE openssl)
+        find_program(LANLINK_BASH_EXECUTABLE bash)
+
+        if(LANLINK_OPENSSL_EXECUTABLE AND LANLINK_BASH_EXECUTABLE)
+            add_executable(lanlink_network_client_tests
+                tests/network_client_tests.cpp
+            )
+            target_link_libraries(
+                lanlink_network_client_tests
+                PRIVATE
+                    lanlink_transport
+                    lanlink_relay_domain
+                    lanlink_auth
+                    ${LANLINK_SQLITE_TARGET}
+            )
+            lanlink_enable_warnings(lanlink_network_client_tests)
+            add_test(
+                NAME lanlink-network-client
+                COMMAND
+                    ${LANLINK_BASH_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/network_client_integration.sh
+                    ${LANLINK_OPENSSL_EXECUTABLE}
+                    $<TARGET_FILE:lanlink_network_client_tests>
+            )
+            set_tests_properties(lanlink-network-client PROPERTIES TIMEOUT 40)
+        endif()
+    endif()
 endif()

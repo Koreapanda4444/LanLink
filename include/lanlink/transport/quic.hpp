@@ -1,10 +1,12 @@
 #pragma once
 
 #include "lanlink/auth/identity.hpp"
+#include "lanlink/protocol/network_messages.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stop_token>
@@ -45,6 +47,13 @@ struct QuicClientOptions {
     std::chrono::milliseconds reconnect_maximum_delay{30'000};
 };
 
+struct NetworkListReply {
+    protocol::NetworkResultCode code = protocol::NetworkResultCode::success;
+    protocol::NetworkListResult result;
+
+    bool operator==(const NetworkListReply&) const = default;
+};
+
 class QuicRelayServer {
 public:
     QuicRelayServer(QuicServerOptions options,
@@ -82,6 +91,31 @@ public:
     [[nodiscard]] bool connected() const noexcept;
     [[nodiscard]] bool authenticated() const noexcept;
     [[nodiscard]] std::optional<auth::SessionId> session_id() const noexcept;
+
+    [[nodiscard]] protocol::NetworkOperationResult create_network(
+        std::string name,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] NetworkListReply list_networks(
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] protocol::NetworkOperationResult join_network(
+        const protocol::NetworkId& network_id,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] protocol::NetworkOperationResult leave_network(
+        const protocol::NetworkId& network_id,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] protocol::NetworkOperationResult invite_member(
+        const protocol::NetworkId& network_id,
+        const protocol::NetworkDeviceId& device_id,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] protocol::NetworkOperationResult approve_member(
+        const protocol::NetworkId& network_id,
+        const protocol::NetworkDeviceId& device_id,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    [[nodiscard]] protocol::NetworkOperationResult kick_member(
+        const protocol::NetworkId& network_id,
+        const protocol::NetworkDeviceId& device_id,
+        std::chrono::milliseconds timeout = std::chrono::seconds{10});
+    void set_network_event_handler(std::function<void(const protocol::NetworkEvent&)> handler);
 
 private:
     class Impl;

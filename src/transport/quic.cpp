@@ -17,6 +17,8 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <functional>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -26,6 +28,9 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -769,6 +774,7 @@ public:
             auth_token_ = std::make_unique<auth::AuthToken>(
                 auth::AuthToken::load(options_.auth_token_file));
             initialize();
+            event_worker_ = std::thread([this] { dispatch_network_events(); });
         } catch (...) {
             release();
             throw;
@@ -783,6 +789,15 @@ public:
             run_complete_.wait(lock, [this] { return !running_.load(); });
         }
 
+        {
+            std::lock_guard lock(event_queue_mutex_);
+            event_worker_stopping_ = true;
+            event_queue_.clear();
+        }
+        event_queue_wake_.notify_all();
+        if (event_worker_.joinable()) {
+            event_worker_.join();
+        }
         release();
     }
 
@@ -821,6 +836,8 @@ public:
 
         if (state) {
             std::lock_guard lock(state->mutex);
+            state->authenticated = false;
+            fail_pending(*state, "network control connection stopped");
 
             if (state->connection != nullptr && !state->shutdown_requested) {
                 state->shutdown_requested = true;
@@ -848,7 +865,117 @@ public:
         return session_id_;
     }
 
+    [[nodiscard]] protocol::NetworkOperationResult create_network(
+        std::string name, const std::chrono::milliseconds timeout) {
+        return request_operation(protocol::NetworkOperation::create,
+                                 protocol::MessageType::network_create_request,
+                                 protocol::encode_network_create_request({std::move(name)}),
+                                 timeout);
+    }
+
+    [[nodiscard]] NetworkListReply list_networks(const std::chrono::milliseconds timeout) {
+        const auto frame = request_control(protocol::MessageType::network_list_request,
+                                           protocol::encode_network_list_request(),
+                                           protocol::NetworkOperation::list,
+                                           timeout);
+        if (frame.type == protocol::MessageType::network_list_result) {
+            return {protocol::NetworkResultCode::success,
+                    protocol::decode_network_list_result(frame.payload)};
+        }
+        const auto result = protocol::decode_network_operation_result(frame.payload);
+        return {result.code, {}};
+    }
+
+    [[nodiscard]] protocol::NetworkOperationResult join_network(
+        const protocol::NetworkId& id, const std::chrono::milliseconds timeout) {
+        return request_operation(protocol::NetworkOperation::join,
+                                 protocol::MessageType::network_join_request,
+                                 protocol::encode_network_selection_request({id}), timeout);
+    }
+
+    [[nodiscard]] protocol::NetworkOperationResult leave_network(
+        const protocol::NetworkId& id, const std::chrono::milliseconds timeout) {
+        return request_operation(protocol::NetworkOperation::leave,
+                                 protocol::MessageType::network_leave_request,
+                                 protocol::encode_network_selection_request({id}), timeout);
+    }
+
+    [[nodiscard]] protocol::NetworkOperationResult invite_member(
+        const protocol::NetworkId& id,
+        const protocol::NetworkDeviceId& device,
+        const std::chrono::milliseconds timeout) {
+        return request_operation(protocol::NetworkOperation::invite,
+                                 protocol::MessageType::network_invite_request,
+                                 protocol::encode_network_member_request({id, device}), timeout);
+    }
+
+    [[nodiscard]] protocol::NetworkOperationResult approve_member(
+        const protocol::NetworkId& id,
+        const protocol::NetworkDeviceId& device,
+        const std::chrono::milliseconds timeout) {
+        return request_operation(protocol::NetworkOperation::approve,
+                                 protocol::MessageType::network_approve_request,
+                                 protocol::encode_network_member_request({id, device}), timeout);
+    }
+
+    [[nodiscard]] protocol::NetworkOperationResult kick_member(
+        const protocol::NetworkId& id,
+        const protocol::NetworkDeviceId& device,
+        const std::chrono::milliseconds timeout) {
+        return request_operation(protocol::NetworkOperation::kick,
+                                 protocol::MessageType::network_kick_request,
+                                 protocol::encode_network_member_request({id, device}), timeout);
+    }
+
+    void set_network_event_handler(
+        std::function<void(const protocol::NetworkEvent&)> handler) {
+        std::lock_guard lock(event_handler_mutex_);
+        event_handler_ = std::move(handler);
+    }
+
 private:
+    void dispatch_network_events() noexcept {
+        while (true) {
+            protocol::NetworkEvent event;
+            {
+                std::unique_lock lock(event_queue_mutex_);
+                event_queue_wake_.wait(lock, [this] {
+                    return event_worker_stopping_ || !event_queue_.empty();
+                });
+                if (event_worker_stopping_) {
+                    return;
+                }
+                event = event_queue_.front();
+                event_queue_.pop_front();
+            }
+
+            try {
+                std::function<void(const protocol::NetworkEvent&)> handler;
+                {
+                    std::lock_guard lock(event_handler_mutex_);
+                    handler = event_handler_;
+                }
+                if (handler) {
+                    handler(event);
+                }
+            } catch (const std::exception& error) {
+                log_noexcept(logger_, core::LogLevel::warning,
+                             "network event handler failed: " + std::string(error.what()));
+            } catch (...) {
+                log_noexcept(logger_, core::LogLevel::warning,
+                             "network event handler failed");
+            }
+        }
+    }
+
+    struct PendingControl {
+        protocol::NetworkOperation operation;
+        std::condition_variable wake;
+        std::optional<protocol::Frame> response;
+        std::string_view failure;
+        bool finished = false;
+    };
+
     struct AttemptState {
         std::mutex mutex;
         std::condition_variable complete_wake;
@@ -856,6 +983,9 @@ private:
         bool complete = false;
         bool ever_authenticated = false;
         bool shutdown_requested = false;
+        bool authenticated = false;
+        HQUIC control_stream = nullptr;
+        std::unordered_map<std::uint32_t, std::shared_ptr<PendingControl>> pending;
         std::optional<auth::SessionId> session_id;
     };
 
@@ -885,6 +1015,75 @@ private:
         auth::ServerHandshake::Clock::time_point deadline;
         protocol::FrameStreamDecoder decoder;
     };
+
+    static void fail_pending(AttemptState& state, const std::string_view reason) noexcept {
+        for (const auto& [id, pending] : state.pending) {
+            static_cast<void>(id);
+            pending->failure = reason;
+            pending->finished = true;
+            pending->wake.notify_all();
+        }
+        state.pending.clear();
+    }
+
+    [[nodiscard]] protocol::Frame request_control(
+        const protocol::MessageType type,
+        std::vector<std::byte> payload,
+        const protocol::NetworkOperation operation,
+        const std::chrono::milliseconds timeout) {
+        if (timeout <= std::chrono::milliseconds::zero()) {
+            throw std::invalid_argument("network control timeout must be positive");
+        }
+
+        std::shared_ptr<AttemptState> state;
+        {
+            std::lock_guard lock(active_mutex_);
+            state = active_attempt_.lock();
+        }
+
+        if (!state) {
+            throw std::runtime_error("network control is not authenticated");
+        }
+
+        std::unique_lock lock(state->mutex);
+        if (!state->authenticated || state->control_stream == nullptr ||
+            stop_requested_.load()) {
+            throw std::runtime_error("network control is not authenticated");
+        }
+
+        std::uint32_t request_id;
+        do {
+            request_id = next_request_id_.fetch_add(1);
+        } while (request_id == 0 || state->pending.contains(request_id));
+
+        auto pending = std::make_shared<PendingControl>();
+        pending->operation = operation;
+        state->pending.emplace(request_id, pending);
+        const auto status = send_frame(api_, state->control_stream,
+                                       {type, request_id, std::move(payload)});
+        if (QUIC_FAILED(status)) {
+            state->pending.erase(request_id);
+            throw std::runtime_error("network control send failed: " + status_text(status));
+        }
+
+        if (!pending->wake.wait_for(lock, timeout, [&] { return pending->finished; })) {
+            state->pending.erase(request_id);
+            throw std::runtime_error("network control request timed out");
+        }
+        if (!pending->failure.empty()) {
+            throw std::runtime_error(std::string(pending->failure));
+        }
+        return std::move(*pending->response);
+    }
+
+    [[nodiscard]] protocol::NetworkOperationResult request_operation(
+        const protocol::NetworkOperation operation,
+        const protocol::MessageType type,
+        std::vector<std::byte> payload,
+        const std::chrono::milliseconds timeout) {
+        const auto response = request_control(type, std::move(payload), operation, timeout);
+        return protocol::decode_network_operation_result(response.payload);
+    }
 
     void initialize() {
         auto status = MsQuicOpen2(&api_);
@@ -1143,6 +1342,12 @@ private:
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
+                {
+                    std::lock_guard lock(context->state->mutex);
+                    context->state->authenticated = false;
+                    context->state->control_stream = nullptr;
+                    fail_pending(*context->state, "relay transport disconnected");
+                }
                 log_noexcept(logger_,
                              core::LogLevel::warning,
                              "relay transport shutdown: " +
@@ -1152,6 +1357,12 @@ private:
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
+                {
+                    std::lock_guard lock(context->state->mutex);
+                    context->state->authenticated = false;
+                    context->state->control_stream = nullptr;
+                    fail_pending(*context->state, "relay closed the connection");
+                }
                 log_noexcept(logger_, core::LogLevel::warning, "relay closed the connection");
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
@@ -1163,6 +1374,9 @@ private:
                     std::lock_guard lock(context->state->mutex);
                     clear_session_id(context->state->session_id);
                     context->state->connection = nullptr;
+                    context->state->control_stream = nullptr;
+                    context->state->authenticated = false;
+                    fail_pending(*context->state, "relay connection ended");
                 }
 
                 api_->ConnectionClose(connection);
@@ -1281,7 +1495,7 @@ private:
 
                         for (const auto& frame : frames) {
                             if (context->handshake.authenticated()) {
-                                handle_control_notification(frame);
+                                handle_control_frame(context, frame);
                             } else {
                                 handle_auth_frame(stream, context, frame);
                             }
@@ -1309,6 +1523,15 @@ private:
                                          authentication_shutdown_code);
                 break;
             case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+                {
+                    std::lock_guard lock(context->state->mutex);
+                    if (context->state->control_stream == stream) {
+                        context->state->control_stream = nullptr;
+                        context->state->authenticated = false;
+                        authenticated_.store(false);
+                        fail_pending(*context->state, "relay control stream ended");
+                    }
+                }
                 if (!event->SHUTDOWN_COMPLETE.AppCloseInProgress) {
                     api_->StreamClose(stream);
                 }
@@ -1370,25 +1593,76 @@ private:
             std::lock_guard lock(context->state->mutex);
             context->state->ever_authenticated = true;
             context->state->session_id = *session_id;
+            if (!stop_requested_.load() && context->state->connection != nullptr) {
+                context->state->control_stream = stream;
+                context->state->authenticated = true;
+                authenticated_.store(true);
+            }
         }
 
-        authenticated_.store(true);
         log_noexcept(logger_,
                      core::LogLevel::info,
                      "relay authentication completed for device " +
                          identity_->device_id_hex());
     }
 
-    void handle_control_notification(const protocol::Frame& frame) {
-        if (frame.type != protocol::MessageType::network_event || frame.request_id != 0) {
-            throw std::runtime_error("unexpected relay control frame");
+    void handle_control_frame(StreamContext* context, const protocol::Frame& frame) {
+        if (frame.type == protocol::MessageType::network_event) {
+            if (frame.request_id != 0) {
+                throw std::runtime_error("network event has a request id");
+            }
+            const auto event = protocol::decode_network_event(frame.payload);
+            log_noexcept(logger_, core::LogLevel::info,
+                         "network event received: " +
+                             std::string(protocol::network_event_kind_name(event.kind)));
+
+            {
+                std::lock_guard lock(event_queue_mutex_);
+                if (event_queue_.size() == 1024) {
+                    event_queue_.pop_front();
+                    log_noexcept(logger_, core::LogLevel::warning,
+                                 "network event handler queue overflow");
+                }
+                event_queue_.push_back(event);
+            }
+            event_queue_wake_.notify_one();
+            return;
         }
 
-        const auto event = protocol::decode_network_event(frame.payload);
-        log_noexcept(logger_,
-                     core::LogLevel::info,
-                     "network event received: " +
-                         std::string(protocol::network_event_kind_name(event.kind)));
+        if (frame.request_id == 0) {
+            throw std::runtime_error("control response has a zero request id");
+        }
+
+        std::lock_guard lock(context->state->mutex);
+        const auto found = context->state->pending.find(frame.request_id);
+        if (found == context->state->pending.end()) {
+            log_noexcept(logger_, core::LogLevel::warning,
+                         "late or unknown network control response ignored");
+            return;
+        }
+
+        const auto expected = found->second->operation;
+        if (frame.type == protocol::MessageType::network_operation_result) {
+            const auto result = protocol::decode_network_operation_result(frame.payload);
+            if (result.operation != expected) {
+                throw std::runtime_error("network control response operation mismatch");
+            }
+        } else if (frame.type == protocol::MessageType::network_list_result &&
+                   expected == protocol::NetworkOperation::list) {
+            static_cast<void>(protocol::decode_network_list_result(frame.payload));
+        } else if (frame.type == protocol::MessageType::error) {
+            if (!frame.payload.empty()) {
+                throw std::runtime_error("network control error has an invalid payload");
+            }
+            found->second->failure = "relay rejected network control request";
+        } else {
+            throw std::runtime_error("unexpected relay control response");
+        }
+
+        found->second->response = frame;
+        found->second->finished = true;
+        found->second->wake.notify_all();
+        context->state->pending.erase(found);
     }
 
     QuicClientOptions options_;
@@ -1407,6 +1681,14 @@ private:
     std::optional<auth::SessionId> session_id_;
     std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
+    std::atomic<std::uint32_t> next_request_id_ = 2;
+    std::mutex event_handler_mutex_;
+    std::function<void(const protocol::NetworkEvent&)> event_handler_;
+    std::mutex event_queue_mutex_;
+    std::condition_variable event_queue_wake_;
+    std::deque<protocol::NetworkEvent> event_queue_;
+    std::thread event_worker_;
+    bool event_worker_stopping_ = false;
     std::mutex delay_mutex_;
     std::condition_variable delay_wake_;
     std::mutex run_mutex_;
@@ -1461,6 +1743,51 @@ bool QuicRelayClient::authenticated() const noexcept {
 
 std::optional<auth::SessionId> QuicRelayClient::session_id() const noexcept {
     return impl_->session_id();
+}
+
+protocol::NetworkOperationResult QuicRelayClient::create_network(
+    std::string name, const std::chrono::milliseconds timeout) {
+    return impl_->create_network(std::move(name), timeout);
+}
+
+NetworkListReply QuicRelayClient::list_networks(const std::chrono::milliseconds timeout) {
+    return impl_->list_networks(timeout);
+}
+
+protocol::NetworkOperationResult QuicRelayClient::join_network(
+    const protocol::NetworkId& network_id, const std::chrono::milliseconds timeout) {
+    return impl_->join_network(network_id, timeout);
+}
+
+protocol::NetworkOperationResult QuicRelayClient::leave_network(
+    const protocol::NetworkId& network_id, const std::chrono::milliseconds timeout) {
+    return impl_->leave_network(network_id, timeout);
+}
+
+protocol::NetworkOperationResult QuicRelayClient::invite_member(
+    const protocol::NetworkId& network_id,
+    const protocol::NetworkDeviceId& device_id,
+    const std::chrono::milliseconds timeout) {
+    return impl_->invite_member(network_id, device_id, timeout);
+}
+
+protocol::NetworkOperationResult QuicRelayClient::approve_member(
+    const protocol::NetworkId& network_id,
+    const protocol::NetworkDeviceId& device_id,
+    const std::chrono::milliseconds timeout) {
+    return impl_->approve_member(network_id, device_id, timeout);
+}
+
+protocol::NetworkOperationResult QuicRelayClient::kick_member(
+    const protocol::NetworkId& network_id,
+    const protocol::NetworkDeviceId& device_id,
+    const std::chrono::milliseconds timeout) {
+    return impl_->kick_member(network_id, device_id, timeout);
+}
+
+void QuicRelayClient::set_network_event_handler(
+    std::function<void(const protocol::NetworkEvent&)> handler) {
+    impl_->set_network_event_handler(std::move(handler));
 }
 
 }
