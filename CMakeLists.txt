@@ -233,6 +233,13 @@ if(BUILD_TESTING)
     lanlink_enable_warnings(lanlink_storage_tests)
     add_test(NAME lanlink-storage COMMAND lanlink_storage_tests)
 
+    add_executable(lanlink_virtual_ipv4_tests
+        tests/virtual_ipv4_tests.cpp
+    )
+    target_link_libraries(lanlink_virtual_ipv4_tests PRIVATE lanlink_relay_domain ${LANLINK_SQLITE_TARGET})
+    lanlink_enable_warnings(lanlink_virtual_ipv4_tests)
+    add_test(NAME lanlink-virtual-ipv4 COMMAND lanlink_virtual_ipv4_tests)
+
     add_executable(lanlink_network_service_tests
         tests/network_service_tests.cpp
     )

@@ -155,6 +155,13 @@ void test_network_management(const std::filesystem::path& directory) {
                create.code == protocol::NetworkResultCode::success,
            "create must succeed over authenticated control stream");
     expect(store.find_network(id).has_value(), "create must persist network in SQLite");
+    expect(store.find_subnet(id).has_value() &&
+               store.find_subnet(id)->network_address ==
+                   storage::virtual_ipv4_pool_first &&
+               store.find_virtual_ipv4_lease(id, owner_identity.device_id()).has_value() &&
+               store.find_virtual_ipv4_lease(id, owner_identity.device_id())->address ==
+                   storage::virtual_ipv4_pool_first + 1,
+           "network creation must allocate and persist owner virtual IPv4 lease");
     expect_error([&] { static_cast<void>(owner.create_network("")); },
                  "invalid network name must fail locally");
 
@@ -194,12 +201,18 @@ void test_network_management(const std::filesystem::path& directory) {
                member_list.result.networks.front().role == protocol::NetworkRole::member,
            "member list must include approved network");
     expect(store.list_members(id).size() == 2, "membership must persist in SQLite");
+    expect(store.find_virtual_ipv4_lease(id, member_identity.device_id()).has_value() &&
+               store.find_virtual_ipv4_lease(id, member_identity.device_id())->address ==
+                   storage::virtual_ipv4_pool_first + 2,
+           "approved member must receive an IPv4 lease in same subnet");
 
     const auto kicked = owner.kick_member(id, member_identity.device_id());
     expect(kicked.code == protocol::NetworkResultCode::success,
            "owner must kick member over relay");
     expect(member.list_networks().result.networks.empty(),
            "kicked member must no longer list network");
+    expect(!store.find_virtual_ipv4_lease(id, member_identity.device_id()),
+           "kicking member releases their IPv4 lease");
 
     const auto invited = owner.invite_member(id, member_identity.device_id());
     expect(invited.code == protocol::NetworkResultCode::success,
@@ -210,10 +223,15 @@ void test_network_management(const std::filesystem::path& directory) {
            "invitation must persist in SQLite");
     expect(member.join_network(id).code == protocol::NetworkResultCode::success,
            "invited member must join without pending approval");
+    expect(store.find_virtual_ipv4_lease(id, member_identity.device_id())->address ==
+               storage::virtual_ipv4_pool_first + 2,
+           "rejoined member receives available IPv4 host");
     expect(member.leave_network(id).code == protocol::NetworkResultCode::success,
            "member must leave over relay");
     expect(store.list_members(id).size() == 1,
            "leave must remove member from SQLite");
+    expect(!store.find_virtual_ipv4_lease(id, member_identity.device_id()),
+           "leaving releases member IPv4 lease");
 
     server.stop();
     wait_until([&] { return !owner.authenticated() && !member.authenticated(); },
@@ -235,7 +253,10 @@ void test_network_management(const std::filesystem::path& directory) {
 
     storage::RelayStore reopened(database);
     expect(reopened.find_network(id).has_value() &&
-               reopened.list_members(id).size() == 1,
+               reopened.list_members(id).size() == 1 &&
+               reopened.find_virtual_ipv4_lease(id, owner_identity.device_id()) &&
+               reopened.find_virtual_ipv4_lease(id, owner_identity.device_id())->address ==
+                   storage::virtual_ipv4_pool_first + 1,
            "network and owner membership must survive reopening SQLite");
 }
 

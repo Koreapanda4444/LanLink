@@ -315,6 +315,36 @@ MembershipRecord read_membership(const Statement& statement) {
     return result;
 }
 
+VirtualIpv4Address read_virtual_address(const Statement& statement, const int column) {
+    const auto raw = statement.column_integer(column);
+    if (raw < virtual_ipv4_pool_first || raw >= virtual_ipv4_pool_end) {
+        throw std::runtime_error("SQLite row contains an invalid virtual IPv4 address");
+    }
+    return static_cast<VirtualIpv4Address>(raw);
+}
+
+NetworkSubnetRecord read_subnet(const Statement& statement) {
+    NetworkSubnetRecord result;
+    result.network_id = statement.column_blob<network_id_size>(0);
+    result.network_address = read_virtual_address(statement, 1);
+    if (result.network_address % virtual_ipv4_subnet_size != 0) {
+        throw std::runtime_error("SQLite row contains an unaligned virtual subnet");
+    }
+    return result;
+}
+
+VirtualIpv4LeaseRecord read_lease(const Statement& statement) {
+    VirtualIpv4LeaseRecord result;
+    result.network_id = statement.column_blob<network_id_size>(0);
+    result.device_id = statement.column_blob<auth::device_id_size>(1);
+    result.address = read_virtual_address(statement, 2);
+    const auto host = result.address % virtual_ipv4_subnet_size;
+    if (host == 0 || host == virtual_ipv4_subnet_size - 1) {
+        throw std::runtime_error("SQLite row contains a reserved virtual IPv4 address");
+    }
+    return result;
+}
+
 InvitationRecord read_invitation(const Statement& statement) {
     InvitationRecord result;
     result.network_id = statement.column_blob<network_id_size>(0);
@@ -367,6 +397,28 @@ std::vector<MembershipRecord> list_memberships(sqlite3* database) {
         result.push_back(read_membership(statement));
     }
 
+    return result;
+}
+
+std::vector<NetworkSubnetRecord> list_subnets(sqlite3* database) {
+    Statement statement(database,
+                        "SELECT network_id, subnet_address FROM network_subnets "
+                        "ORDER BY network_id;");
+    std::vector<NetworkSubnetRecord> result;
+    while (statement.step_row()) {
+        result.push_back(read_subnet(statement));
+    }
+    return result;
+}
+
+std::vector<VirtualIpv4LeaseRecord> list_leases(sqlite3* database) {
+    Statement statement(database,
+                        "SELECT network_id, device_id, ipv4_address "
+                        "FROM virtual_ipv4_leases ORDER BY network_id, ipv4_address;");
+    std::vector<VirtualIpv4LeaseRecord> result;
+    while (statement.step_row()) {
+        result.push_back(read_lease(statement));
+    }
     return result;
 }
 
@@ -472,6 +524,18 @@ public:
             migrate();
             validate_schema();
 
+            if (query_integer(database_,
+                              "SELECT COUNT(*) FROM networks AS n "
+                              "LEFT JOIN network_subnets AS s ON s.network_id = n.network_id "
+                              "WHERE s.network_id IS NULL;") != 0 ||
+                query_integer(database_,
+                              "SELECT COUNT(*) FROM memberships AS m "
+                              "LEFT JOIN virtual_ipv4_leases AS l "
+                              "ON l.network_id = m.network_id AND l.device_id = m.device_id "
+                              "WHERE l.network_id IS NULL;") != 0) {
+                throw std::runtime_error("relay virtual IPv4 assignments are incomplete");
+            }
+
             if (query_text(database_, "PRAGMA quick_check;") != "ok") {
                 throw std::runtime_error("relay database integrity check failed");
             }
@@ -561,6 +625,8 @@ public:
             statement.step_done();
         }
 
+        insert_subnet(network.id);
+
         {
             Statement statement(database_,
                                 "INSERT INTO memberships("
@@ -573,6 +639,8 @@ public:
             statement.bind_integer(4, network.created_at_ms);
             statement.step_done();
         }
+
+        insert_lease(network.id, network.owner_device_id);
 
         transaction.commit();
     }
@@ -615,16 +683,24 @@ public:
         require_device_id(device_id);
         require_timestamp(joined_at_ms);
         std::lock_guard lock(mutex_);
-        Statement statement(database_,
-                            "INSERT OR IGNORE INTO memberships("
-                            "network_id, device_id, role, joined_at_ms) "
-                            "VALUES(?1, ?2, ?3, ?4);");
-        statement.bind_blob(1, network_id.data(), network_id.size());
-        statement.bind_blob(2, device_id.data(), device_id.size());
-        statement.bind_integer(3, static_cast<std::int64_t>(MembershipRole::member));
-        statement.bind_integer(4, joined_at_ms);
-        statement.step_done();
-        return sqlite3_changes(database_) == 1;
+        Transaction transaction(database_, true);
+        {
+            Statement statement(database_,
+                                "INSERT OR IGNORE INTO memberships("
+                                "network_id, device_id, role, joined_at_ms) "
+                                "VALUES(?1, ?2, ?3, ?4);");
+            statement.bind_blob(1, network_id.data(), network_id.size());
+            statement.bind_blob(2, device_id.data(), device_id.size());
+            statement.bind_integer(3, static_cast<std::int64_t>(MembershipRole::member));
+            statement.bind_integer(4, joined_at_ms);
+            statement.step_done();
+            if (sqlite3_changes(database_) != 1) {
+                return false;
+            }
+        }
+        insert_lease(network_id, device_id);
+        transaction.commit();
+        return true;
     }
 
     [[nodiscard]] bool remove_member(const NetworkId& network_id,
@@ -677,6 +753,53 @@ public:
             result.push_back(read_network(statement));
         }
 
+        return result;
+    }
+
+    [[nodiscard]] std::optional<NetworkSubnetRecord> find_subnet(
+        const NetworkId& network_id) const {
+        require_network_id(network_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, subnet_address FROM network_subnets "
+                            "WHERE network_id = ?1;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        if (!statement.step_row()) {
+            return std::nullopt;
+        }
+        return read_subnet(statement);
+    }
+
+    [[nodiscard]] std::optional<VirtualIpv4LeaseRecord> find_virtual_ipv4_lease(
+        const NetworkId& network_id, const auth::DeviceId& device_id) const {
+        require_network_id(network_id);
+        require_device_id(device_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, ipv4_address "
+                            "FROM virtual_ipv4_leases "
+                            "WHERE network_id = ?1 AND device_id = ?2;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+        if (!statement.step_row()) {
+            return std::nullopt;
+        }
+        return read_lease(statement);
+    }
+
+    [[nodiscard]] std::vector<VirtualIpv4LeaseRecord> list_virtual_ipv4_leases(
+        const NetworkId& network_id) const {
+        require_network_id(network_id);
+        std::lock_guard lock(mutex_);
+        Statement statement(database_,
+                            "SELECT network_id, device_id, ipv4_address "
+                            "FROM virtual_ipv4_leases WHERE network_id = ?1 "
+                            "ORDER BY ipv4_address;");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        std::vector<VirtualIpv4LeaseRecord> result;
+        while (statement.step_row()) {
+            result.push_back(read_lease(statement));
+        }
         return result;
     }
 
@@ -887,11 +1010,73 @@ public:
         result.memberships = list_memberships(database_);
         result.invitations = list_invitations(database_);
         result.join_requests = list_join_requests(database_);
+        result.subnets = list_subnets(database_);
+        result.leases = list_leases(database_);
         transaction.commit();
         return result;
     }
 
 private:
+    void insert_subnet(const NetworkId& network_id) {
+        auto candidate = virtual_ipv4_pool_first;
+        Statement occupied(database_,
+                           "SELECT subnet_address FROM network_subnets "
+                           "ORDER BY subnet_address;");
+        while (occupied.step_row()) {
+            const auto address = read_virtual_address(occupied, 0);
+            if (address > candidate) {
+                break;
+            }
+            if (address == candidate) {
+                candidate += virtual_ipv4_subnet_size;
+            }
+        }
+        if (candidate >= virtual_ipv4_pool_end) {
+            throw std::length_error("virtual IPv4 subnet pool is exhausted");
+        }
+        Statement statement(database_,
+                            "INSERT INTO network_subnets(network_id, subnet_address) "
+                            "VALUES(?1, ?2);");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_integer(2, candidate);
+        statement.step_done();
+    }
+
+    void insert_lease(const NetworkId& network_id, const auth::DeviceId& device_id) {
+        Statement subnet(database_,
+                         "SELECT subnet_address FROM network_subnets "
+                         "WHERE network_id = ?1;");
+        subnet.bind_blob(1, network_id.data(), network_id.size());
+        if (!subnet.step_row()) {
+            throw std::runtime_error("virtual IPv4 subnet is missing");
+        }
+        const auto base = read_virtual_address(subnet, 0);
+        auto candidate = base + 1;
+        Statement occupied(database_,
+                           "SELECT ipv4_address FROM virtual_ipv4_leases "
+                           "WHERE network_id = ?1 ORDER BY ipv4_address;");
+        occupied.bind_blob(1, network_id.data(), network_id.size());
+        while (occupied.step_row()) {
+            const auto address = read_virtual_address(occupied, 0);
+            if (address > candidate) {
+                break;
+            }
+            if (address == candidate) {
+                ++candidate;
+            }
+        }
+        if (candidate >= base + virtual_ipv4_subnet_size - 1) {
+            throw std::length_error("virtual IPv4 subnet has no available host addresses");
+        }
+        Statement statement(database_,
+                            "INSERT INTO virtual_ipv4_leases("
+                            "network_id, device_id, ipv4_address) VALUES(?1, ?2, ?3);");
+        statement.bind_blob(1, network_id.data(), network_id.size());
+        statement.bind_blob(2, device_id.data(), device_id.size());
+        statement.bind_integer(3, candidate);
+        statement.step_done();
+    }
+
     void migrate() {
         auto version = query_integer(database_, "PRAGMA user_version;");
 
@@ -908,6 +1093,12 @@ private:
             validate_schema_v1();
             migrate_to_v2();
             version = 2;
+        }
+
+        if (version == 2) {
+            validate_schema_v2();
+            migrate_to_v3();
+            version = 3;
         }
 
         if (version != current_schema_version) {
@@ -1028,6 +1219,67 @@ private:
         transaction.commit();
     }
 
+    void migrate_to_v3() {
+        Transaction transaction(database_, true);
+        execute(database_,
+                "CREATE TABLE network_subnets("
+                "network_id BLOB PRIMARY KEY NOT NULL CHECK(length(network_id) = 16),"
+                "subnet_address INTEGER NOT NULL UNIQUE "
+                "CHECK(typeof(subnet_address) = 'integer' "
+                "AND subnet_address >= 171966464 "
+                "AND subnet_address < 176160768 AND subnet_address % 256 = 0),"
+                "FOREIGN KEY(network_id) REFERENCES networks(network_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE"
+                ") WITHOUT ROWID;"
+                "CREATE TABLE virtual_ipv4_leases("
+                "network_id BLOB NOT NULL CHECK(length(network_id) = 16),"
+                "device_id BLOB NOT NULL CHECK(length(device_id) = 32),"
+                "ipv4_address INTEGER NOT NULL UNIQUE "
+                "CHECK(typeof(ipv4_address) = 'integer' "
+                "AND ipv4_address >= 171966464 AND ipv4_address < 176160768 "
+                "AND ipv4_address % 256 BETWEEN 1 AND 254),"
+                "PRIMARY KEY(network_id, device_id),"
+                "FOREIGN KEY(network_id) REFERENCES network_subnets(network_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE,"
+                "FOREIGN KEY(network_id, device_id) "
+                "REFERENCES memberships(network_id, device_id) "
+                "ON UPDATE CASCADE ON DELETE CASCADE"
+                ") WITHOUT ROWID;"
+                "CREATE INDEX virtual_ipv4_leases_network_address_idx "
+                "ON virtual_ipv4_leases(network_id, ipv4_address);"
+                "CREATE TRIGGER virtual_ipv4_subnet_insert_guard "
+                "BEFORE INSERT ON virtual_ipv4_leases WHEN NOT EXISTS("
+                "SELECT 1 FROM network_subnets WHERE network_id = NEW.network_id "
+                "AND subnet_address = NEW.ipv4_address - (NEW.ipv4_address % 256)"
+                ") BEGIN "
+                "SELECT RAISE(ABORT, 'virtual IPv4 address is outside network subnet');"
+                "END;"
+                "CREATE TRIGGER virtual_ipv4_subnet_update_guard "
+                "BEFORE UPDATE ON virtual_ipv4_leases WHEN NOT EXISTS("
+                "SELECT 1 FROM network_subnets WHERE network_id = NEW.network_id "
+                "AND subnet_address = NEW.ipv4_address - (NEW.ipv4_address % 256)"
+                ") BEGIN "
+                "SELECT RAISE(ABORT, 'virtual IPv4 address is outside network subnet');"
+                "END;"
+                "CREATE TRIGGER virtual_ipv4_subnet_immutable "
+                "BEFORE UPDATE OF subnet_address ON network_subnets "
+                "WHEN OLD.subnet_address != NEW.subnet_address "
+                "AND EXISTS(SELECT 1 FROM virtual_ipv4_leases "
+                "WHERE network_id = OLD.network_id) BEGIN "
+                "SELECT RAISE(ABORT, 'virtual IPv4 subnet with leases cannot move');"
+                "END;");
+
+        for (const auto& network : list_networks(database_)) {
+            insert_subnet(network.id);
+        }
+        for (const auto& membership : list_memberships(database_)) {
+            insert_lease(membership.network_id, membership.device_id);
+        }
+
+        execute(database_, "PRAGMA user_version = 3;");
+        transaction.commit();
+    }
+
     void validate_schema_v1() {
         const auto tables = query_integer(
             database_,
@@ -1049,7 +1301,7 @@ private:
         }
     }
 
-    void validate_schema() {
+    void validate_schema_v2() {
         validate_schema_v1();
         const auto tables = query_integer(
             database_,
@@ -1071,6 +1323,27 @@ private:
 
         if (tables != 2 || indexes != 2 || triggers != 5) {
             throw std::runtime_error("relay database schema is incomplete");
+        }
+    }
+
+    void validate_schema() {
+        validate_schema_v2();
+        const auto tables = query_integer(
+            database_,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' "
+            "AND name IN ('network_subnets', 'virtual_ipv4_leases');");
+        const auto indexes = query_integer(
+            database_,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' "
+            "AND name = 'virtual_ipv4_leases_network_address_idx';");
+        const auto triggers = query_integer(
+            database_,
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger' "
+            "AND name IN ('virtual_ipv4_subnet_insert_guard', "
+            "'virtual_ipv4_subnet_update_guard', "
+            "'virtual_ipv4_subnet_immutable');");
+        if (tables != 2 || indexes != 1 || triggers != 3) {
+            throw std::runtime_error("relay database virtual IPv4 schema is incomplete");
         }
     }
 
@@ -1137,6 +1410,21 @@ std::vector<NetworkRecord> RelayStore::list_networks_for_device(
     return impl_->list_networks_for_device(device_id);
 }
 
+std::optional<NetworkSubnetRecord> RelayStore::find_subnet(
+    const NetworkId& network_id) const {
+    return impl_->find_subnet(network_id);
+}
+
+std::optional<VirtualIpv4LeaseRecord> RelayStore::find_virtual_ipv4_lease(
+    const NetworkId& network_id, const auth::DeviceId& device_id) const {
+    return impl_->find_virtual_ipv4_lease(network_id, device_id);
+}
+
+std::vector<VirtualIpv4LeaseRecord> RelayStore::list_virtual_ipv4_leases(
+    const NetworkId& network_id) const {
+    return impl_->list_virtual_ipv4_leases(network_id);
+}
+
 bool RelayStore::add_invitation(const NetworkId& network_id,
                                 const auth::DeviceId& device_id,
                                 const std::int64_t invited_at_ms) {
@@ -1193,6 +1481,13 @@ std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_device(
 
 RelayState RelayStore::load_state() const {
     return impl_->load_state();
+}
+
+std::string format_virtual_ipv4(const VirtualIpv4Address address) {
+    return std::to_string(address >> 24U) + "." +
+           std::to_string((address >> 16U) & 0xffU) + "." +
+           std::to_string((address >> 8U) & 0xffU) + "." +
+           std::to_string(address & 0xffU);
 }
 
 }

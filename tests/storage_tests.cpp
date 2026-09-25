@@ -183,7 +183,8 @@ void test_schema_and_migration(const std::filesystem::path& directory) {
                    database,
                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
                    "AND name IN ('devices', 'networks', 'memberships', "
-                   "'network_invitations', 'network_join_requests');") == 5,
+                   "'network_invitations', 'network_join_requests', "
+                   "'network_subnets', 'virtual_ipv4_leases');") == 7,
                "schema tables");
         expect(query_raw_integer(
                    database,
@@ -191,7 +192,8 @@ void test_schema_and_migration(const std::filesystem::path& directory) {
                    "AND name IN ('devices_last_seen_idx', 'networks_owner_idx', "
                    "'memberships_device_idx', 'memberships_network_role_idx', "
                    "'memberships_single_owner_idx', 'network_invitations_device_idx', "
-                   "'network_join_requests_device_idx');") == 7,
+                   "'network_join_requests_device_idx', "
+                   "'virtual_ipv4_leases_network_address_idx');") == 8,
                "schema indexes");
         expect(query_raw_integer(
                    database,
@@ -201,7 +203,10 @@ void test_schema_and_migration(const std::filesystem::path& directory) {
                    "'invitation_conflicts_with_join_request', "
                    "'join_request_requires_nonmember', "
                    "'join_request_conflicts_with_invitation', "
-                   "'membership_clears_pending_access');") == 6,
+                   "'membership_clears_pending_access', "
+                   "'virtual_ipv4_subnet_insert_guard', "
+                   "'virtual_ipv4_subnet_update_guard', "
+                   "'virtual_ipv4_subnet_immutable');") == 9,
                "schema triggers");
     } catch (...) {
         sqlite3_close(database);
@@ -274,6 +279,14 @@ void test_schema_and_migration(const std::filesystem::path& directory) {
         expect(state.devices.size() == 2, "migration preserves devices");
         expect(state.networks.size() == 1, "migration preserves networks");
         expect(state.memberships.size() == 1, "migration preserves memberships");
+        expect(state.subnets.size() == 1 && state.leases.size() == 1,
+               "migration assigns owner subnet and lease");
+        expect(state.subnets.size() == 1 && state.leases.size() == 1 &&
+                   state.subnets.front().network_address ==
+                       lanlink::storage::virtual_ipv4_pool_first &&
+                   state.leases.front().address ==
+                       lanlink::storage::virtual_ipv4_pool_first + 1,
+               "migrated owner receives first virtual IPv4 host");
         expect(state.invitations.empty(), "migration starts without invitations");
         expect(state.join_requests.empty(), "migration starts without join requests");
         expect(migrated.add_invitation(network, invited, 130),
@@ -316,6 +329,15 @@ void test_persistence_and_relations(const std::filesystem::path& directory) {
 
         store.create_network(network);
         expect(store.find_network(network.id) == network, "network round trip");
+        expect(store.find_subnet(network.id).has_value() &&
+                   store.find_subnet(network.id)->network_address ==
+                       lanlink::storage::virtual_ipv4_pool_first,
+               "network subnet allocated");
+        expect(store.find_virtual_ipv4_lease(network.id, owner).has_value() &&
+                   lanlink::storage::format_virtual_ipv4(
+                       store.find_virtual_ipv4_lease(network.id, owner)->address) ==
+                       "10.64.0.1",
+               "owner virtual IPv4 allocated");
         const auto owner_memberships = store.list_members(network.id);
         expect(owner_memberships.size() == 1, "owner membership created");
         expect(!owner_memberships.empty() && owner_memberships.front().role ==
@@ -338,6 +360,8 @@ void test_persistence_and_relations(const std::filesystem::path& directory) {
         expect(expected_state.devices.size() == 2, "state device count");
         expect(expected_state.networks.size() == 1, "state network count");
         expect(expected_state.memberships.size() == 2, "state membership count");
+        expect(expected_state.subnets.size() == 1 && expected_state.leases.size() == 2,
+               "virtual subnet and leases included in snapshot");
     }
 
     {
@@ -350,6 +374,9 @@ void test_persistence_and_relations(const std::filesystem::path& directory) {
         expect(!reopened.delete_network(network.id), "missing network deletion");
         expect(reopened.load_state().networks.empty(), "deleted network absent");
         expect(reopened.load_state().memberships.empty(), "memberships cascade deleted");
+        expect(reopened.load_state().subnets.empty() &&
+                   reopened.load_state().leases.empty(),
+               "virtual IPv4 assignments cascade deleted");
         expect(reopened.load_state().devices.size() == 2, "devices survive network deletion");
     }
 }
@@ -603,6 +630,7 @@ void test_concurrent_connections(const std::filesystem::path& directory) {
     expect(state.devices.size() == 81, "concurrent device count");
     expect(state.networks.size() == 1, "concurrent network count");
     expect(state.memberships.size() == 81, "concurrent membership count");
+    expect(state.leases.size() == 81, "concurrent unique lease count");
 }
 
 void test_concurrent_pending_access(const std::filesystem::path& directory) {

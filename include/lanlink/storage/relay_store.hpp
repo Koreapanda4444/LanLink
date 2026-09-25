@@ -14,9 +14,14 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 2;
+inline constexpr int current_schema_version = 3;
+inline constexpr std::uint32_t virtual_ipv4_pool_first = 0x0a400000U;
+inline constexpr std::uint32_t virtual_ipv4_pool_end = 0x0a800000U;
+inline constexpr std::uint32_t virtual_ipv4_subnet_size = 256;
+inline constexpr std::uint8_t virtual_ipv4_prefix_length = 24;
 
 using NetworkId = std::array<std::byte, network_id_size>;
+using VirtualIpv4Address = std::uint32_t;
 
 enum class MembershipRole : std::int32_t {
     member = 0,
@@ -49,6 +54,22 @@ struct MembershipRecord {
     bool operator==(const MembershipRecord&) const = default;
 };
 
+struct NetworkSubnetRecord {
+    NetworkId network_id{};
+    VirtualIpv4Address network_address = 0;
+    std::uint8_t prefix_length = virtual_ipv4_prefix_length;
+
+    bool operator==(const NetworkSubnetRecord&) const = default;
+};
+
+struct VirtualIpv4LeaseRecord {
+    NetworkId network_id{};
+    auth::DeviceId device_id{};
+    VirtualIpv4Address address = 0;
+
+    bool operator==(const VirtualIpv4LeaseRecord&) const = default;
+};
+
 struct InvitationRecord {
     NetworkId network_id{};
     auth::DeviceId device_id{};
@@ -71,6 +92,8 @@ struct RelayState {
     std::vector<MembershipRecord> memberships;
     std::vector<InvitationRecord> invitations;
     std::vector<JoinRequestRecord> join_requests;
+    std::vector<NetworkSubnetRecord> subnets;
+    std::vector<VirtualIpv4LeaseRecord> leases;
 
     bool operator==(const RelayState&) const = default;
 };
@@ -107,6 +130,12 @@ public:
         const NetworkId& network_id) const;
     [[nodiscard]] std::vector<NetworkRecord> list_networks_for_device(
         const auth::DeviceId& device_id) const;
+    [[nodiscard]] std::optional<NetworkSubnetRecord> find_subnet(
+        const NetworkId& network_id) const;
+    [[nodiscard]] std::optional<VirtualIpv4LeaseRecord> find_virtual_ipv4_lease(
+        const NetworkId& network_id, const auth::DeviceId& device_id) const;
+    [[nodiscard]] std::vector<VirtualIpv4LeaseRecord> list_virtual_ipv4_leases(
+        const NetworkId& network_id) const;
 
     [[nodiscard]] bool add_invitation(const NetworkId& network_id,
                                       const auth::DeviceId& device_id,
@@ -140,5 +169,7 @@ private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+[[nodiscard]] std::string format_virtual_ipv4(VirtualIpv4Address address);
 
 }

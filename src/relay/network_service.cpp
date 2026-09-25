@@ -193,6 +193,9 @@ NetworkOperationOutcome NetworkService::create_network(
 
         return operation_outcome(protocol::NetworkOperation::create,
                                  protocol::NetworkResultCode::conflict);
+    } catch (const std::length_error&) {
+        return operation_outcome(protocol::NetworkOperation::create,
+                                 protocol::NetworkResultCode::limit_reached);
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::create,
                                  protocol::NetworkResultCode::internal_error);
@@ -298,6 +301,10 @@ NetworkOperationOutcome NetworkService::join_network(
                                               request.network_id,
                                               actor));
         return outcome;
+    } catch (const std::length_error&) {
+        return operation_outcome(protocol::NetworkOperation::join,
+                                 protocol::NetworkResultCode::limit_reached,
+                                 request.network_id);
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::join,
                                  protocol::NetworkResultCode::internal_error,
@@ -496,6 +503,10 @@ NetworkOperationOutcome NetworkService::approve_member(
                                             request.network_id,
                                             request.device_id);
         return outcome;
+    } catch (const std::length_error&) {
+        return operation_outcome(protocol::NetworkOperation::approve,
+                                 protocol::NetworkResultCode::limit_reached,
+                                 request.network_id);
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::approve,
                                  protocol::NetworkResultCode::internal_error,
