@@ -5,11 +5,14 @@
 #include "lanlink/core/logger.hpp"
 #include "lanlink/protocol/codec.hpp"
 #include "lanlink/protocol/message.hpp"
+#include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/stream_decoder.hpp"
+#include "lanlink/relay/network_control_channel.hpp"
 #include "lanlink/transport/reconnect.hpp"
 
 #include <msquic.h>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -191,8 +194,12 @@ void validate_client_options(const QuicClientOptions& options) {
 
 class QuicRelayServer::Impl {
 public:
-    Impl(QuicServerOptions options, core::Logger& logger)
-        : options_(std::move(options)), logger_(logger) {
+    Impl(QuicServerOptions options,
+         core::Logger& logger,
+         relay::NetworkControlChannel& control_channel)
+        : options_(std::move(options)),
+          logger_(logger),
+          control_channel_(control_channel) {
         validate_server_options(options_);
 
         try {
@@ -286,6 +293,7 @@ private:
         std::mutex handshake_mutex;
         auth::ServerHandshake handshake;
         std::atomic_bool control_stream_started = false;
+        std::atomic_bool closed = false;
     };
 
     struct StreamContext {
@@ -302,6 +310,57 @@ private:
         ConnectionContext* connection_context;
         protocol::FrameStreamDecoder decoder;
     };
+
+    struct ActiveControlStream {
+        auth::DeviceId device_id{};
+        HQUIC connection = nullptr;
+        HQUIC stream = nullptr;
+    };
+
+    bool register_control_stream(ConnectionContext* const context,
+                                 const HQUIC connection,
+                                 const HQUIC stream,
+                                 const auth::DeviceId& device_id) {
+        std::lock_guard lock(active_control_streams_mutex_);
+
+        if (context->closed.load()) {
+            return false;
+        }
+
+        active_control_streams_.push_back({device_id, connection, stream});
+        return true;
+    }
+
+    void close_control_stream(const HQUIC stream, const bool app_close) noexcept {
+        std::lock_guard lock(active_control_streams_mutex_);
+        std::erase_if(active_control_streams_, [stream](const auto& active) {
+            return active.stream == stream;
+        });
+
+        if (!app_close) {
+            api_->StreamClose(stream);
+        }
+    }
+
+    void route_control_events(const std::vector<relay::RoutedControlFrame>& events) noexcept {
+        std::lock_guard lock(active_control_streams_mutex_);
+
+        for (const auto& routed : events) {
+            for (const auto& active : active_control_streams_) {
+                if (active.device_id != routed.recipient_device_id) {
+                    continue;
+                }
+
+                const auto status = send_frame(api_, active.stream, routed.frame);
+
+                if (QUIC_FAILED(status)) {
+                    log_noexcept(logger_,
+                                 core::LogLevel::warning,
+                                 "network event send failed: " + status_text(status));
+                }
+            }
+        }
+    }
 
     void initialize() {
         auto status = MsQuicOpen2(&api_);
@@ -490,6 +549,14 @@ private:
             }
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
                 {
+                    std::lock_guard lock(active_control_streams_mutex_);
+                    context->closed.store(true);
+                    std::erase_if(active_control_streams_, [connection](const auto& active) {
+                        return active.connection == connection;
+                    });
+                }
+
+                {
                     std::lock_guard lock(context->handshake_mutex);
                     context->handshake.close();
                 }
@@ -536,7 +603,25 @@ private:
                             reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
 
                         for (const auto& frame : frames) {
-                            handle_auth_frame(stream, context, frame);
+                            auth::DeviceId actor{};
+                            bool authenticated = false;
+
+                            {
+                                std::lock_guard lock(
+                                    context->connection_context->handshake_mutex);
+                                auto& handshake = context->connection_context->handshake;
+                                authenticated = handshake.authenticated();
+
+                                if (authenticated) {
+                                    actor = handshake.device_id();
+                                }
+                            }
+
+                            if (authenticated) {
+                                handle_control_frame(stream, actor, frame);
+                            } else {
+                                handle_auth_frame(stream, context, frame);
+                            }
                         }
                     } catch (const std::exception& error) {
                         log_noexcept(logger_,
@@ -555,14 +640,13 @@ private:
                 break;
             case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
             case QUIC_STREAM_EVENT_PEER_RECEIVE_ABORTED:
+            case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
                 api_->ConnectionShutdown(context->connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          authentication_shutdown_code);
                 break;
             case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
-                if (!event->SHUTDOWN_COMPLETE.AppCloseInProgress) {
-                    api_->StreamClose(stream);
-                }
+                close_control_stream(stream, event->SHUTDOWN_COMPLETE.AppCloseInProgress);
                 delete context;
                 break;
             default:
@@ -578,6 +662,7 @@ private:
         protocol::Frame response;
         bool shutdown_after_send = false;
         bool authenticated = false;
+        auth::DeviceId authenticated_device_id{};
         std::string device_id;
 
         {
@@ -592,6 +677,7 @@ private:
                 authenticated = handshake.authenticated();
 
                 if (authenticated) {
+                    authenticated_device_id = handshake.device_id();
                     device_id = handshake.device_id_hex();
                 }
             } else {
@@ -601,6 +687,7 @@ private:
 
         if (frame.type == protocol::MessageType::client_auth) {
             if (authenticated) {
+                control_channel_.note_authenticated(authenticated_device_id);
                 const auto settings_status = enable_authenticated_connection(
                     api_,
                     context->connection,
@@ -630,16 +717,40 @@ private:
             throw std::runtime_error("authentication response send failed: " +
                                      status_text(status));
         }
+
+        if (authenticated &&
+            !register_control_stream(context->connection_context,
+                                     context->connection,
+                                     stream,
+                                     authenticated_device_id)) {
+            throw std::runtime_error("authentication connection already closed");
+        }
+    }
+
+    void handle_control_frame(const HQUIC stream,
+                              const auth::DeviceId& actor,
+                              const protocol::Frame& frame) {
+        auto dispatch = control_channel_.handle_authenticated(actor, frame);
+        const auto status = send_frame(api_, stream, dispatch.response);
+
+        if (QUIC_FAILED(status)) {
+            throw std::runtime_error("control response send failed: " + status_text(status));
+        }
+
+        route_control_events(dispatch.events);
     }
 
     QuicServerOptions options_;
     core::Logger& logger_;
+    relay::NetworkControlChannel& control_channel_;
     std::unique_ptr<auth::AuthToken> auth_token_;
     const QUIC_API_TABLE* api_ = nullptr;
     HQUIC registration_ = nullptr;
     HQUIC configuration_ = nullptr;
     HQUIC listener_ = nullptr;
     std::mutex lifecycle_mutex_;
+    std::mutex active_control_streams_mutex_;
+    std::vector<ActiveControlStream> active_control_streams_;
     std::atomic_bool running_ = false;
     bool shutdown_started_ = false;
 };
@@ -1169,7 +1280,11 @@ private:
                             reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
 
                         for (const auto& frame : frames) {
-                            handle_auth_frame(stream, context, frame);
+                            if (context->handshake.authenticated()) {
+                                handle_control_notification(frame);
+                            } else {
+                                handle_auth_frame(stream, context, frame);
+                            }
                         }
                     } catch (const std::exception& error) {
                         log_noexcept(logger_,
@@ -1264,6 +1379,18 @@ private:
                          identity_->device_id_hex());
     }
 
+    void handle_control_notification(const protocol::Frame& frame) {
+        if (frame.type != protocol::MessageType::network_event || frame.request_id != 0) {
+            throw std::runtime_error("unexpected relay control frame");
+        }
+
+        const auto event = protocol::decode_network_event(frame.payload);
+        log_noexcept(logger_,
+                     core::LogLevel::info,
+                     "network event received: " +
+                         std::string(protocol::network_event_kind_name(event.kind)));
+    }
+
     QuicClientOptions options_;
     core::Logger& logger_;
     ReconnectBackoff reconnect_;
@@ -1286,8 +1413,10 @@ private:
     std::condition_variable run_complete_;
 };
 
-QuicRelayServer::QuicRelayServer(QuicServerOptions options, core::Logger& logger)
-    : impl_(std::make_unique<Impl>(std::move(options), logger)) {
+QuicRelayServer::QuicRelayServer(QuicServerOptions options,
+                                core::Logger& logger,
+                                relay::NetworkControlChannel& control_channel)
+    : impl_(std::make_unique<Impl>(std::move(options), logger, control_channel)) {
 }
 
 QuicRelayServer::~QuicRelayServer() = default;

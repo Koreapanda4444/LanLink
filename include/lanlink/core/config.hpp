@@ -18,6 +18,7 @@ struct RuntimeConfig {
     std::filesystem::path tls_private_key_file;
     std::filesystem::path device_identity_file = "data/device.identity";
     std::filesystem::path auth_token_file = "data/auth.token";
+    std::filesystem::path relay_database_file = "data/relay.db";
     std::uint32_t quic_handshake_timeout_ms = 10'000;
     std::uint32_t authentication_timeout_ms = 10'000;
     std::uint32_t quic_idle_timeout_ms = 60'000;

@@ -106,6 +106,7 @@ target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET})
 lanlink_enable_warnings(lanlink_storage)
 
 add_library(lanlink_relay_domain STATIC
+    src/relay/network_control_channel.cpp
     src/relay/network_service.cpp
 )
 
@@ -140,6 +141,7 @@ target_link_libraries(lanlink_transport
     PRIVATE
         lanlink_auth
         lanlink_protocol
+        lanlink_relay_domain
         ${LANLINK_MSQUIC_TARGET}
 )
 
@@ -238,4 +240,18 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_network_service_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_network_service_tests)
     add_test(NAME lanlink-network-service COMMAND lanlink_network_service_tests)
+
+    add_executable(lanlink_network_control_channel_tests
+        tests/network_control_channel_tests.cpp
+    )
+
+    target_link_libraries(
+        lanlink_network_control_channel_tests
+        PRIVATE
+            lanlink_relay_domain
+            lanlink_auth
+            ${LANLINK_SQLITE_TARGET}
+    )
+    lanlink_enable_warnings(lanlink_network_control_channel_tests)
+    add_test(NAME lanlink-network-control-channel COMMAND lanlink_network_control_channel_tests)
 endif()

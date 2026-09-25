@@ -43,6 +43,8 @@ public:
     NetworkService(NetworkService&&) = delete;
     NetworkService& operator=(NetworkService&&) = delete;
 
+    void record_authenticated_device(const auth::DeviceId& actor, std::int64_t now_ms);
+
     [[nodiscard]] NetworkOperationOutcome create_network(
         const auth::DeviceId& actor,
         const protocol::NetworkCreateRequest& request,

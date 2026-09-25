@@ -14,6 +14,10 @@ namespace lanlink::core {
 class Logger;
 }
 
+namespace lanlink::relay {
+class NetworkControlChannel;
+}
+
 namespace lanlink::transport {
 
 struct QuicServerOptions {
@@ -43,7 +47,9 @@ struct QuicClientOptions {
 
 class QuicRelayServer {
 public:
-    QuicRelayServer(QuicServerOptions options, core::Logger& logger);
+    QuicRelayServer(QuicServerOptions options,
+                    core::Logger& logger,
+                    relay::NetworkControlChannel& control_channel);
     ~QuicRelayServer();
 
     QuicRelayServer(const QuicRelayServer&) = delete;

@@ -55,6 +55,7 @@ void test_configuration() {
         "tls_private_key_file=certs/relay.key\n"
         "device_identity_file=data/test.identity\n"
         "auth_token_file=data/test.token\n"
+        "relay_database_file=data/test-relay.db\n"
         "quic_handshake_timeout_ms=8000\n"
         "authentication_timeout_ms=7000\n"
         "quic_idle_timeout_ms=90000\n"
@@ -77,6 +78,8 @@ void test_configuration() {
            "device identity file");
     expect(config.auth_token_file == std::filesystem::path{"data/test.token"},
            "auth token file");
+    expect(config.relay_database_file == std::filesystem::path{"data/test-relay.db"},
+           "relay database file");
     expect(config.quic_handshake_timeout_ms == 8000, "handshake timeout");
     expect(config.authentication_timeout_ms == 7000, "authentication timeout");
     expect(config.quic_idle_timeout_ms == 90000, "idle timeout");
@@ -133,6 +136,12 @@ void test_configuration() {
     } catch (const std::exception&) {
         expect(false, "relay configuration");
     }
+
+    expect_error([&config] {
+        auto invalid = config;
+        invalid.relay_database_file.clear();
+        lanlink::core::validate_relay_config(invalid);
+    }, "relay database required");
 
     try {
         lanlink::core::validate_service_config(config);

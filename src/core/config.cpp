@@ -124,6 +124,8 @@ RuntimeConfig parse_config(const std::string_view content) {
                 config.device_identity_file = std::string(value);
             } else if (key == "auth_token_file") {
                 config.auth_token_file = std::string(value);
+            } else if (key == "relay_database_file") {
+                config.relay_database_file = std::string(value);
             } else if (key == "quic_handshake_timeout_ms") {
                 const auto parsed = parse_unsigned(value, key_view, line_number);
 
@@ -295,6 +297,10 @@ void validate_relay_config(const RuntimeConfig& config) {
 
     if (config.auth_token_file.empty()) {
         throw std::runtime_error("auth_token_file is required by the relay");
+    }
+
+    if (config.relay_database_file.empty()) {
+        throw std::runtime_error("relay_database_file is required by the relay");
     }
 }
 

@@ -139,6 +139,13 @@ NetworkService::NetworkService(storage::RelayStore& store,
                                                  : NetworkIdGenerator{generate_network_id}) {
 }
 
+void NetworkService::record_authenticated_device(const auth::DeviceId& actor,
+                                                 const std::int64_t now_ms) {
+    require_actor_and_time(actor, now_ms);
+    std::lock_guard lock(mutex_);
+    store_.record_device(actor, now_ms);
+}
+
 NetworkOperationOutcome NetworkService::create_network(
     const auth::DeviceId& actor,
     const protocol::NetworkCreateRequest& request,

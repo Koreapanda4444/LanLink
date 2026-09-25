@@ -1,6 +1,9 @@
 #include "lanlink/core/config.hpp"
 #include "lanlink/core/component.hpp"
 #include "lanlink/core/logger.hpp"
+#include "lanlink/relay/network_control_channel.hpp"
+#include "lanlink/relay/network_service.hpp"
+#include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
 
 #include <chrono>
@@ -56,7 +59,11 @@ int main(const int argc, char* argv[]) {
         options.idle_timeout = std::chrono::milliseconds{config.quic_idle_timeout_ms};
         options.keep_alive_interval_ms = config.quic_keep_alive_interval_ms;
 
-        lanlink::transport::QuicRelayServer server(std::move(options), logger);
+        lanlink::storage::RelayStore store(config.relay_database_file);
+        lanlink::relay::NetworkService network_service(store);
+        lanlink::relay::NetworkControlChannel control_channel(network_service);
+        lanlink::transport::QuicRelayServer server(
+            std::move(options), logger, control_channel);
         std::signal(SIGINT, handle_signal);
         std::signal(SIGTERM, handle_signal);
         server.start();
