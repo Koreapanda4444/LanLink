@@ -19,7 +19,7 @@ namespace lanlink::auth {
 namespace {
 
 constexpr std::size_t maximum_token_size = 4096;
-constexpr std::string_view transcript_prefix = "lanlink-auth-v1";
+constexpr std::string_view transcript_prefix = "lanlink-auth-v2";
 
 using Pkey = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
 using DigestContext = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
@@ -354,16 +354,18 @@ DeviceId make_device_id(const PublicKey& public_key_value) {
 }
 
 std::vector<std::byte> make_auth_transcript(const PublicKey& public_key_value,
+                                            const EncryptionPublicKey& encryption_public_key,
                                             const Nonce& client_nonce,
                                             const Nonce& server_nonce) {
     std::vector<std::byte> transcript;
-    transcript.reserve(transcript_prefix.size() + public_key_value.size() + client_nonce.size() +
-                       server_nonce.size());
+    transcript.reserve(transcript_prefix.size() + public_key_value.size() +
+                       encryption_public_key.size() + client_nonce.size() + server_nonce.size());
     transcript.insert(transcript.end(),
                       reinterpret_cast<const std::byte*>(transcript_prefix.data()),
                       reinterpret_cast<const std::byte*>(transcript_prefix.data() +
                                                          transcript_prefix.size()));
     transcript.insert(transcript.end(), public_key_value.begin(), public_key_value.end());
+    transcript.insert(transcript.end(), encryption_public_key.begin(), encryption_public_key.end());
     transcript.insert(transcript.end(), client_nonce.begin(), client_nonce.end());
     transcript.insert(transcript.end(), server_nonce.begin(), server_nonce.end());
     return transcript;

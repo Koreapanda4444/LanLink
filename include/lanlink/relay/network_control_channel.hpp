@@ -35,6 +35,12 @@ public:
     NetworkControlChannel& operator=(NetworkControlChannel&&) = delete;
 
     void note_authenticated(const auth::DeviceId& actor);
+    [[nodiscard]] std::vector<RoutedControlFrame> note_authenticated(
+        const auth::DeviceId& actor,
+        const auth::SessionId& session_id,
+        const auth::SignedDeviceKey& signed_key);
+    [[nodiscard]] std::vector<RoutedControlFrame> note_disconnected(
+        const auth::DeviceId& actor, const auth::SessionId& session_id);
     [[nodiscard]] std::vector<RoutedControlFrame> initial_peer_states(
         const auth::DeviceId& actor);
 

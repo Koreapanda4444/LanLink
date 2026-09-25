@@ -14,8 +14,8 @@ inline constexpr std::array<std::byte, 4> frame_magic{
     std::byte{0x4c},
     std::byte{0x4b},
 };
-inline constexpr std::uint16_t protocol_version = 3;
-inline constexpr std::string_view protocol_alpn = "lanlink/3";
+inline constexpr std::uint16_t protocol_version = 4;
+inline constexpr std::string_view protocol_alpn = "lanlink/4";
 inline constexpr std::size_t frame_header_size = 16;
 inline constexpr std::uint32_t max_payload_size = 1024U * 1024U;
 

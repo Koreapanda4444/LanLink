@@ -224,13 +224,22 @@ void test_network_management(const std::filesystem::path& directory) {
         return a && b && a->revision == 2 && b->revision == 2 &&
                a->own_address == storage::virtual_ipv4_pool_first + 1 &&
                b->own_address == storage::virtual_ipv4_pool_first + 2 &&
-               a->peers == std::vector<protocol::NetworkPeer>{
-                               {member_identity.device_id(),
-                                storage::virtual_ipv4_pool_first + 2}} &&
-               b->peers == std::vector<protocol::NetworkPeer>{
-                               {owner_identity.device_id(),
-                                storage::virtual_ipv4_pool_first + 1}};
-    }, "both authenticated clients must receive matched peer IP snapshots");
+               a->peers.size() == 1 && b->peers.size() == 1 &&
+               a->peers.front().device_id == member_identity.device_id() &&
+               a->peers.front().ipv4_address == storage::virtual_ipv4_pool_first + 2 &&
+               a->peers.front().signed_key &&
+               auth::verify_signed_device_key(*a->peers.front().signed_key,
+                                              member_identity.device_id()) &&
+               b->peers.front().device_id == owner_identity.device_id() &&
+               b->peers.front().ipv4_address == storage::virtual_ipv4_pool_first + 1 &&
+               b->peers.front().signed_key &&
+               auth::verify_signed_device_key(*b->peers.front().signed_key,
+                                              owner_identity.device_id());
+    }, "both authenticated clients receive verified signed peer keys and IPs");
+    const auto member_key = owner.cached_peer_state(id)->peers.front().signed_key;
+    const auto owner_reply = owner.fetch_peer_state(id);
+    expect(owner_reply.state && owner_reply.state->peers.front().signed_key == member_key,
+           "peer key matches fetched and pushed state");
 
     const auto kicked = owner.kick_member(id, member_identity.device_id());
     expect(kicked.code == protocol::NetworkResultCode::success,
@@ -265,6 +274,39 @@ void test_network_management(const std::filesystem::path& directory) {
         return a && b && a->revision == 4 && b->revision == 4 &&
                a->peers.size() == 1 && b->peers.size() == 1;
     }, "invited rejoin must repopulate both peer caches");
+
+    member_worker.request_stop();
+    member.stop();
+    member_worker.join();
+    if (member_error) {
+        std::rethrow_exception(member_error);
+    }
+    wait_until([&] {
+        const auto state = owner.cached_peer_state(id);
+        return state && state->revision == 5 && state->peers.size() == 1 &&
+               !state->peers.front().signed_key;
+    }, "disconnected member keeps address but loses live encryption key");
+    member_error = nullptr;
+    member_worker = std::jthread([&](std::stop_token token) {
+        try {
+            member.run(token);
+        } catch (...) {
+            member_error = std::current_exception();
+        }
+    });
+    wait_until([&] {
+        const auto state = owner.cached_peer_state(id);
+        const auto restored = member.cached_peer_state(id);
+        return member.authenticated() && state && restored &&
+               state->revision == 6 && restored->revision == 6 &&
+               state->peers.size() == 1 && state->peers.front().signed_key &&
+               state->peers.front().signed_key != member_key &&
+               state->peers.front().signed_key->encryption_public_key !=
+                   member_key->encryption_public_key &&
+               auth::verify_signed_device_key(*state->peers.front().signed_key,
+                                              member_identity.device_id());
+    }, "reconnection distributes a fresh signed encryption key");
+
     expect(member.leave_network(id).code == protocol::NetworkResultCode::success,
            "member must leave over relay");
     expect(store.list_members(id).size() == 1,
@@ -273,7 +315,7 @@ void test_network_management(const std::filesystem::path& directory) {
            "leaving releases member IPv4 lease");
     wait_until([&] {
         const auto a = owner.cached_peer_state(id);
-        return a && a->revision == 5 && a->peers.empty() &&
+        return a && a->revision == 7 && a->peers.empty() &&
                !member.cached_peer_state(id);
     }, "leave must revoke local state and refresh remaining peers");
 
@@ -357,7 +399,7 @@ void test_peer_state_reconnect(const std::filesystem::path& directory) {
         });
         wait_until([&] {
             const auto state = client.cached_peer_state(id);
-            return client.authenticated() && state && state->revision == 0 &&
+            return client.authenticated() && state && state->revision >= 1 &&
                    state->own_address == storage::virtual_ipv4_pool_first + 1 &&
                    state->peers == std::vector<protocol::NetworkPeer>{
                                        {member, storage::virtual_ipv4_pool_first + 2}};

@@ -1,11 +1,15 @@
 #pragma once
 
+#include "lanlink/auth/device_keys.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace lanlink::protocol {
@@ -117,6 +121,14 @@ struct NetworkEvent {
 struct NetworkPeer {
     NetworkDeviceId device_id{};
     std::uint32_t ipv4_address = 0;
+    std::optional<auth::SignedDeviceKey> signed_key;
+
+    NetworkPeer() = default;
+    NetworkPeer(NetworkDeviceId id,
+                std::uint32_t address,
+                std::optional<auth::SignedDeviceKey> key = std::nullopt)
+        : device_id(id), ipv4_address(address), signed_key(std::move(key)) {
+    }
 
     bool operator==(const NetworkPeer&) const = default;
 };

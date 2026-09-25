@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -134,7 +135,8 @@ protocol::NetworkPeerState assemble_peer_state(
     const storage::NetworkSubnetRecord& subnet,
     const std::vector<storage::VirtualIpv4LeaseRecord>& leases,
     const auth::DeviceId& actor,
-    const std::uint64_t revision) {
+    const std::uint64_t revision,
+    const auto& active_keys) {
     const auto own = std::find_if(leases.begin(), leases.end(), [&](const auto& lease) {
         return lease.device_id == actor;
     });
@@ -151,7 +153,12 @@ protocol::NetworkPeerState assemble_peer_state(
     state.peers.reserve(leases.size() - 1);
     for (const auto& lease : leases) {
         if (lease.device_id != actor) {
-            state.peers.push_back({lease.device_id, lease.address});
+            protocol::NetworkPeer peer{lease.device_id, lease.address};
+            if (const auto key = active_keys.find(lease.device_id);
+                key != active_keys.end()) {
+                peer.signed_key = key->second.signed_key;
+            }
+            state.peers.push_back(std::move(peer));
         }
     }
     return state;
@@ -171,6 +178,50 @@ void NetworkService::record_authenticated_device(const auth::DeviceId& actor,
     require_actor_and_time(actor, now_ms);
     std::lock_guard lock(mutex_);
     store_.record_device(actor, now_ms);
+}
+
+std::vector<RoutedPeerStateChange> NetworkService::publish_device_key(
+    const auth::DeviceId& actor,
+    const auth::SessionId& session_id,
+    const auth::SignedDeviceKey& signed_key,
+    const std::int64_t now_ms) {
+    require_actor_and_time(actor, now_ms);
+    if (is_zero(session_id) || !auth::verify_signed_device_key(signed_key, actor)) {
+        throw std::invalid_argument("authenticated device key is invalid");
+    }
+
+    std::lock_guard lock(mutex_);
+    store_.record_device(actor, now_ms);
+    active_keys_.insert_or_assign(actor, ActiveKey{session_id, signed_key});
+    const auto networks = store_.list_networks_for_device(actor);
+    std::vector<RoutedPeerStateChange> changes;
+    for (const auto& network : networks) {
+        auto network_changes = changes_for_members(network.id, advance_revision(network.id));
+        changes.insert(changes.end(),
+                       std::make_move_iterator(network_changes.begin()),
+                       std::make_move_iterator(network_changes.end()));
+    }
+    return changes;
+}
+
+std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
+    const auth::DeviceId& actor, const auth::SessionId& session_id) {
+    std::lock_guard lock(mutex_);
+    const auto found = active_keys_.find(actor);
+    if (found == active_keys_.end() || found->second.session_id != session_id) {
+        return {};
+    }
+
+    active_keys_.erase(found);
+    const auto networks = store_.list_networks_for_device(actor);
+    std::vector<RoutedPeerStateChange> changes;
+    for (const auto& network : networks) {
+        auto network_changes = changes_for_members(network.id, advance_revision(network.id));
+        changes.insert(changes.end(),
+                       std::make_move_iterator(network_changes.begin()),
+                       std::make_move_iterator(network_changes.end()));
+    }
+    return changes;
 }
 
 NetworkOperationOutcome NetworkService::create_network(
@@ -652,7 +703,7 @@ protocol::NetworkPeerState NetworkService::make_peer_state(
         throw std::runtime_error("network virtual IPv4 subnet is missing");
     }
     return assemble_peer_state(*subnet, store_.list_virtual_ipv4_leases(network_id),
-                               actor, revision);
+                               actor, revision, active_keys_);
 }
 
 std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
@@ -666,7 +717,8 @@ std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
     result.reserve(leases.size());
     for (const auto& lease : leases) {
         result.push_back({lease.device_id,
-                          assemble_peer_state(*subnet, leases, lease.device_id, revision),
+                          assemble_peer_state(*subnet, leases, lease.device_id, revision,
+                                              active_keys_),
                           {}});
     }
     return result;

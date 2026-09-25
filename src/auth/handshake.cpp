@@ -11,7 +11,8 @@
 namespace lanlink::auth {
 namespace {
 
-constexpr std::size_t client_hello_size = public_key_size + nonce_size;
+constexpr std::size_t client_hello_size = public_key_size +
+                                          encryption_public_key_size + nonce_size;
 constexpr std::size_t server_challenge_size = nonce_size;
 constexpr std::size_t client_proof_size = signature_size + token_proof_size;
 constexpr std::size_t auth_result_size = 1 + session_id_size;
@@ -71,6 +72,7 @@ std::vector<std::byte> encode_client_hello(const ClientHelloPayload& payload) {
     std::vector<std::byte> output;
     output.reserve(client_hello_size);
     append(output, payload.public_key);
+    append(output, payload.encryption_public_key);
     append(output, payload.client_nonce);
     return output;
 }
@@ -82,7 +84,8 @@ ClientHelloPayload decode_client_hello(const std::vector<std::byte>& payload) {
 
     return {
         read_array<public_key_size>(payload, 0),
-        read_array<nonce_size>(payload, public_key_size),
+        read_array<encryption_public_key_size>(payload, public_key_size),
+        read_array<nonce_size>(payload, public_key_size + encryption_public_key_size),
     };
 }
 
@@ -149,8 +152,8 @@ AuthResultPayload decode_auth_result(const std::vector<std::byte>& payload) {
     return result;
 }
 
-ClientHandshake::ClientHandshake(const DeviceIdentity& identity, const AuthToken& token) noexcept
-    : identity_(identity), token_(token) {
+ClientHandshake::ClientHandshake(const DeviceIdentity& identity, const AuthToken& token)
+    : identity_(identity), token_(token), encryption_key_(DeviceEncryptionKey::generate()) {
 }
 
 ClientHandshake::~ClientHandshake() {
@@ -173,7 +176,8 @@ protocol::Frame ClientHandshake::begin(const std::uint32_t request_id) {
     protocol::Frame frame;
     frame.type = protocol::MessageType::client_hello;
     frame.request_id = request_id_;
-    frame.payload = encode_client_hello({identity_.public_key(), client_nonce_});
+    frame.payload = encode_client_hello({identity_.public_key(),
+                                         encryption_key_.public_key(), client_nonce_});
     return frame;
 }
 
@@ -184,13 +188,18 @@ protocol::Frame ClientHandshake::handle_challenge(const protocol::Frame& frame) 
 
     require_frame(frame, protocol::MessageType::server_hello, request_id_);
     const auto challenge = decode_server_challenge(frame.payload);
-    auto transcript =
-        make_auth_transcript(identity_.public_key(), client_nonce_, challenge.server_nonce);
+    auto transcript = make_auth_transcript(identity_.public_key(),
+                                           encryption_key_.public_key(),
+                                           client_nonce_, challenge.server_nonce);
     ClientProofPayload proof;
 
     try {
         proof.signature = identity_.sign(transcript);
         proof.token_proof = token_.proof(transcript);
+        signed_device_key_ = SignedDeviceKey{identity_.public_key(),
+                                             encryption_key_.public_key(),
+                                             client_nonce_, challenge.server_nonce,
+                                             proof.signature};
 
         protocol::Frame response;
         response.type = protocol::MessageType::client_auth;
@@ -202,6 +211,7 @@ protocol::Frame ClientHandshake::handle_challenge(const protocol::Frame& frame) 
         cleanse(proof.token_proof);
         return response;
     } catch (...) {
+        signed_device_key_.reset();
         cleanse(transcript);
         cleanse(proof.signature);
         cleanse(proof.token_proof);
@@ -223,6 +233,7 @@ bool ClientHandshake::handle_result(const protocol::Frame& frame) {
         state_ = State::authenticated;
     } else {
         cleanse(session_id_);
+        signed_device_key_.reset();
         state_ = State::rejected;
     }
 
@@ -241,7 +252,12 @@ std::optional<SessionId> ClientHandshake::session_id() const noexcept {
     return session_id_;
 }
 
+std::optional<SignedDeviceKey> ClientHandshake::signed_device_key() const noexcept {
+    return authenticated() ? signed_device_key_ : std::nullopt;
+}
+
 void ClientHandshake::close() noexcept {
+    signed_device_key_.reset();
     cleanse(client_nonce_);
     cleanse(session_id_);
     request_id_ = 0;
@@ -284,7 +300,11 @@ protocol::Frame ServerHandshake::handle_hello(const protocol::Frame& frame,
     }
 
     const auto hello = decode_client_hello(frame.payload);
+    if (all_zero(hello.encryption_public_key)) {
+        throw std::runtime_error("client encryption public key is empty");
+    }
     public_key_ = hello.public_key;
+    encryption_public_key_ = hello.encryption_public_key;
     client_nonce_ = hello.client_nonce;
     server_nonce_ = random_nonce();
     request_id_ = frame.request_id;
@@ -307,7 +327,8 @@ protocol::Frame ServerHandshake::handle_proof(const protocol::Frame& frame,
 
     require_frame(frame, protocol::MessageType::client_auth, request_id_);
     auto proof = decode_client_proof(frame.payload);
-    auto transcript = make_auth_transcript(public_key_, client_nonce_, server_nonce_);
+    auto transcript = make_auth_transcript(public_key_, encryption_public_key_,
+                                          client_nonce_, server_nonce_);
     bool accepted = false;
 
     try {
@@ -318,8 +339,11 @@ protocol::Frame ServerHandshake::handle_proof(const protocol::Frame& frame,
         if (accepted) {
             device_id_ = make_device_id(public_key_);
             session_id_ = make_nonzero_session_id();
+            signed_device_key_ = SignedDeviceKey{public_key_, encryption_public_key_,
+                                                 client_nonce_, server_nonce_, proof.signature};
             state_ = State::authenticated;
         } else {
+            signed_device_key_.reset();
             cleanse(device_id_);
             cleanse(session_id_);
             state_ = State::rejected;
@@ -333,6 +357,7 @@ protocol::Frame ServerHandshake::handle_proof(const protocol::Frame& frame,
         cleanse(proof.signature);
         cleanse(proof.token_proof);
         cleanse(public_key_);
+        cleanse(encryption_public_key_);
         cleanse(client_nonce_);
         cleanse(server_nonce_);
         return response;
@@ -341,6 +366,7 @@ protocol::Frame ServerHandshake::handle_proof(const protocol::Frame& frame,
         cleanse(proof.signature);
         cleanse(proof.token_proof);
         cleanse(public_key_);
+        cleanse(encryption_public_key_);
         cleanse(client_nonce_);
         cleanse(server_nonce_);
         cleanse(device_id_);
@@ -365,6 +391,7 @@ bool ServerHandshake::timed_out() const noexcept {
 bool ServerHandshake::expire(const Clock::time_point now) noexcept {
     if ((state_ == State::waiting_hello || state_ == State::waiting_proof) && now >= deadline_) {
         cleanse(public_key_);
+        cleanse(encryption_public_key_);
         cleanse(client_nonce_);
         cleanse(server_nonce_);
         request_id_ = 0;
@@ -391,6 +418,13 @@ DeviceId ServerHandshake::device_id() const {
     return device_id_;
 }
 
+SignedDeviceKey ServerHandshake::signed_device_key() const {
+    if (!authenticated() || !signed_device_key_) {
+        throw std::logic_error("device encryption key is not authenticated");
+    }
+    return *signed_device_key_;
+}
+
 std::string ServerHandshake::device_id_hex() const {
     const auto id = device_id();
     return hex_encode(id);
@@ -404,7 +438,9 @@ bool ServerHandshake::bound_to(const std::uintptr_t connection_binding,
 }
 
 void ServerHandshake::close() noexcept {
+    signed_device_key_.reset();
     cleanse(public_key_);
+    cleanse(encryption_public_key_);
     cleanse(client_nonce_);
     cleanse(server_nonce_);
     cleanse(device_id_);

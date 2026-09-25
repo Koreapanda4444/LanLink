@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lanlink/auth/identity.hpp"
+#include "lanlink/auth/device_keys.hpp"
 #include "lanlink/protocol/message.hpp"
 
 #include <chrono>
@@ -13,6 +13,7 @@ namespace lanlink::auth {
 
 struct ClientHelloPayload {
     PublicKey public_key{};
+    EncryptionPublicKey encryption_public_key{};
     Nonce client_nonce{};
 
     bool operator==(const ClientHelloPayload&) const = default;
@@ -51,7 +52,7 @@ struct AuthResultPayload {
 
 class ClientHandshake {
 public:
-    ClientHandshake(const DeviceIdentity& identity, const AuthToken& token) noexcept;
+    ClientHandshake(const DeviceIdentity& identity, const AuthToken& token);
     ~ClientHandshake();
 
     ClientHandshake(const ClientHandshake&) = delete;
@@ -64,6 +65,7 @@ public:
     [[nodiscard]] bool handle_result(const protocol::Frame& frame);
     [[nodiscard]] bool authenticated() const noexcept;
     [[nodiscard]] std::optional<SessionId> session_id() const noexcept;
+    [[nodiscard]] std::optional<SignedDeviceKey> signed_device_key() const noexcept;
     void close() noexcept;
 
 private:
@@ -78,6 +80,8 @@ private:
 
     const DeviceIdentity& identity_;
     const AuthToken& token_;
+    DeviceEncryptionKey encryption_key_;
+    std::optional<SignedDeviceKey> signed_device_key_;
     Nonce client_nonce_{};
     SessionId session_id_{};
     std::uint32_t request_id_ = 0;
@@ -110,6 +114,7 @@ public:
     [[nodiscard]] bool expire(Clock::time_point now = Clock::now()) noexcept;
     [[nodiscard]] SessionId session_id() const;
     [[nodiscard]] DeviceId device_id() const;
+    [[nodiscard]] SignedDeviceKey signed_device_key() const;
     [[nodiscard]] std::string device_id_hex() const;
     [[nodiscard]] bool bound_to(std::uintptr_t connection_binding,
                                 const DeviceId& device_id,
@@ -132,6 +137,8 @@ private:
     std::uintptr_t connection_binding_ = 0;
     Clock::time_point deadline_{};
     PublicKey public_key_{};
+    EncryptionPublicKey encryption_public_key_{};
+    std::optional<SignedDeviceKey> signed_device_key_;
     Nonce client_nonce_{};
     Nonce server_nonce_{};
     DeviceId device_id_{};

@@ -480,6 +480,25 @@ void test_authenticated_identity(const std::filesystem::path& directory) {
                      id,
                      "authenticated owner creates network");
 
+    expect_error([&] {
+        static_cast<void>(channel.note_authenticated(
+            guest_identity.device_id(), owner_server.session_id(),
+            owner_server.signed_device_key()));
+    }, "cannot publish another device's signed encryption key");
+    const auto published = channel.note_authenticated(
+        owner_server.device_id(), owner_server.session_id(),
+        owner_server.signed_device_key());
+    expect(published.size() == 1 &&
+               published.front().recipient_device_id == owner_server.device_id(),
+           "signed device key publication refreshes network membership");
+    expect(channel.note_disconnected(owner_server.device_id(), auth::SessionId{}).empty(),
+           "unrelated session cannot revoke live device key");
+    const auto removed = channel.note_disconnected(owner_server.device_id(),
+                                                    owner_server.session_id());
+    expect(removed.size() == 1 &&
+               removed.front().recipient_device_id == owner_server.device_id(),
+           "disconnect removes signed key from shared snapshots");
+
     const auto selection = protocol::encode_network_member_request(
         {id, guest_identity.device_id()});
     const auto denied = channel.handle_authenticated(

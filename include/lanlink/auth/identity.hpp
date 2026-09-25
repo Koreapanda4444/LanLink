@@ -17,6 +17,7 @@ inline constexpr std::size_t nonce_size = 32;
 inline constexpr std::size_t token_proof_size = 32;
 inline constexpr std::size_t device_id_size = 32;
 inline constexpr std::size_t session_id_size = 32;
+inline constexpr std::size_t encryption_public_key_size = 32;
 
 using PublicKey = std::array<std::byte, public_key_size>;
 using SecretKey = std::array<std::byte, secret_key_size>;
@@ -25,6 +26,7 @@ using Nonce = std::array<std::byte, nonce_size>;
 using TokenProof = std::array<std::byte, token_proof_size>;
 using DeviceId = std::array<std::byte, device_id_size>;
 using SessionId = std::array<std::byte, session_id_size>;
+using EncryptionPublicKey = std::array<std::byte, encryption_public_key_size>;
 
 class DeviceIdentity {
 public:
@@ -76,6 +78,7 @@ private:
                                     const Signature& signature);
 [[nodiscard]] DeviceId make_device_id(const PublicKey& public_key);
 [[nodiscard]] std::vector<std::byte> make_auth_transcript(const PublicKey& public_key,
+                                                          const EncryptionPublicKey& encryption_public_key,
                                                           const Nonce& client_nonce,
                                                           const Nonce& server_nonce);
 [[nodiscard]] std::string hex_encode(std::span<const std::byte> bytes);

@@ -62,6 +62,13 @@ public:
     NetworkService& operator=(NetworkService&&) = delete;
 
     void record_authenticated_device(const auth::DeviceId& actor, std::int64_t now_ms);
+    [[nodiscard]] std::vector<RoutedPeerStateChange> publish_device_key(
+        const auth::DeviceId& actor,
+        const auth::SessionId& session_id,
+        const auth::SignedDeviceKey& signed_key,
+        std::int64_t now_ms);
+    [[nodiscard]] std::vector<RoutedPeerStateChange> remove_device_key(
+        const auth::DeviceId& actor, const auth::SessionId& session_id);
 
     [[nodiscard]] NetworkOperationOutcome create_network(
         const auth::DeviceId& actor,
@@ -108,10 +115,16 @@ private:
     [[nodiscard]] std::vector<RoutedPeerStateChange> changes_for_members(
         const storage::NetworkId& network_id, std::uint64_t revision) const;
 
+    struct ActiveKey {
+        auth::SessionId session_id{};
+        auth::SignedDeviceKey signed_key;
+    };
+
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;
     std::mutex mutex_;
     std::map<storage::NetworkId, std::uint64_t> revisions_;
+    std::map<auth::DeviceId, ActiveKey> active_keys_;
 };
 
 }

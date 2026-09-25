@@ -333,6 +333,12 @@ private:
             return false;
         }
 
+        if (std::any_of(active_control_streams_.begin(),
+                        active_control_streams_.end(),
+                        [&](const auto& active) { return active.device_id == device_id; })) {
+            return false;
+        }
+
         active_control_streams_.push_back({device_id, connection, stream});
         return true;
     }
@@ -553,7 +559,7 @@ private:
                     raw_stream_context);
                 break;
             }
-            case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+            case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE: {
                 {
                     std::lock_guard lock(active_control_streams_mutex_);
                     context->closed.store(true);
@@ -562,14 +568,31 @@ private:
                     });
                 }
 
+                std::optional<std::pair<auth::DeviceId, auth::SessionId>> closed_identity;
                 {
                     std::lock_guard lock(context->handshake_mutex);
+                    if (context->handshake.authenticated()) {
+                        closed_identity = std::make_pair(context->handshake.device_id(),
+                                                         context->handshake.session_id());
+                    }
                     context->handshake.close();
+                }
+
+                if (closed_identity) {
+                    try {
+                        route_control_events(control_channel_.note_disconnected(
+                            closed_identity->first, closed_identity->second));
+                    } catch (const std::exception& error) {
+                        log_noexcept(logger_, core::LogLevel::warning,
+                                     "device key removal failed: " +
+                                         std::string(error.what()));
+                    }
                 }
 
                 api_->ConnectionClose(connection);
                 delete context;
                 break;
+            }
             default:
                 break;
         }
@@ -669,6 +692,8 @@ private:
         bool shutdown_after_send = false;
         bool authenticated = false;
         auth::DeviceId authenticated_device_id{};
+        auth::SessionId authenticated_session_id{};
+        auth::SignedDeviceKey signed_key;
         std::string device_id;
 
         {
@@ -684,6 +709,8 @@ private:
 
                 if (authenticated) {
                     authenticated_device_id = handshake.device_id();
+                    authenticated_session_id = handshake.session_id();
+                    signed_key = handshake.signed_device_key();
                     device_id = handshake.device_id_hex();
                 }
             } else {
@@ -693,7 +720,6 @@ private:
 
         if (frame.type == protocol::MessageType::client_auth) {
             if (authenticated) {
-                control_channel_.note_authenticated(authenticated_device_id);
                 const auto settings_status = enable_authenticated_connection(
                     api_,
                     context->connection,
@@ -732,8 +758,16 @@ private:
             throw std::runtime_error("authentication connection already closed");
         }
         if (authenticated) {
-            route_control_events(control_channel_.initial_peer_states(
-                authenticated_device_id));
+            std::vector<relay::RoutedControlFrame> key_events;
+            {
+                std::lock_guard lock(active_control_streams_mutex_);
+                if (context->connection_context->closed.load()) {
+                    throw std::runtime_error("authentication connection already closed");
+                }
+                key_events = control_channel_.note_authenticated(
+                    authenticated_device_id, authenticated_session_id, signed_key);
+            }
+            route_control_events(key_events);
         }
     }
 
@@ -941,8 +975,9 @@ public:
             protocol::encode_network_selection_request({id}),
             protocol::NetworkOperation::peer_state, timeout, id);
         if (frame.type == protocol::MessageType::network_peer_state_result) {
-            return {protocol::NetworkResultCode::success,
-                    protocol::decode_network_peer_state(frame.payload)};
+            auto state = protocol::decode_network_peer_state(frame.payload);
+            verify_peer_keys(state);
+            return {protocol::NetworkResultCode::success, std::move(state)};
         }
         return {protocol::decode_network_operation_result(frame.payload).code, std::nullopt};
     }
@@ -973,6 +1008,15 @@ public:
     }
 
 private:
+    static void verify_peer_keys(const protocol::NetworkPeerState& state) {
+        for (const auto& peer : state.peers) {
+            if (peer.signed_key &&
+                !auth::verify_signed_device_key(*peer.signed_key, peer.device_id)) {
+                throw std::runtime_error("network peer has an invalid signed device key");
+            }
+        }
+    }
+
     void clear_peer_states() noexcept {
         std::lock_guard lock(peer_state_mutex_);
         peer_states_.clear();
@@ -980,6 +1024,7 @@ private:
     }
 
     void apply_peer_state(protocol::NetworkPeerState state) {
+        verify_peer_keys(state);
         std::lock_guard lock(peer_state_mutex_);
         if (!authenticated_.load() || stop_requested_.load()) {
             return;
@@ -1753,6 +1798,7 @@ private:
         } else if (frame.type == protocol::MessageType::network_peer_state_result &&
                    expected == protocol::NetworkOperation::peer_state) {
             const auto state = protocol::decode_network_peer_state(frame.payload);
+            verify_peer_keys(state);
             if (!found->second->network_id ||
                 state.network_id != *found->second->network_id) {
                 throw std::runtime_error("network peer state response network mismatch");

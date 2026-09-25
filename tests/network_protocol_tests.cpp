@@ -294,7 +294,7 @@ void test_round_trips() {
                                   {device_id(3), 0x0a400003U}}};
     const auto wire = encode_network_peer_state(peers);
     expect(decode_network_peer_state(wire) == peers, "peer snapshot round trip");
-    expect(wire.size() == 35 + 2 * 36 && wire[16] == std::byte{1} &&
+    expect(wire.size() == 35 + 2 * 37 && wire[16] == std::byte{1} &&
                wire[23] == std::byte{8} && wire[24] == std::byte{10} &&
                wire[26] == std::byte{0} && wire[28] == std::byte{24} &&
                wire[33] == std::byte{0} && wire[34] == std::byte{2},
@@ -348,6 +348,26 @@ void test_peer_state_validation() {
     trailing.push_back(std::byte{0});
     expect_error([&] { static_cast<void>(decode_network_peer_state(trailing)); },
                  "trailing peer state bytes rejected");
+    auto bad_key_flag = wire;
+    bad_key_flag[71] = std::byte{2};
+    expect_error([&] { static_cast<void>(decode_network_peer_state(bad_key_flag)); },
+                 "invalid signed key presence flag rejected");
+    auto signed_state = state;
+    lanlink::auth::SignedDeviceKey signed_key;
+    signed_key.identity_public_key.fill(std::byte{0x51});
+    signed_key.encryption_public_key.fill(std::byte{0x52});
+    signed_key.client_nonce.fill(std::byte{0x53});
+    signed_key.server_nonce.fill(std::byte{0x54});
+    signed_key.signature.fill(std::byte{0x55});
+    signed_state.peers.front().signed_key = signed_key;
+    signed_state.peers.resize(1);
+    const auto signed_wire = encode_network_peer_state(signed_state);
+    expect(decode_network_peer_state(signed_wire) == signed_state,
+           "signed peer key survives network wire round trip");
+    auto short_signed = signed_wire;
+    short_signed.pop_back();
+    expect_error([&] { static_cast<void>(decode_network_peer_state(short_signed)); },
+                 "truncated signed key rejected");
     auto many = wire;
     many[33] = std::byte{0};
     many[34] = std::byte{254};

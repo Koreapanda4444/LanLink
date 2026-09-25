@@ -69,6 +69,7 @@ target_include_directories(lanlink_protocol
 lanlink_enable_warnings(lanlink_protocol)
 
 add_library(lanlink_auth STATIC
+    src/auth/device_keys.cpp
     src/auth/handshake.cpp
     src/auth/identity.cpp
     src/auth/secret_store.cpp
@@ -117,6 +118,7 @@ target_include_directories(lanlink_relay_domain
 
 target_link_libraries(lanlink_relay_domain
     PUBLIC
+        lanlink_auth
         lanlink_protocol
         lanlink_storage
     PRIVATE

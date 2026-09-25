@@ -219,6 +219,7 @@ void test_token(const std::filesystem::path& directory) {
 void test_payloads() {
     lanlink::auth::ClientHelloPayload hello;
     hello.public_key.fill(std::byte{0x11});
+    hello.encryption_public_key.fill(std::byte{0x77});
     hello.client_nonce.fill(std::byte{0x22});
     expect(lanlink::auth::decode_client_hello(lanlink::auth::encode_client_hello(hello)) == hello,
            "client hello round trip");
@@ -284,6 +285,30 @@ void test_successful_handshake(const std::filesystem::path& directory) {
     expect(client.authenticated(), "client authenticated state");
     expect(server.authenticated(), "server authenticated state");
     expect(server.device_id_hex() == identity.device_id_hex(), "server device id");
+    expect(client.signed_device_key() == server.signed_device_key(),
+           "client and server agree on signed encryption key");
+    auto signed_key = server.signed_device_key();
+    expect(lanlink::auth::verify_signed_device_key(signed_key, identity.device_id()),
+           "authenticated encryption key verifies for device");
+    signed_key.encryption_public_key.front() ^= std::byte{1};
+    expect(!lanlink::auth::verify_signed_device_key(signed_key, identity.device_id()),
+           "altered encryption public key is rejected");
+    signed_key = server.signed_device_key();
+    signed_key.server_nonce.front() ^= std::byte{1};
+    expect(!lanlink::auth::verify_signed_device_key(signed_key, identity.device_id()),
+           "replayed encryption key rejects different challenge");
+    signed_key = server.signed_device_key();
+    signed_key.signature.front() ^= std::byte{1};
+    expect(!lanlink::auth::verify_signed_device_key(signed_key, identity.device_id()),
+           "altered device key signature is rejected");
+    expect(!lanlink::auth::verify_signed_device_key(
+               server.signed_device_key(), lanlink::auth::DeviceId{}),
+           "device encryption key cannot impersonate another id");
+    const auto unrelated = lanlink::auth::DeviceIdentity::load_or_create(
+        directory / "unrelated.identity");
+    expect(!lanlink::auth::verify_signed_device_key(server.signed_device_key(),
+                                                     unrelated.device_id()),
+           "encryption key cannot impersonate another real device");
     expect(client.session_id().has_value(), "client session id assigned");
     expect(client.session_id() == std::optional<lanlink::auth::SessionId>{server.session_id()},
            "client and server session id match");
@@ -305,6 +330,7 @@ void test_successful_handshake(const std::filesystem::path& directory) {
     client.close();
     server.close();
     expect(!client.session_id().has_value(), "client session cleared on close");
+    expect(!client.signed_device_key().has_value(), "client signed key cleared on close");
     expect(!server.authenticated(), "server session cleared on close");
     expect_error([&server] {
         static_cast<void>(server.session_id());
@@ -330,6 +356,7 @@ void test_rejected_handshake(const std::filesystem::path& directory) {
     expect(!server.authenticated(), "wrong token not authenticated");
     expect(server.rejected(), "server rejected state");
     expect(!client.session_id().has_value(), "rejected client has no session id");
+    expect(!client.signed_device_key().has_value(), "rejected client has no signed key");
 }
 
 void test_strict_state_timeout_and_replay(const std::filesystem::path& directory) {
@@ -370,6 +397,19 @@ void test_strict_state_timeout_and_replay(const std::filesystem::path& directory
     expect(!lanlink::auth::decode_auth_result(replay_result.payload).accepted,
            "proof replay rejected by fresh challenge");
     expect(replay.rejected(), "replayed session enters rejected state");
+
+    lanlink::auth::ClientHandshake modified_client(identity, client_token);
+    auto modified_hello = modified_client.begin(84);
+    auto modified_payload = lanlink::auth::decode_client_hello(modified_hello.payload);
+    modified_payload.encryption_public_key.front() ^= std::byte{1};
+    modified_hello.payload = lanlink::auth::encode_client_hello(modified_payload);
+    lanlink::auth::ServerHandshake modified_server(
+        server_token, 0x3006U, now + std::chrono::seconds{10});
+    const auto modified_challenge = modified_server.handle_hello(modified_hello, now);
+    const auto modified_proof = modified_client.handle_challenge(modified_challenge);
+    const auto modified_result = modified_server.handle_proof(modified_proof, now);
+    expect(!lanlink::auth::decode_auth_result(modified_result.payload).accepted,
+           "proof rejects swapped encryption key in client hello");
 
     lanlink::auth::ServerHandshake timeout(server_token,
                                            0x3005U,

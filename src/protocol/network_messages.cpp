@@ -524,7 +524,10 @@ std::vector<std::byte> encode_network_peer_state(const NetworkPeerState& state) 
     }
 
     std::vector<std::byte> output;
-    output.reserve(35 + state.peers.size() * (network_device_id_size + 4));
+    output.reserve(35 + state.peers.size() *
+                            (network_device_id_size + 5 + auth::public_key_size +
+                             auth::encryption_public_key_size + 2 * auth::nonce_size +
+                             auth::signature_size));
     append_array(output, state.network_id);
     append_integer(output, state.revision);
     append_integer(output, state.subnet_address);
@@ -534,6 +537,14 @@ std::vector<std::byte> encode_network_peer_state(const NetworkPeerState& state) 
     for (const auto& peer : state.peers) {
         append_array(output, peer.device_id);
         append_integer(output, peer.ipv4_address);
+        append_integer(output, static_cast<std::uint8_t>(peer.signed_key ? 1 : 0));
+        if (peer.signed_key) {
+            append_array(output, peer.signed_key->identity_public_key);
+            append_array(output, peer.signed_key->encryption_public_key);
+            append_array(output, peer.signed_key->client_nonce);
+            append_array(output, peer.signed_key->server_nonce);
+            append_array(output, peer.signed_key->signature);
+        }
     }
     return output;
 }
@@ -552,8 +563,24 @@ NetworkPeerState decode_network_peer_state(const std::span<const std::byte> payl
     }
     state.peers.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
-        state.peers.push_back({reader.read_array<network_device_id_size>(),
-                               reader.read_integer<std::uint32_t>()});
+        NetworkPeer peer;
+        peer.device_id = reader.read_array<network_device_id_size>();
+        peer.ipv4_address = reader.read_integer<std::uint32_t>();
+        const auto has_key = reader.read_integer<std::uint8_t>();
+        if (has_key > 1) {
+            throw std::runtime_error("network peer key flag is invalid");
+        }
+        if (has_key == 1) {
+            auth::SignedDeviceKey key;
+            key.identity_public_key = reader.read_array<auth::public_key_size>();
+            key.encryption_public_key =
+                reader.read_array<auth::encryption_public_key_size>();
+            key.client_nonce = reader.read_array<auth::nonce_size>();
+            key.server_nonce = reader.read_array<auth::nonce_size>();
+            key.signature = reader.read_array<auth::signature_size>();
+            peer.signed_key = key;
+        }
+        state.peers.push_back(std::move(peer));
     }
     reader.require_finished();
     if (!valid_peer_state(state)) {

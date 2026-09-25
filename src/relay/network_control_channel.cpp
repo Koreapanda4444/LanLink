@@ -143,6 +143,19 @@ void NetworkControlChannel::note_authenticated(const auth::DeviceId& actor) {
     service_.record_authenticated_device(actor, now_ms());
 }
 
+std::vector<RoutedControlFrame> NetworkControlChannel::note_authenticated(
+    const auth::DeviceId& actor,
+    const auth::SessionId& session_id,
+    const auth::SignedDeviceKey& signed_key) {
+    return encode_peer_changes(
+        service_.publish_device_key(actor, session_id, signed_key, now_ms()));
+}
+
+std::vector<RoutedControlFrame> NetworkControlChannel::note_disconnected(
+    const auth::DeviceId& actor, const auth::SessionId& session_id) {
+    return encode_peer_changes(service_.remove_device_key(actor, session_id));
+}
+
 std::vector<RoutedControlFrame> NetworkControlChannel::initial_peer_states(
     const auth::DeviceId& actor) {
     return encode_peer_changes(service_.peer_states_for_device(actor));
