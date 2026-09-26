@@ -14,8 +14,8 @@ inline constexpr std::array<std::byte, 4> frame_magic{
     std::byte{0x4c},
     std::byte{0x4b},
 };
-inline constexpr std::uint16_t protocol_version = 4;
-inline constexpr std::string_view protocol_alpn = "lanlink/4";
+inline constexpr std::uint16_t protocol_version = 5;
+inline constexpr std::string_view protocol_alpn = "lanlink/5";
 inline constexpr std::size_t frame_header_size = 16;
 inline constexpr std::uint32_t max_payload_size = 1024U * 1024U;
 
@@ -35,12 +35,14 @@ enum class MessageType : std::uint16_t {
     network_approve_request = 0x0105,
     network_kick_request = 0x0106,
     network_peer_state_request = 0x0107,
+    network_key_publish_request = 0x0108,
     network_operation_result = 0x0180,
     network_list_result = 0x0181,
     network_event = 0x0182,
     network_peer_state_result = 0x0183,
     network_peer_state_update = 0x0184,
     network_peer_state_revoked = 0x0185,
+    network_key_envelope = 0x0186,
     error = 0x00ff,
 };
 

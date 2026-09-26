@@ -66,6 +66,7 @@ public:
     [[nodiscard]] bool authenticated() const noexcept;
     [[nodiscard]] std::optional<SessionId> session_id() const noexcept;
     [[nodiscard]] std::optional<SignedDeviceKey> signed_device_key() const noexcept;
+    [[nodiscard]] const DeviceEncryptionKey& encryption_key() const;
     void close() noexcept;
 
 private:

@@ -1,4 +1,5 @@
 #include "lanlink/relay/network_service.hpp"
+#include "lanlink/auth/network_keys.hpp"
 
 #include <openssl/rand.h>
 
@@ -8,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -136,6 +138,8 @@ protocol::NetworkPeerState assemble_peer_state(
     const std::vector<storage::VirtualIpv4LeaseRecord>& leases,
     const auth::DeviceId& actor,
     const std::uint64_t revision,
+    const auth::DeviceId& owner_id,
+    const std::uint64_t key_epoch,
     const auto& active_keys) {
     const auto own = std::find_if(leases.begin(), leases.end(), [&](const auto& lease) {
         return lease.device_id == actor;
@@ -150,6 +154,8 @@ protocol::NetworkPeerState assemble_peer_state(
     state.subnet_address = subnet.network_address;
     state.prefix_length = subnet.prefix_length;
     state.own_address = own->address;
+    state.owner_device_id = owner_id;
+    state.key_epoch = key_epoch;
     state.peers.reserve(leases.size() - 1);
     for (const auto& lease : leases) {
         if (lease.device_id != actor) {
@@ -196,6 +202,9 @@ std::vector<RoutedPeerStateChange> NetworkService::publish_device_key(
     const auto networks = store_.list_networks_for_device(actor);
     std::vector<RoutedPeerStateChange> changes;
     for (const auto& network : networks) {
+        if (network.owner_device_id == actor) {
+            advance_key_epoch(network.id);
+        }
         auto network_changes = changes_for_members(network.id, advance_revision(network.id));
         changes.insert(changes.end(),
                        std::make_move_iterator(network_changes.begin()),
@@ -216,6 +225,9 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
     const auto networks = store_.list_networks_for_device(actor);
     std::vector<RoutedPeerStateChange> changes;
     for (const auto& network : networks) {
+        if (network.owner_device_id == actor) {
+            advance_key_epoch(network.id);
+        }
         auto network_changes = changes_for_members(network.id, advance_revision(network.id));
         changes.insert(changes.end(),
                        std::make_move_iterator(network_changes.begin()),
@@ -267,6 +279,7 @@ NetworkOperationOutcome NetworkService::create_network(
             auto outcome = operation_outcome(protocol::NetworkOperation::create,
                                              protocol::NetworkResultCode::success,
                                              network_id);
+            advance_key_epoch(network_id);
             outcome.peer_changes = changes_for_members(network_id,
                                                        advance_revision(network_id));
             return outcome;
@@ -354,6 +367,7 @@ NetworkOperationOutcome NetworkService::join_network(
             auto outcome = operation_outcome(protocol::NetworkOperation::join,
                                              protocol::NetworkResultCode::success,
                                              request.network_id);
+            advance_key_epoch(request.network_id);
             outcome.events = events_for_members(store_.list_members(request.network_id),
                                                 actor,
                                                 protocol::NetworkEventKind::member_joined,
@@ -434,6 +448,7 @@ NetworkOperationOutcome NetworkService::leave_network(
         auto outcome = operation_outcome(protocol::NetworkOperation::leave,
                                          protocol::NetworkResultCode::success,
                                          request.network_id);
+        advance_key_epoch(request.network_id);
         outcome.events = events_for_members(store_.list_members(request.network_id),
                                             std::nullopt,
                                             protocol::NetworkEventKind::member_left,
@@ -583,6 +598,7 @@ NetworkOperationOutcome NetworkService::approve_member(
         auto outcome = operation_outcome(protocol::NetworkOperation::approve,
                                          protocol::NetworkResultCode::success,
                                          request.network_id);
+        advance_key_epoch(request.network_id);
         outcome.events = events_for_members(store_.list_members(request.network_id),
                                             actor,
                                             protocol::NetworkEventKind::member_joined,
@@ -657,6 +673,7 @@ NetworkOperationOutcome NetworkService::kick_member(
         auto outcome = operation_outcome(protocol::NetworkOperation::kick,
                                          protocol::NetworkResultCode::success,
                                          request.network_id);
+        advance_key_epoch(request.network_id);
         outcome.events.push_back(routed_event(request.device_id,
                                               protocol::NetworkEventKind::member_kicked,
                                               request.network_id,
@@ -694,22 +711,38 @@ std::uint64_t NetworkService::advance_revision(const storage::NetworkId& network
     return ++revision;
 }
 
+std::uint64_t NetworkService::key_epoch_for(const storage::NetworkId& network_id) const {
+    const auto found = key_epochs_.find(network_id);
+    return found == key_epochs_.end() ? 1 : found->second;
+}
+
+void NetworkService::advance_key_epoch(const storage::NetworkId& network_id) {
+    auto& epoch = key_epochs_[network_id];
+    if (epoch == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::overflow_error("network key epoch exhausted");
+    }
+    ++epoch;
+}
+
 protocol::NetworkPeerState NetworkService::make_peer_state(
     const storage::NetworkId& network_id,
     const auth::DeviceId& actor,
     const std::uint64_t revision) const {
     const auto subnet = store_.find_subnet(network_id);
-    if (!subnet) {
+    const auto network = store_.find_network(network_id);
+    if (!subnet || !network) {
         throw std::runtime_error("network virtual IPv4 subnet is missing");
     }
     return assemble_peer_state(*subnet, store_.list_virtual_ipv4_leases(network_id),
-                               actor, revision, active_keys_);
+                               actor, revision, network->owner_device_id,
+                               key_epoch_for(network_id), active_keys_);
 }
 
 std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
     const storage::NetworkId& network_id, const std::uint64_t revision) const {
     const auto subnet = store_.find_subnet(network_id);
-    if (!subnet) {
+    const auto network = store_.find_network(network_id);
+    if (!subnet || !network) {
         throw std::runtime_error("network virtual IPv4 subnet is missing");
     }
     const auto leases = store_.list_virtual_ipv4_leases(network_id);
@@ -718,10 +751,56 @@ std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
     for (const auto& lease : leases) {
         result.push_back({lease.device_id,
                           assemble_peer_state(*subnet, leases, lease.device_id, revision,
-                                              active_keys_),
+                                              network->owner_device_id,
+                                              key_epoch_for(network_id), active_keys_),
                           {}});
     }
     return result;
+}
+
+NetworkKeyPublishOutcome NetworkService::publish_network_keys(
+    const auth::DeviceId& actor,
+    const protocol::NetworkKeyPublishRequest& request) {
+    if (is_zero(actor) || request.envelopes.empty() ||
+        request.envelopes.size() > protocol::max_network_peer_entries) {
+        return {protocol::NetworkResultCode::invalid_request, {}, {}};
+    }
+
+    const auto network_id = request.envelopes.front().network_id;
+    std::lock_guard lock(mutex_);
+    const auto network = store_.find_network(network_id);
+    if (!network) {
+        return {protocol::NetworkResultCode::not_found, network_id, {}};
+    }
+    const auto owner_key = active_keys_.find(actor);
+    if (network->owner_device_id != actor || owner_key == active_keys_.end()) {
+        return {protocol::NetworkResultCode::permission_denied, network_id, {}};
+    }
+
+    std::set<auth::DeviceId> recipients;
+    for (const auto& envelope : request.envelopes) {
+        if (envelope.network_id != network_id ||
+            envelope.owner_device_id != actor ||
+            envelope.recipient_device_id == actor ||
+            !recipients.insert(envelope.recipient_device_id).second ||
+            owner_key->second.signed_key.encryption_public_key !=
+                envelope.owner_encryption_public_key ||
+            !auth::verify_network_key_envelope(
+                envelope, owner_key->second.signed_key.identity_public_key)) {
+            return {protocol::NetworkResultCode::invalid_request, network_id, {}};
+        }
+        if (envelope.epoch != key_epoch_for(network_id)) {
+            return {protocol::NetworkResultCode::conflict, network_id, {}};
+        }
+        const auto recipient = active_keys_.find(envelope.recipient_device_id);
+        if (!store_.find_virtual_ipv4_lease(network_id, envelope.recipient_device_id) ||
+            recipient == active_keys_.end() ||
+            recipient->second.signed_key.encryption_public_key !=
+                envelope.recipient_encryption_public_key) {
+            return {protocol::NetworkResultCode::target_not_found, network_id, {}};
+        }
+    }
+    return {protocol::NetworkResultCode::success, network_id, request.envelopes};
 }
 
 NetworkPeerStateOutcome NetworkService::peer_state(

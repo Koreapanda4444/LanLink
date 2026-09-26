@@ -47,8 +47,8 @@ std::vector<std::byte> make_bytes(const std::initializer_list<unsigned int> valu
 void test_constants() {
     using namespace lanlink::protocol;
 
-    expect(protocol_version == 4, "protocol version");
-    expect(protocol_alpn == "lanlink/4", "protocol alpn");
+    expect(protocol_version == 5, "protocol version");
+    expect(protocol_alpn == "lanlink/5", "protocol alpn");
     expect(frame_header_size == 16, "frame header size");
     expect(message_type_name(MessageType::client_hello) == "client_hello", "client hello name");
     expect(message_type_name(MessageType::client_auth) == "client_auth", "client auth name");
@@ -87,7 +87,7 @@ void test_golden_frame() {
     const auto encoded = encode_frame(frame);
     const auto expected = make_bytes({
         0x4c, 0x4e, 0x4c, 0x4b,
-        0x00, 0x04,
+        0x00, 0x05,
         0x00, 0x03,
         0x01, 0x02, 0x03, 0x04,
         0x00, 0x00, 0x00, 0x02,
@@ -122,12 +122,14 @@ void test_message_round_trips() {
         MessageType::network_approve_request,
         MessageType::network_kick_request,
         MessageType::network_peer_state_request,
+        MessageType::network_key_publish_request,
         MessageType::network_operation_result,
         MessageType::network_list_result,
         MessageType::network_event,
         MessageType::network_peer_state_result,
         MessageType::network_peer_state_update,
         MessageType::network_peer_state_revoked,
+        MessageType::network_key_envelope,
         MessageType::error,
     };
 
@@ -207,7 +209,7 @@ void test_malformed_frames() {
 
     auto unsupported_version = valid;
     unsupported_version[4] = std::byte{0};
-    unsupported_version[5] = std::byte{3};
+    unsupported_version[5] = std::byte{4};
     expect(decode_frame(unsupported_version).status == DecodeStatus::unsupported_version,
            "unsupported version");
 

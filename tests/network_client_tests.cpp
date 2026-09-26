@@ -167,6 +167,10 @@ void test_network_management(const std::filesystem::path& directory) {
         return state && state->own_address == storage::virtual_ipv4_pool_first + 1 &&
                state->peers.empty();
     }, "network creation must push owner peer state");
+    wait_until([&] {
+        const auto key = owner.cached_network_key(id);
+        return key && key->epoch == 1 && !member.cached_network_key(id);
+    }, "only the owner creates the initial network key");
     const auto owner_initial = owner.fetch_peer_state(id);
     expect(owner_initial.code == protocol::NetworkResultCode::success &&
                owner_initial.state && owner_initial.state->revision == 1 &&
@@ -201,7 +205,7 @@ void test_network_management(const std::filesystem::path& directory) {
     expect(store.find_join_request(id, member_identity.device_id()).has_value(),
            "join request must persist");
     expect(member.fetch_peer_state(id).code == protocol::NetworkResultCode::not_member &&
-               !member.cached_peer_state(id),
+               !member.cached_peer_state(id) && !member.cached_network_key(id),
            "pending member cannot see peer addresses");
 
     const auto approved = owner.approve_member(id, member_identity.device_id());
@@ -240,6 +244,12 @@ void test_network_management(const std::filesystem::path& directory) {
     const auto owner_reply = owner.fetch_peer_state(id);
     expect(owner_reply.state && owner_reply.state->peers.front().signed_key == member_key,
            "peer key matches fetched and pushed state");
+    wait_until([&] {
+        const auto a = owner.cached_network_key(id);
+        const auto b = member.cached_network_key(id);
+        return a && b && a->epoch == 2 && b->epoch == 2 && a->key == b->key;
+    }, "approved member receives the owner generated network key");
+    const auto shared_before_kick = *owner.cached_network_key(id);
 
     const auto kicked = owner.kick_member(id, member_identity.device_id());
     expect(kicked.code == protocol::NetworkResultCode::success,
@@ -253,6 +263,11 @@ void test_network_management(const std::filesystem::path& directory) {
         return a && a->revision == 3 && a->peers.empty() &&
                !member.cached_peer_state(id);
     }, "kick must revoke member peer state and update owner");
+    wait_until([&] {
+        const auto key = owner.cached_network_key(id);
+        return key && key->epoch == 3 && key->key != shared_before_kick.key &&
+               !member.cached_network_key(id);
+    }, "kick revokes the former member and rotates the owner network key");
     expect(member.fetch_peer_state(id).code == protocol::NetworkResultCode::not_member,
            "kicked member cannot refetch peer addresses");
 
@@ -274,6 +289,13 @@ void test_network_management(const std::filesystem::path& directory) {
         return a && b && a->revision == 4 && b->revision == 4 &&
                a->peers.size() == 1 && b->peers.size() == 1;
     }, "invited rejoin must repopulate both peer caches");
+    wait_until([&] {
+        const auto a = owner.cached_network_key(id);
+        const auto b = member.cached_network_key(id);
+        return a && b && a->epoch == 4 && b->epoch == 4 &&
+               a->key == b->key && a->key != shared_before_kick.key;
+    }, "invited rejoin distributes a newly rotated network key");
+    const auto shared_before_reconnect = *owner.cached_network_key(id);
 
     member_worker.request_stop();
     member.stop();
@@ -286,6 +308,9 @@ void test_network_management(const std::filesystem::path& directory) {
         return state && state->revision == 5 && state->peers.size() == 1 &&
                !state->peers.front().signed_key;
     }, "disconnected member keeps address but loses live encryption key");
+    expect(!member.cached_network_key(id) &&
+               owner.cached_network_key(id) == shared_before_reconnect,
+           "member disconnection erases local key without rotating owner key");
     member_error = nullptr;
     member_worker = std::jthread([&](std::stop_token token) {
         try {
@@ -306,6 +331,10 @@ void test_network_management(const std::filesystem::path& directory) {
                auth::verify_signed_device_key(*state->peers.front().signed_key,
                                               member_identity.device_id());
     }, "reconnection distributes a fresh signed encryption key");
+    wait_until([&] {
+        const auto restored = member.cached_network_key(id);
+        return restored && restored == shared_before_reconnect;
+    }, "reconnected member receives the active network key through its new device key");
 
     expect(member.leave_network(id).code == protocol::NetworkResultCode::success,
            "member must leave over relay");
@@ -318,12 +347,20 @@ void test_network_management(const std::filesystem::path& directory) {
         return a && a->revision == 7 && a->peers.empty() &&
                !member.cached_peer_state(id);
     }, "leave must revoke local state and refresh remaining peers");
+    wait_until([&] {
+        const auto key = owner.cached_network_key(id);
+        return key && key->epoch == 5 &&
+               key->key != shared_before_reconnect.key &&
+               !member.cached_network_key(id);
+    }, "leave immediately rotates key and clears former member access");
 
     server.stop();
     wait_until([&] { return !owner.authenticated() && !member.authenticated(); },
                "server stop must invalidate authenticated client state");
     expect(owner.cached_peer_states().empty() && member.cached_peer_states().empty(),
            "disconnect must clear stale peer caches");
+    expect(!owner.cached_network_key(id) && !member.cached_network_key(id),
+           "disconnect must clear all locally cached network keys");
     expect_error([&] { static_cast<void>(owner.list_networks(100ms)); },
                  "request after disconnect must fail");
     owner_worker.request_stop();

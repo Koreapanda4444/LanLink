@@ -40,6 +40,7 @@ bool is_network_request(const protocol::MessageType type) noexcept {
         case protocol::MessageType::network_approve_request:
         case protocol::MessageType::network_kick_request:
         case protocol::MessageType::network_peer_state_request:
+        case protocol::MessageType::network_key_publish_request:
             return true;
         default:
             return false;
@@ -132,6 +133,27 @@ ControlDispatch list_response(const std::uint32_t request_id, NetworkListOutcome
             {}};
 }
 
+ControlDispatch key_publish_response(NetworkKeyPublishOutcome outcome) {
+    ControlDispatch dispatch;
+    dispatch.response = {
+        protocol::MessageType::network_operation_result,
+        0,
+        protocol::encode_network_operation_result({
+            protocol::NetworkOperation::key_publish, outcome.code, outcome.network_id}),
+    };
+    if (outcome.code == protocol::NetworkResultCode::success) {
+        dispatch.events.reserve(outcome.envelopes.size());
+        for (const auto& envelope : outcome.envelopes) {
+            dispatch.events.push_back({
+                envelope.recipient_device_id,
+                {protocol::MessageType::network_key_envelope, 0,
+                 protocol::encode_network_key_envelope(envelope)},
+            });
+        }
+    }
+    return dispatch;
+}
+
 }
 
 NetworkControlChannel::NetworkControlChannel(NetworkService& service, TimeSource time_source)
@@ -167,8 +189,13 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
     if (is_zero(actor)) {
         throw std::invalid_argument("control request requires an authenticated device");
     }
-    if (request.request_id == 0) {
+    if (request.request_id == 0 &&
+        request.type != protocol::MessageType::network_key_publish_request) {
         throw std::invalid_argument("control request id must be non-zero");
+    }
+    if (request.type == protocol::MessageType::network_key_publish_request &&
+        request.request_id != 0) {
+        throw std::invalid_argument("network key publication must be asynchronous");
     }
     if (!is_network_request(request.type)) {
         throw std::runtime_error("unexpected frame on authenticated control channel");
@@ -232,6 +259,9 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
                                            selection.network_id,
                                            service_.peer_state(actor, selection, now_ms()));
             }
+            case protocol::MessageType::network_key_publish_request:
+                return key_publish_response(service_.publish_network_keys(
+                    actor, protocol::decode_network_key_publish_request(request.payload)));
             default:
                 throw std::runtime_error("unexpected frame on authenticated control channel");
         }

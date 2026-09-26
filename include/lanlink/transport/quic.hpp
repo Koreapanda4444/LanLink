@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lanlink/auth/identity.hpp"
+#include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 
 #include <chrono>
@@ -60,6 +60,13 @@ struct NetworkPeerStateReply {
     std::optional<protocol::NetworkPeerState> state;
 
     bool operator==(const NetworkPeerStateReply&) const = default;
+};
+
+struct NetworkKeySnapshot {
+    std::uint64_t epoch;
+    auth::NetworkKey key;
+
+    bool operator==(const NetworkKeySnapshot&) const = default;
 };
 
 class QuicRelayServer {
@@ -129,6 +136,8 @@ public:
     [[nodiscard]] std::optional<protocol::NetworkPeerState> cached_peer_state(
         const protocol::NetworkId& network_id) const;
     [[nodiscard]] std::vector<protocol::NetworkPeerState> cached_peer_states() const;
+    [[nodiscard]] std::optional<NetworkKeySnapshot> cached_network_key(
+        const protocol::NetworkId& network_id) const;
     void set_network_event_handler(std::function<void(const protocol::NetworkEvent&)> handler);
 
 private:

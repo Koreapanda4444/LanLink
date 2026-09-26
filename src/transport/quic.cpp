@@ -1001,6 +1001,14 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::optional<NetworkKeySnapshot> cached_network_key(
+        const protocol::NetworkId& id) const {
+        std::lock_guard lock(peer_state_mutex_);
+        const auto found = network_keys_.find(id);
+        return found == network_keys_.end() ? std::nullopt
+                                            : std::optional{found->second};
+    }
+
     void set_network_event_handler(
         std::function<void(const protocol::NetworkEvent&)> handler) {
         std::lock_guard lock(event_handler_mutex_);
@@ -1019,25 +1027,122 @@ private:
 
     void clear_peer_states() noexcept {
         std::lock_guard lock(peer_state_mutex_);
+        network_keys_.clear();
         peer_states_.clear();
         peer_revisions_.clear();
     }
 
-    void apply_peer_state(protocol::NetworkPeerState state) {
+    void apply_peer_state(const HQUIC stream,
+                          const auth::DeviceEncryptionKey& own_encryption_key,
+                          protocol::NetworkPeerState state) {
         verify_peer_keys(state);
+        if (state.key_epoch == 0 ||
+            state.owner_device_id == auth::DeviceId{}) {
+            throw std::runtime_error("network peer state has no key owner or epoch");
+        }
+
+        const auto owner = state.owner_device_id == identity_->device_id();
+        std::optional<auth::NetworkKey> key;
+        {
+            std::lock_guard lock(peer_state_mutex_);
+            if (!authenticated_.load() || stop_requested_.load()) {
+                return;
+            }
+            const auto found = peer_revisions_.find(state.network_id);
+            if (found != peer_revisions_.end() &&
+                (state.revision < found->second ||
+                 (state.revision == found->second &&
+                  !peer_states_.contains(state.network_id)))) {
+                return;
+            }
+            const auto current_key = network_keys_.find(state.network_id);
+            if (current_key != network_keys_.end() &&
+                current_key->second.epoch != state.key_epoch) {
+                network_keys_.erase(current_key);
+            }
+            if (owner && !network_keys_.contains(state.network_id)) {
+                network_keys_.emplace(state.network_id,
+                                      NetworkKeySnapshot{state.key_epoch,
+                                                         auth::NetworkKey::random()});
+            }
+            if (owner) {
+                key = network_keys_.at(state.network_id).key;
+            }
+            peer_revisions_[state.network_id] = state.revision;
+            peer_states_[state.network_id] = state;
+        }
+
+        if (!owner || state.peers.empty()) {
+            return;
+        }
+        protocol::NetworkKeyPublishRequest publish;
+        for (const auto& peer : state.peers) {
+            if (!peer.signed_key) {
+                continue;
+            }
+            try {
+                publish.envelopes.push_back(auth::seal_network_key(
+                    *identity_, own_encryption_key, *peer.signed_key, peer.device_id,
+                    state.network_id, state.key_epoch, *key));
+            } catch (const std::exception& error) {
+                log_noexcept(logger_, core::LogLevel::warning,
+                             "network peer key wrapping failed: " +
+                                 std::string(error.what()));
+            }
+        }
+        if (!publish.envelopes.empty() &&
+            QUIC_FAILED(send_frame(api_, stream,
+                {protocol::MessageType::network_key_publish_request, 0,
+                 protocol::encode_network_key_publish_request(publish)}))) {
+            throw std::runtime_error("network key publication send failed");
+        }
+    }
+
+    void apply_network_key_envelope(
+        const auth::DeviceEncryptionKey& own_encryption_key,
+        const protocol::NetworkKeyEnvelope& envelope) {
+        auth::SignedDeviceKey owner_key;
+        {
+            std::lock_guard lock(peer_state_mutex_);
+            if (!authenticated_.load() || stop_requested_.load()) {
+                return;
+            }
+            const auto found = peer_states_.find(envelope.network_id);
+            if (found == peer_states_.end() ||
+                found->second.key_epoch != envelope.epoch ||
+                found->second.owner_device_id != envelope.owner_device_id) {
+                return;
+            }
+            const auto& peers = found->second.peers;
+            const auto owner = std::find_if(peers.begin(), peers.end(),
+                [&](const auto& peer) {
+                    return peer.device_id == envelope.owner_device_id;
+                });
+            if (owner == peers.end() || !owner->signed_key) {
+                throw std::runtime_error("network key owner is not authenticated");
+            }
+            owner_key = *owner->signed_key;
+        }
+
+        auto key = auth::open_network_key(own_encryption_key, envelope,
+                                           owner_key, identity_->device_id());
         std::lock_guard lock(peer_state_mutex_);
-        if (!authenticated_.load() || stop_requested_.load()) {
+        const auto found = peer_states_.find(envelope.network_id);
+        if (found == peer_states_.end() ||
+            found->second.key_epoch != envelope.epoch ||
+            found->second.owner_device_id != envelope.owner_device_id ||
+            !authenticated_.load() || stop_requested_.load()) {
             return;
         }
-        const auto found = peer_revisions_.find(state.network_id);
-        if (found != peer_revisions_.end() &&
-            (state.revision < found->second ||
-             (state.revision == found->second &&
-              !peer_states_.contains(state.network_id)))) {
+        const auto current = network_keys_.find(envelope.network_id);
+        if (current != network_keys_.end() && current->second.epoch == envelope.epoch) {
+            if (!(current->second.key == key)) {
+                throw std::runtime_error("network key conflicts with current epoch");
+            }
             return;
         }
-        peer_revisions_[state.network_id] = state.revision;
-        peer_states_[state.network_id] = std::move(state);
+        network_keys_.insert_or_assign(envelope.network_id,
+                                        NetworkKeySnapshot{envelope.epoch, std::move(key)});
     }
 
     void apply_peer_revocation(const protocol::NetworkPeerRevocation& revocation) {
@@ -1050,6 +1155,7 @@ private:
             return;
         }
         peer_revisions_[revocation.network_id] = revocation.revision;
+        network_keys_.erase(revocation.network_id);
         peer_states_.erase(revocation.network_id);
     }
 
@@ -1622,7 +1728,7 @@ private:
 
                         for (const auto& frame : frames) {
                             if (context->handshake.authenticated()) {
-                                handle_control_frame(context, frame);
+                                handle_control_frame(stream, context, frame);
                             } else {
                                 handle_auth_frame(stream, context, frame);
                             }
@@ -1734,18 +1840,50 @@ private:
                          identity_->device_id_hex());
     }
 
-    void handle_control_frame(StreamContext* context, const protocol::Frame& frame) {
+    void handle_control_frame(const HQUIC stream,
+                              StreamContext* context, const protocol::Frame& frame) {
         if (frame.type == protocol::MessageType::network_peer_state_update ||
             frame.type == protocol::MessageType::network_peer_state_revoked) {
             if (frame.request_id != 0) {
                 throw std::runtime_error("network peer update has a request id");
             }
             if (frame.type == protocol::MessageType::network_peer_state_update) {
-                apply_peer_state(protocol::decode_network_peer_state(frame.payload));
+                apply_peer_state(stream, context->handshake.encryption_key(),
+                                 protocol::decode_network_peer_state(frame.payload));
             } else {
                 apply_peer_revocation(
                     protocol::decode_network_peer_revocation(frame.payload));
             }
+            return;
+        }
+        if (frame.type == protocol::MessageType::network_key_envelope) {
+            if (frame.request_id != 0) {
+                throw std::runtime_error("network key envelope has a request id");
+            }
+            apply_network_key_envelope(
+                context->handshake.encryption_key(),
+                protocol::decode_network_key_envelope(frame.payload));
+            return;
+        }
+        if (frame.request_id == 0 &&
+            frame.type == protocol::MessageType::network_operation_result) {
+            const auto result = protocol::decode_network_operation_result(frame.payload);
+            if (result.operation != protocol::NetworkOperation::key_publish) {
+                throw std::runtime_error("unexpected unrequested network result");
+            }
+            if (result.code != protocol::NetworkResultCode::success) {
+                log_noexcept(logger_, core::LogLevel::warning,
+                    "network key publication rejected: " +
+                    std::string(protocol::network_result_code_name(result.code)));
+            }
+            return;
+        }
+        if (frame.type == protocol::MessageType::error && frame.request_id == 0) {
+            if (!frame.payload.empty()) {
+                throw std::runtime_error("invalid network key publication error");
+            }
+            log_noexcept(logger_, core::LogLevel::warning,
+                         "network key publication rejected by relay");
             return;
         }
         if (frame.type == protocol::MessageType::network_event) {
@@ -1838,6 +1976,7 @@ private:
     std::mutex event_handler_mutex_;
     mutable std::mutex peer_state_mutex_;
     std::map<protocol::NetworkId, protocol::NetworkPeerState> peer_states_;
+    std::map<protocol::NetworkId, NetworkKeySnapshot> network_keys_;
     std::map<protocol::NetworkId, std::uint64_t> peer_revisions_;
     std::function<void(const protocol::NetworkEvent&)> event_handler_;
     std::mutex event_queue_mutex_;
@@ -1954,6 +2093,11 @@ std::optional<protocol::NetworkPeerState> QuicRelayClient::cached_peer_state(
 
 std::vector<protocol::NetworkPeerState> QuicRelayClient::cached_peer_states() const {
     return impl_->cached_peer_states();
+}
+
+std::optional<NetworkKeySnapshot> QuicRelayClient::cached_network_key(
+    const protocol::NetworkId& network_id) const {
+    return impl_->cached_network_key(network_id);
 }
 
 void QuicRelayClient::set_network_event_handler(

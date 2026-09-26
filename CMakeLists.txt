@@ -70,6 +70,7 @@ lanlink_enable_warnings(lanlink_protocol)
 
 add_library(lanlink_auth STATIC
     src/auth/device_keys.cpp
+    src/auth/network_keys.cpp
     src/auth/handshake.cpp
     src/auth/identity.cpp
     src/auth/secret_store.cpp

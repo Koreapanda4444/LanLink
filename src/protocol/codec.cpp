@@ -51,12 +51,14 @@ bool is_known_message_type(const MessageType type) noexcept {
         case MessageType::network_approve_request:
         case MessageType::network_kick_request:
         case MessageType::network_peer_state_request:
+        case MessageType::network_key_publish_request:
         case MessageType::network_operation_result:
         case MessageType::network_list_result:
         case MessageType::network_event:
         case MessageType::network_peer_state_result:
         case MessageType::network_peer_state_update:
         case MessageType::network_peer_state_revoked:
+        case MessageType::network_key_envelope:
         case MessageType::error:
             return true;
     }
@@ -96,6 +98,8 @@ std::string_view message_type_name(const MessageType type) noexcept {
             return "network_kick_request";
         case MessageType::network_peer_state_request:
             return "network_peer_state_request";
+        case MessageType::network_key_publish_request:
+            return "network_key_publish_request";
         case MessageType::network_operation_result:
             return "network_operation_result";
         case MessageType::network_list_result:
@@ -108,6 +112,8 @@ std::string_view message_type_name(const MessageType type) noexcept {
             return "network_peer_state_update";
         case MessageType::network_peer_state_revoked:
             return "network_peer_state_revoked";
+        case MessageType::network_key_envelope:
+            return "network_key_envelope";
         case MessageType::error:
             return "error";
     }

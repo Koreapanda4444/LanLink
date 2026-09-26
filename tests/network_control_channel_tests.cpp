@@ -1,4 +1,5 @@
 #include "lanlink/auth/handshake.hpp"
+#include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/codec.hpp"
 #include "lanlink/protocol/stream_decoder.hpp"
 #include "lanlink/relay/network_control_channel.hpp"
@@ -521,6 +522,128 @@ void test_authenticated_identity(const std::filesystem::path& directory) {
            "fragmented control frame assembled");
 }
 
+void test_network_key_publication(const std::filesystem::path& directory) {
+    using namespace lanlink;
+
+    const auto owner = auth::DeviceIdentity::load_or_create(directory / "publish-owner.key");
+    const auto member = auth::DeviceIdentity::load_or_create(directory / "publish-member.key");
+    const auto token = auth::AuthToken::from_secret(
+        "lanlink-key-publication-authorization-secret");
+    auth::ClientHandshake owner_client(owner, token);
+    auth::ClientHandshake member_client(member, token);
+    auth::ServerHandshake owner_server(
+        token, 301, auth::ServerHandshake::Clock::now() + std::chrono::minutes{1});
+    auth::ServerHandshake member_server(
+        token, 302, auth::ServerHandshake::Clock::now() + std::chrono::minutes{1});
+    const auto authenticate = [](auth::ClientHandshake& client,
+                                 auth::ServerHandshake& server) {
+        const auto challenge = server.handle_hello(client.begin(1));
+        const auto result = server.handle_proof(client.handle_challenge(challenge));
+        return client.handle_result(result) && server.authenticated();
+    };
+    expect(authenticate(owner_client, owner_server) &&
+               authenticate(member_client, member_server),
+           "publication participants authenticate signed encryption keys");
+
+    storage::RelayStore store(directory / "key-publication.db");
+    const auto id = network_id(23);
+    relay::NetworkService service(store, [id] { return id; });
+    relay::NetworkControlChannel channel(service, [] { return 1234; });
+    static_cast<void>(channel.note_authenticated(
+        owner.device_id(), owner_server.session_id(), owner_server.signed_device_key()));
+    static_cast<void>(channel.note_authenticated(
+        member.device_id(), member_server.session_id(), member_server.signed_device_key()));
+    const auto create = channel.handle_authenticated(
+        owner.device_id(), request(protocol::MessageType::network_create_request, 31,
+            protocol::encode_network_create_request({"Key test"})));
+    expect_operation(create, 31, protocol::NetworkOperation::create,
+                     protocol::NetworkResultCode::success, id,
+                     "owner creates network for key publication");
+    const auto selection = protocol::encode_network_selection_request({id});
+    const auto join = channel.handle_authenticated(
+        member.device_id(),
+        request(protocol::MessageType::network_join_request, 32, selection));
+    expect_operation(join, 32, protocol::NetworkOperation::join,
+                     protocol::NetworkResultCode::pending_approval, id,
+                     "member requests access before receiving network key");
+    const auto approved = channel.handle_authenticated(
+        owner.device_id(), request(protocol::MessageType::network_approve_request, 33,
+            protocol::encode_network_member_request({id, member.device_id()})));
+    expect_operation(approved, 33, protocol::NetworkOperation::approve,
+                     protocol::NetworkResultCode::success, id,
+                     "owner approves key recipient");
+    const auto owner_peers = channel.handle_authenticated(
+        owner.device_id(),
+        request(protocol::MessageType::network_peer_state_request, 34, selection));
+    const auto peer_state =
+        protocol::decode_network_peer_state(owner_peers.response.payload);
+    expect(peer_state.key_epoch == 2 && peer_state.owner_device_id == owner.device_id(),
+           "approved membership advances published key epoch");
+
+    const auto secret = auth::NetworkKey::random();
+    const auto envelope = auth::seal_network_key(
+        owner, owner_client.encryption_key(), member_server.signed_device_key(),
+        member.device_id(), id, peer_state.key_epoch, secret);
+    const auto publish = request(protocol::MessageType::network_key_publish_request, 0,
+        protocol::encode_network_key_publish_request({{envelope}}));
+    const auto denied = channel.handle_authenticated(member.device_id(), publish);
+    expect_operation(denied, 0, protocol::NetworkOperation::key_publish,
+                     protocol::NetworkResultCode::permission_denied, id,
+                     "network member cannot publish owner's key");
+    expect(denied.events.empty(), "denied key publication sends no envelope");
+
+    auto tampered = envelope;
+    tampered.signature.front() ^= std::byte{1};
+    const auto invalid = channel.handle_authenticated(owner.device_id(),
+        request(protocol::MessageType::network_key_publish_request, 0,
+            protocol::encode_network_key_publish_request({{tampered}})));
+    expect_operation(invalid, 0, protocol::NetworkOperation::key_publish,
+                     protocol::NetworkResultCode::invalid_request, id,
+                     "relay rejects unsigned network key publication");
+    expect(invalid.events.empty(), "invalid key publication sends no envelope");
+
+    const auto published = channel.handle_authenticated(owner.device_id(), publish);
+    expect_operation(published, 0, protocol::NetworkOperation::key_publish,
+                     protocol::NetworkResultCode::success, id,
+                     "relay accepts signed key for current member and epoch");
+    expect(published.events.size() == 1 &&
+               published.events.front().recipient_device_id == member.device_id() &&
+               published.events.front().frame.type ==
+                   protocol::MessageType::network_key_envelope &&
+               published.events.front().frame.request_id == 0,
+           "relay forwards encrypted key exclusively to intended member");
+    if (published.events.size() == 1) {
+        const auto received = protocol::decode_network_key_envelope(
+            published.events.front().frame.payload);
+        expect(auth::open_network_key(member_client.encryption_key(), received,
+                                      owner_server.signed_device_key(), member.device_id()) ==
+                   secret,
+               "recipient decrypts key after relay forwarding");
+    }
+
+    const auto left = channel.handle_authenticated(
+        member.device_id(),
+        request(protocol::MessageType::network_leave_request, 35, selection));
+    expect_operation(left, 35, protocol::NetworkOperation::leave,
+                     protocol::NetworkResultCode::success, id,
+                     "member leaves before old key is republished");
+    const auto stale = channel.handle_authenticated(owner.device_id(), publish);
+    expect_operation(stale, 0, protocol::NetworkOperation::key_publish,
+                     protocol::NetworkResultCode::conflict, id,
+                     "relay refuses stale pre-leave key epoch");
+    expect(stale.events.empty(), "stale key publication sends no envelope");
+    const auto after_leave = auth::seal_network_key(
+        owner, owner_client.encryption_key(), member_server.signed_device_key(),
+        member.device_id(), id, peer_state.key_epoch + 1, secret);
+    const auto removed = channel.handle_authenticated(owner.device_id(),
+        request(protocol::MessageType::network_key_publish_request, 0,
+            protocol::encode_network_key_publish_request({{after_leave}})));
+    expect_operation(removed, 0, protocol::NetworkOperation::key_publish,
+                     protocol::NetworkResultCode::target_not_found, id,
+                     "relay refuses key to former network member even with current epoch");
+    expect(removed.events.empty(), "former member receives no encrypted key");
+}
+
 }
 
 int main() {
@@ -530,6 +653,7 @@ int main() {
         test_management_flow(directory);
         test_invalid_frames(directory);
         test_authenticated_identity(directory);
+        test_network_key_publication(directory);
     } catch (const std::exception& error) {
         std::cerr << "unexpected error: " << error.what() << '\n';
         ++failures;

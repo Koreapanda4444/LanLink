@@ -1,6 +1,8 @@
 #include "lanlink/auth/device_keys.hpp"
 
 #include <openssl/evp.h>
+#include <openssl/crypto.h>
+#include <openssl/rand.h>
 
 #include <algorithm>
 #include <memory>
@@ -20,6 +22,58 @@ bool all_zero(const std::array<std::byte, Size>& bytes) noexcept {
     });
 }
 
+}
+
+Secret32::Secret32(std::array<std::byte, 32> bytes) noexcept : bytes_(bytes) {
+    OPENSSL_cleanse(bytes.data(), bytes.size());
+}
+
+Secret32 Secret32::random() {
+    std::array<std::byte, 32> bytes{};
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(bytes.data()),
+                   static_cast<int>(bytes.size())) != 1) {
+        OPENSSL_cleanse(bytes.data(), bytes.size());
+        throw std::runtime_error("network key generation failed");
+    }
+    Secret32 result(bytes);
+    OPENSSL_cleanse(bytes.data(), bytes.size());
+    return result;
+}
+
+Secret32::~Secret32() {
+    OPENSSL_cleanse(bytes_.data(), bytes_.size());
+}
+
+Secret32::Secret32(const Secret32& other) noexcept : bytes_(other.bytes_) {
+}
+
+Secret32& Secret32::operator=(const Secret32& other) noexcept {
+    if (this != &other) {
+        OPENSSL_cleanse(bytes_.data(), bytes_.size());
+        bytes_ = other.bytes_;
+    }
+    return *this;
+}
+
+Secret32::Secret32(Secret32&& other) noexcept : bytes_(other.bytes_) {
+    OPENSSL_cleanse(other.bytes_.data(), other.bytes_.size());
+}
+
+Secret32& Secret32::operator=(Secret32&& other) noexcept {
+    if (this != &other) {
+        OPENSSL_cleanse(bytes_.data(), bytes_.size());
+        bytes_ = other.bytes_;
+        OPENSSL_cleanse(other.bytes_.data(), other.bytes_.size());
+    }
+    return *this;
+}
+
+std::span<const std::byte, 32> Secret32::bytes() const noexcept {
+    return bytes_;
+}
+
+bool Secret32::operator==(const Secret32& other) const noexcept {
+    return bytes_ == other.bytes_;
 }
 
 struct DeviceEncryptionKey::Impl {
@@ -65,6 +119,29 @@ DeviceEncryptionKey DeviceEncryptionKey::generate() {
 
 const EncryptionPublicKey& DeviceEncryptionKey::public_key() const noexcept {
     return impl_->public_key;
+}
+
+Secret32 DeviceEncryptionKey::derive_shared_secret(
+    const EncryptionPublicKey& peer_public_key) const {
+    Pkey peer(EVP_PKEY_new_raw_public_key(
+                  EVP_PKEY_X25519, nullptr,
+                  reinterpret_cast<const unsigned char*>(peer_public_key.data()),
+                  peer_public_key.size()),
+              EVP_PKEY_free);
+    PkeyContext context(EVP_PKEY_CTX_new(impl_->key.get(), nullptr), EVP_PKEY_CTX_free);
+    std::array<std::byte, 32> shared{};
+    auto size = shared.size();
+    if (!peer || !context || EVP_PKEY_derive_init(context.get()) != 1 ||
+        EVP_PKEY_derive_set_peer(context.get(), peer.get()) != 1 ||
+        EVP_PKEY_derive(context.get(),
+                        reinterpret_cast<unsigned char*>(shared.data()), &size) != 1 ||
+        size != shared.size() || all_zero(shared)) {
+        OPENSSL_cleanse(shared.data(), shared.size());
+        throw std::runtime_error("X25519 shared secret derivation failed");
+    }
+    Secret32 result(shared);
+    OPENSSL_cleanse(shared.data(), shared.size());
+    return result;
 }
 
 bool verify_signed_device_key(const SignedDeviceKey& key,

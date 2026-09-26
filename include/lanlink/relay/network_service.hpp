@@ -49,6 +49,14 @@ struct NetworkListOutcome {
     bool operator==(const NetworkListOutcome&) const = default;
 };
 
+struct NetworkKeyPublishOutcome {
+    protocol::NetworkResultCode code = protocol::NetworkResultCode::success;
+    protocol::NetworkId network_id{};
+    std::vector<protocol::NetworkKeyEnvelope> envelopes;
+
+    bool operator==(const NetworkKeyPublishOutcome&) const = default;
+};
+
 class NetworkService {
 public:
     using NetworkIdGenerator = std::function<storage::NetworkId()>;
@@ -102,12 +110,17 @@ public:
         const auth::DeviceId& actor,
         const protocol::NetworkSelectionRequest& request,
         std::int64_t now_ms);
+    [[nodiscard]] NetworkKeyPublishOutcome publish_network_keys(
+        const auth::DeviceId& actor,
+        const protocol::NetworkKeyPublishRequest& request);
     [[nodiscard]] std::vector<RoutedPeerStateChange> peer_states_for_device(
         const auth::DeviceId& actor);
 
 private:
     [[nodiscard]] std::uint64_t revision_for(const storage::NetworkId& network_id) const;
     [[nodiscard]] std::uint64_t advance_revision(const storage::NetworkId& network_id);
+    [[nodiscard]] std::uint64_t key_epoch_for(const storage::NetworkId& network_id) const;
+    void advance_key_epoch(const storage::NetworkId& network_id);
     [[nodiscard]] protocol::NetworkPeerState make_peer_state(
         const storage::NetworkId& network_id,
         const auth::DeviceId& actor,
@@ -124,6 +137,7 @@ private:
     NetworkIdGenerator network_id_generator_;
     std::mutex mutex_;
     std::map<storage::NetworkId, std::uint64_t> revisions_;
+    std::map<storage::NetworkId, std::uint64_t> key_epochs_;
     std::map<auth::DeviceId, ActiveKey> active_keys_;
 };
 

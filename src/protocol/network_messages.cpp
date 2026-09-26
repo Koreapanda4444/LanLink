@@ -17,6 +17,9 @@ constexpr std::size_t network_event_size = 1 + network_id_size + network_device_
 constexpr std::uint32_t peer_pool_first = 0x0a400000U;
 constexpr std::uint32_t peer_pool_end = 0x0a800000U;
 constexpr std::uint32_t peer_subnet_size = 256;
+constexpr std::size_t key_envelope_size = network_id_size + 8 +
+    2 * network_device_id_size + 2 * auth::encryption_public_key_size +
+    network_key_nonce_size + network_key_size + network_key_tag_size + auth::signature_size;
 
 template <typename Integer>
 void append_integer(std::vector<std::byte>& output, const Integer value) {
@@ -320,6 +323,7 @@ NetworkSummary read_summary(Reader& reader) {
 
 bool valid_peer_state(const NetworkPeerState& state) {
     if (is_zero(state.network_id) || state.prefix_length != 24 ||
+        (is_zero(state.owner_device_id) != (state.key_epoch == 0)) ||
         state.subnet_address < peer_pool_first ||
         state.subnet_address >= peer_pool_end ||
         state.subnet_address % peer_subnet_size != 0 ||
@@ -524,7 +528,7 @@ std::vector<std::byte> encode_network_peer_state(const NetworkPeerState& state) 
     }
 
     std::vector<std::byte> output;
-    output.reserve(35 + state.peers.size() *
+    output.reserve(75 + state.peers.size() *
                             (network_device_id_size + 5 + auth::public_key_size +
                              auth::encryption_public_key_size + 2 * auth::nonce_size +
                              auth::signature_size));
@@ -546,6 +550,8 @@ std::vector<std::byte> encode_network_peer_state(const NetworkPeerState& state) 
             append_array(output, peer.signed_key->signature);
         }
     }
+    append_array(output, state.owner_device_id);
+    append_integer(output, state.key_epoch);
     return output;
 }
 
@@ -582,6 +588,8 @@ NetworkPeerState decode_network_peer_state(const std::span<const std::byte> payl
         }
         state.peers.push_back(std::move(peer));
     }
+    state.owner_device_id = reader.read_array<network_device_id_size>();
+    state.key_epoch = reader.read_integer<std::uint64_t>();
     reader.require_finished();
     if (!valid_peer_state(state)) {
         throw std::runtime_error("network peer state contains invalid addresses or peers");
@@ -608,6 +616,96 @@ NetworkPeerRevocation decode_network_peer_revocation(
     reader.require_finished();
     require_network_id_for_decode(revocation.network_id);
     return revocation;
+}
+
+std::vector<std::byte> encode_network_key_envelope(const NetworkKeyEnvelope& envelope) {
+    if (is_zero(envelope.network_id) || envelope.epoch == 0 ||
+        is_zero(envelope.owner_device_id) || is_zero(envelope.recipient_device_id) ||
+        envelope.owner_device_id == envelope.recipient_device_id ||
+        is_zero(envelope.owner_encryption_public_key) ||
+        is_zero(envelope.recipient_encryption_public_key)) {
+        throw std::invalid_argument("network key envelope has invalid identities or epoch");
+    }
+
+    std::vector<std::byte> output;
+    output.reserve(key_envelope_size);
+    append_array(output, envelope.network_id);
+    append_integer(output, envelope.epoch);
+    append_array(output, envelope.owner_device_id);
+    append_array(output, envelope.recipient_device_id);
+    append_array(output, envelope.owner_encryption_public_key);
+    append_array(output, envelope.recipient_encryption_public_key);
+    append_array(output, envelope.nonce);
+    append_array(output, envelope.ciphertext);
+    append_array(output, envelope.tag);
+    append_array(output, envelope.signature);
+    return output;
+}
+
+NetworkKeyEnvelope decode_network_key_envelope(const std::span<const std::byte> payload) {
+    if (payload.size() != key_envelope_size) {
+        throw std::runtime_error("network key envelope has invalid size");
+    }
+
+    Reader reader(payload);
+    NetworkKeyEnvelope envelope;
+    envelope.network_id = reader.read_array<network_id_size>();
+    envelope.epoch = reader.read_integer<std::uint64_t>();
+    envelope.owner_device_id = reader.read_array<network_device_id_size>();
+    envelope.recipient_device_id = reader.read_array<network_device_id_size>();
+    envelope.owner_encryption_public_key =
+        reader.read_array<auth::encryption_public_key_size>();
+    envelope.recipient_encryption_public_key =
+        reader.read_array<auth::encryption_public_key_size>();
+    envelope.nonce = reader.read_array<network_key_nonce_size>();
+    envelope.ciphertext = reader.read_array<network_key_size>();
+    envelope.tag = reader.read_array<network_key_tag_size>();
+    envelope.signature = reader.read_array<auth::signature_size>();
+    reader.require_finished();
+
+    try {
+        static_cast<void>(encode_network_key_envelope(envelope));
+    } catch (const std::invalid_argument&) {
+        throw std::runtime_error("network key envelope has invalid identities or epoch");
+    }
+    return envelope;
+}
+
+std::vector<std::byte> encode_network_key_publish_request(
+    const NetworkKeyPublishRequest& request) {
+    if (request.envelopes.empty() ||
+        request.envelopes.size() > max_network_peer_entries) {
+        throw std::invalid_argument("network key publish has invalid recipient count");
+    }
+
+    std::vector<std::byte> output;
+    output.reserve(2 + request.envelopes.size() * key_envelope_size);
+    append_integer(output, static_cast<std::uint16_t>(request.envelopes.size()));
+    for (const auto& envelope : request.envelopes) {
+        const auto wire = encode_network_key_envelope(envelope);
+        output.insert(output.end(), wire.begin(), wire.end());
+    }
+    return output;
+}
+
+NetworkKeyPublishRequest decode_network_key_publish_request(
+    const std::span<const std::byte> payload) {
+    if (payload.size() < 2) {
+        throw std::runtime_error("network key publish is truncated");
+    }
+    Reader reader(payload.first(2));
+    const auto count = reader.read_integer<std::uint16_t>();
+    if (count == 0 || count > max_network_peer_entries ||
+        payload.size() != 2 + static_cast<std::size_t>(count) * key_envelope_size) {
+        throw std::runtime_error("network key publish has invalid size");
+    }
+    NetworkKeyPublishRequest result;
+    result.envelopes.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        result.envelopes.push_back(decode_network_key_envelope(
+            payload.subspan(2 + index * key_envelope_size, key_envelope_size)));
+    }
+    return result;
 }
 
 NetworkEvent decode_network_event(const std::span<const std::byte> payload) {
@@ -641,6 +739,7 @@ bool is_known_network_operation(const NetworkOperation operation) noexcept {
         case NetworkOperation::approve:
         case NetworkOperation::kick:
         case NetworkOperation::peer_state:
+        case NetworkOperation::key_publish:
             return true;
     }
 
@@ -698,6 +797,8 @@ std::string_view network_operation_name(const NetworkOperation operation) noexce
             return "kick";
         case NetworkOperation::peer_state:
             return "peer_state";
+        case NetworkOperation::key_publish:
+            return "key_publish";
     }
 
     return "unknown";

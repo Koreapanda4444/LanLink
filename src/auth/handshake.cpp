@@ -256,6 +256,13 @@ std::optional<SignedDeviceKey> ClientHandshake::signed_device_key() const noexce
     return authenticated() ? signed_device_key_ : std::nullopt;
 }
 
+const DeviceEncryptionKey& ClientHandshake::encryption_key() const {
+    if (!authenticated()) {
+        throw std::logic_error("client encryption key is not authenticated");
+    }
+    return encryption_key_;
+}
+
 void ClientHandshake::close() noexcept {
     signed_device_key_.reset();
     cleanse(client_nonce_);

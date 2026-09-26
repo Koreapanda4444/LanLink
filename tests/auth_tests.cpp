@@ -1,5 +1,6 @@
 #include "lanlink/auth/handshake.hpp"
 #include "lanlink/auth/identity.hpp"
+#include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/codec.hpp"
 #include "lanlink/protocol/stream_decoder.hpp"
 
@@ -337,6 +338,98 @@ void test_successful_handshake(const std::filesystem::path& directory) {
     }, "closed server session id unavailable");
 }
 
+void test_network_key_envelopes(const std::filesystem::path& directory) {
+    using namespace lanlink;
+
+    const auto owner = auth::DeviceIdentity::load_or_create(directory / "key-owner.identity");
+    const auto member = auth::DeviceIdentity::load_or_create(directory / "key-member.identity");
+    const auto outsider = auth::DeviceIdentity::load_or_create(directory / "key-outsider.identity");
+    const auto token = auth::AuthToken::from_secret(
+        "lanlink-network-key-envelope-test-secret");
+    auth::ClientHandshake owner_client(owner, token);
+    auth::ServerHandshake owner_server(
+        token, 101, auth::ServerHandshake::Clock::now() + std::chrono::seconds{10});
+    auth::ClientHandshake member_client(member, token);
+    auth::ServerHandshake member_server(
+        token, 102, auth::ServerHandshake::Clock::now() + std::chrono::seconds{10});
+
+    const auto authenticate = [](auth::ClientHandshake& client,
+                                 auth::ServerHandshake& server) {
+        const auto challenge = server.handle_hello(client.begin(1));
+        const auto result = server.handle_proof(client.handle_challenge(challenge));
+        return client.handle_result(result) && server.authenticated();
+    };
+    expect(authenticate(owner_client, owner_server) &&
+               authenticate(member_client, member_server),
+           "key sender and recipient authenticate their signed device keys");
+
+    const auto shared_owner = owner_client.encryption_key().derive_shared_secret(
+        member_client.encryption_key().public_key());
+    const auto shared_member = member_client.encryption_key().derive_shared_secret(
+        owner_client.encryption_key().public_key());
+    expect(shared_owner == shared_member, "signed devices agree on X25519 shared secret");
+    expect_error([&] {
+        static_cast<void>(owner_client.encryption_key().derive_shared_secret({}));
+    }, "invalid X25519 peer key rejected");
+
+    protocol::NetworkId network_id{};
+    network_id.front() = std::byte{1};
+    const auto network_key = auth::NetworkKey::random();
+    const auto envelope = auth::seal_network_key(
+        owner, owner_client.encryption_key(), member_server.signed_device_key(),
+        member.device_id(), network_id, 7, network_key);
+    expect(auth::verify_network_key_envelope(envelope, owner.public_key()),
+           "owner signed the authenticated network key envelope");
+    expect(auth::open_network_key(member_client.encryption_key(), envelope,
+                                  owner_server.signed_device_key(), member.device_id()) ==
+               network_key,
+           "recipient decrypts the owner's network key");
+    expect_error([&] {
+        static_cast<void>(auth::open_network_key(
+            member_client.encryption_key(), envelope, owner_server.signed_device_key(),
+            outsider.device_id()));
+    }, "unaddressed device cannot unwrap network key");
+
+    auto changed = envelope;
+    changed.epoch++;
+    expect(!auth::verify_network_key_envelope(changed, owner.public_key()),
+           "changed key epoch invalidates owner signature");
+    expect_error([&] {
+        static_cast<void>(auth::open_network_key(
+            member_client.encryption_key(), changed, owner_server.signed_device_key(),
+            member.device_id()));
+    }, "changed key epoch rejected before decrypting");
+    changed = envelope;
+    changed.ciphertext.front() ^= std::byte{1};
+    expect(!auth::verify_network_key_envelope(changed, owner.public_key()),
+           "changed ciphertext invalidates owner signature");
+    changed = envelope;
+    changed.tag.front() ^= std::byte{1};
+    auto signed_bytes = protocol::encode_network_key_envelope(changed);
+    signed_bytes.resize(signed_bytes.size() - auth::signature_size);
+    constexpr std::string_view domain = "lanlink-network-key-envelope-v1";
+    std::vector<std::byte> transcript;
+    transcript.insert(transcript.end(),
+                      reinterpret_cast<const std::byte*>(domain.data()),
+                      reinterpret_cast<const std::byte*>(domain.data() + domain.size()));
+    transcript.insert(transcript.end(), signed_bytes.begin(), signed_bytes.end());
+    changed.signature = owner.sign(transcript);
+    expect(auth::verify_network_key_envelope(changed, owner.public_key()),
+           "tampered authentication tag can carry a valid owner signature");
+    expect_error([&] {
+        static_cast<void>(auth::open_network_key(
+            member_client.encryption_key(), changed, owner_server.signed_device_key(),
+            member.device_id()));
+    }, "AES-GCM rejects a changed tag despite valid owner signature");
+    changed = envelope;
+    changed.owner_encryption_public_key.front() ^= std::byte{1};
+    expect_error([&] {
+        static_cast<void>(auth::open_network_key(
+            member_client.encryption_key(), changed, owner_server.signed_device_key(),
+            member.device_id()));
+    }, "untrusted owner encryption key rejected");
+}
+
 void test_rejected_handshake(const std::filesystem::path& directory) {
     auto identity = lanlink::auth::DeviceIdentity::load_or_create(directory / "rejected.identity");
     auto client_token = lanlink::auth::AuthToken::from_secret(
@@ -472,6 +565,7 @@ int main() {
         test_token(directory);
         test_payloads();
         test_successful_handshake(directory);
+        test_network_key_envelopes(directory);
         test_rejected_handshake(directory);
         test_strict_state_timeout_and_replay(directory);
         test_stream_decoder();

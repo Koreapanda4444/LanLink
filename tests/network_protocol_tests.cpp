@@ -96,6 +96,7 @@ void test_constants_and_names() {
         NetworkOperation::approve,
         NetworkOperation::kick,
         NetworkOperation::peer_state,
+        NetworkOperation::key_publish,
     };
 
     for (const auto operation : operations) {
@@ -294,7 +295,7 @@ void test_round_trips() {
                                   {device_id(3), 0x0a400003U}}};
     const auto wire = encode_network_peer_state(peers);
     expect(decode_network_peer_state(wire) == peers, "peer snapshot round trip");
-    expect(wire.size() == 35 + 2 * 37 && wire[16] == std::byte{1} &&
+    expect(wire.size() == 75 + 2 * 37 && wire[16] == std::byte{1} &&
                wire[23] == std::byte{8} && wire[24] == std::byte{10} &&
                wire[26] == std::byte{0} && wire[28] == std::byte{24} &&
                wire[33] == std::byte{0} && wire[34] == std::byte{2},
@@ -378,7 +379,7 @@ void test_peer_state_validation() {
     expect_error([&] { static_cast<void>(decode_network_peer_state(zero_id)); },
                  "zero peer state network rejected");
     auto bad_ip = wire;
-    bad_ip.back() = std::byte{255};
+    bad_ip[70] = std::byte{255};
     expect_error([&] { static_cast<void>(decode_network_peer_state(bad_ip)); },
                  "broadcast peer address rejected on decode");
 
@@ -388,6 +389,69 @@ void test_peer_state_validation() {
     revoked.push_back(std::byte{0});
     expect_error([&] { static_cast<void>(decode_network_peer_revocation(revoked)); },
                  "trailing revocation bytes rejected");
+}
+
+void test_network_key_payloads() {
+    using namespace lanlink::protocol;
+
+    NetworkKeyEnvelope envelope;
+    envelope.network_id = network_id(11);
+    envelope.epoch = 0x0102030405060708ULL;
+    envelope.owner_device_id = device_id(12);
+    envelope.recipient_device_id = device_id(13);
+    envelope.owner_encryption_public_key.fill(std::byte{0x14});
+    envelope.recipient_encryption_public_key.fill(std::byte{0x15});
+    envelope.nonce.fill(std::byte{0x16});
+    envelope.ciphertext.fill(std::byte{0x17});
+    envelope.tag.fill(std::byte{0x18});
+    envelope.signature.fill(std::byte{0x19});
+
+    const auto wire = encode_network_key_envelope(envelope);
+    expect(wire.size() == 276 && wire[16] == std::byte{1} &&
+               wire[23] == std::byte{8},
+           "key envelope has fixed size and network byte order");
+    expect(decode_network_key_envelope(wire) == envelope,
+           "key envelope survives protocol round trip");
+
+    auto second = envelope;
+    second.recipient_device_id = device_id(14);
+    const auto published = encode_network_key_publish_request({{envelope, second}});
+    expect(published.size() == 554 && published[0] == std::byte{0} &&
+               published[1] == std::byte{2},
+           "key publication counts individual recipient envelopes");
+    expect(decode_network_key_publish_request(published) ==
+               NetworkKeyPublishRequest{{envelope, second}},
+           "key publication survives protocol round trip");
+
+    auto invalid = envelope;
+    invalid.epoch = 0;
+    expect_error([&] { static_cast<void>(encode_network_key_envelope(invalid)); },
+                 "zero key epoch rejected");
+    invalid = envelope;
+    invalid.recipient_device_id = invalid.owner_device_id;
+    expect_error([&] { static_cast<void>(encode_network_key_envelope(invalid)); },
+                 "self-addressed key envelope rejected");
+
+    auto truncated = wire;
+    truncated.pop_back();
+    expect_error([&] { static_cast<void>(decode_network_key_envelope(truncated)); },
+                 "truncated key envelope rejected");
+    auto oversized = wire;
+    oversized.push_back(std::byte{0});
+    expect_error([&] { static_cast<void>(decode_network_key_envelope(oversized)); },
+                 "trailing key envelope bytes rejected");
+    expect_error([] { static_cast<void>(encode_network_key_publish_request({})); },
+                 "empty key publication rejected");
+    auto invalid_count = published;
+    invalid_count[1] = std::byte{254};
+    expect_error([&] {
+        static_cast<void>(decode_network_key_publish_request(invalid_count));
+    }, "oversized key publication rejected before allocation");
+    invalid_count = published;
+    invalid_count[1] = std::byte{1};
+    expect_error([&] {
+        static_cast<void>(decode_network_key_publish_request(invalid_count));
+    }, "key publication count must match payload length");
 }
 
 void test_request_validation() {
@@ -683,6 +747,7 @@ int main() {
     test_golden_payloads();
     test_round_trips();
     test_peer_state_validation();
+    test_network_key_payloads();
     test_request_validation();
     test_operation_result_validation();
     test_list_validation();

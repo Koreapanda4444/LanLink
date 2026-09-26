@@ -37,6 +37,7 @@ enum class NetworkOperation : std::uint8_t {
     approve = 6,
     kick = 7,
     peer_state = 8,
+    key_publish = 9,
 };
 
 enum class NetworkResultCode : std::uint16_t {
@@ -140,6 +141,18 @@ struct NetworkPeerState {
     std::uint8_t prefix_length = 24;
     std::uint32_t own_address = 0;
     std::vector<NetworkPeer> peers;
+    NetworkDeviceId owner_device_id{};
+    std::uint64_t key_epoch = 0;
+
+    NetworkPeerState() = default;
+    NetworkPeerState(NetworkId id, std::uint64_t revision_value,
+                     std::uint32_t subnet, std::uint8_t prefix,
+                     std::uint32_t own, std::vector<NetworkPeer> peer_list,
+                     NetworkDeviceId owner = {}, std::uint64_t epoch = 0)
+        : network_id(id), revision(revision_value), subnet_address(subnet),
+          prefix_length(prefix), own_address(own), peers(std::move(peer_list)),
+          owner_device_id(owner), key_epoch(epoch) {
+    }
 
     bool operator==(const NetworkPeerState&) const = default;
 };
@@ -149,6 +162,31 @@ struct NetworkPeerRevocation {
     std::uint64_t revision = 0;
 
     bool operator==(const NetworkPeerRevocation&) const = default;
+};
+
+inline constexpr std::size_t network_key_nonce_size = 12;
+inline constexpr std::size_t network_key_size = 32;
+inline constexpr std::size_t network_key_tag_size = 16;
+
+struct NetworkKeyEnvelope {
+    NetworkId network_id{};
+    std::uint64_t epoch = 0;
+    NetworkDeviceId owner_device_id{};
+    NetworkDeviceId recipient_device_id{};
+    auth::EncryptionPublicKey owner_encryption_public_key{};
+    auth::EncryptionPublicKey recipient_encryption_public_key{};
+    std::array<std::byte, network_key_nonce_size> nonce{};
+    std::array<std::byte, network_key_size> ciphertext{};
+    std::array<std::byte, network_key_tag_size> tag{};
+    auth::Signature signature{};
+
+    bool operator==(const NetworkKeyEnvelope&) const = default;
+};
+
+struct NetworkKeyPublishRequest {
+    std::vector<NetworkKeyEnvelope> envelopes;
+
+    bool operator==(const NetworkKeyPublishRequest&) const = default;
 };
 
 [[nodiscard]] std::vector<std::byte> encode_network_create_request(
@@ -191,6 +229,14 @@ struct NetworkPeerRevocation {
 [[nodiscard]] std::vector<std::byte> encode_network_peer_revocation(
     const NetworkPeerRevocation& revocation);
 [[nodiscard]] NetworkPeerRevocation decode_network_peer_revocation(
+    std::span<const std::byte> payload);
+[[nodiscard]] std::vector<std::byte> encode_network_key_envelope(
+    const NetworkKeyEnvelope& envelope);
+[[nodiscard]] NetworkKeyEnvelope decode_network_key_envelope(
+    std::span<const std::byte> payload);
+[[nodiscard]] std::vector<std::byte> encode_network_key_publish_request(
+    const NetworkKeyPublishRequest& request);
+[[nodiscard]] NetworkKeyPublishRequest decode_network_key_publish_request(
     std::span<const std::byte> payload);
 
 [[nodiscard]] bool is_known_network_operation(NetworkOperation operation) noexcept;
