@@ -58,6 +58,7 @@ lanlink_enable_warnings(lanlink_core)
 add_library(lanlink_protocol STATIC
     src/protocol/codec.cpp
     src/protocol/network_messages.cpp
+    src/protocol/packet_messages.cpp
     src/protocol/stream_decoder.cpp
 )
 
@@ -71,6 +72,7 @@ lanlink_enable_warnings(lanlink_protocol)
 add_library(lanlink_auth STATIC
     src/auth/device_keys.cpp
     src/auth/network_keys.cpp
+    src/auth/packet_crypto.cpp
     src/auth/handshake.cpp
     src/auth/identity.cpp
     src/auth/secret_store.cpp
@@ -214,6 +216,14 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_auth_tests PRIVATE lanlink_auth)
     lanlink_enable_warnings(lanlink_auth_tests)
     add_test(NAME lanlink-auth COMMAND lanlink_auth_tests)
+
+    add_executable(lanlink_packet_crypto_tests
+        tests/packet_crypto_tests.cpp
+    )
+
+    target_link_libraries(lanlink_packet_crypto_tests PRIVATE lanlink_auth)
+    lanlink_enable_warnings(lanlink_packet_crypto_tests)
+    add_test(NAME lanlink-packet-crypto COMMAND lanlink_packet_crypto_tests)
 
     add_executable(lanlink_transport_tests
         tests/transport_tests.cpp
