@@ -107,6 +107,8 @@ public:
     [[nodiscard]] bool connected() const noexcept;
     [[nodiscard]] bool authenticated() const noexcept;
     [[nodiscard]] std::optional<auth::SessionId> session_id() const noexcept;
+    [[nodiscard]] std::uint16_t max_datagram_size() const noexcept;
+    [[nodiscard]] std::uint64_t received_datagram_count() const noexcept;
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name,

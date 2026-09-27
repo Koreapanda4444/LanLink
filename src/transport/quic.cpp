@@ -63,6 +63,17 @@ struct PendingSend {
     bool shutdown_after_send;
 };
 
+struct PendingDatagram {
+    explicit PendingDatagram(std::vector<std::byte> encoded)
+        : bytes(std::move(encoded)) {
+        buffer.Length = static_cast<std::uint32_t>(bytes.size());
+        buffer.Buffer = reinterpret_cast<std::uint8_t*>(bytes.data());
+    }
+
+    std::vector<std::byte> bytes;
+    QUIC_BUFFER buffer{};
+};
+
 std::string status_text(const QUIC_STATUS status) {
     std::ostringstream output;
     output << "0x" << std::hex << std::uppercase << static_cast<std::uint32_t>(status);
@@ -112,6 +123,30 @@ void complete_send(QUIC_STREAM_EVENT* event) noexcept {
         pending->api->ConnectionShutdown(pending->connection,
                                          QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
                                          authentication_shutdown_code);
+    }
+}
+
+QUIC_STATUS send_datagram(const QUIC_API_TABLE* api,
+                          const HQUIC connection,
+                          std::vector<std::byte> payload) noexcept {
+    try {
+        auto pending = std::make_unique<PendingDatagram>(std::move(payload));
+        auto* const raw = pending.release();
+        const auto status = api->DatagramSend(connection, &raw->buffer, 1,
+                                              QUIC_SEND_FLAG_NONE, raw);
+        if (QUIC_FAILED(status)) {
+            delete raw;
+        }
+        return status;
+    } catch (...) {
+        return QUIC_STATUS_OUT_OF_MEMORY;
+    }
+}
+
+void complete_datagram_send(const QUIC_CONNECTION_EVENT* event) noexcept {
+    if (QUIC_DATAGRAM_SEND_STATE_IS_FINAL(event->DATAGRAM_SEND_STATE_CHANGED.State)) {
+        delete static_cast<PendingDatagram*>(
+            event->DATAGRAM_SEND_STATE_CHANGED.ClientContext);
     }
 }
 
@@ -302,6 +337,7 @@ private:
         auth::ServerHandshake handshake;
         std::atomic_bool control_stream_started = false;
         std::atomic_bool closed = false;
+        std::atomic<std::uint16_t> max_datagram_send_length = 0;
     };
 
     struct StreamContext {
@@ -323,6 +359,7 @@ private:
         auth::DeviceId device_id{};
         HQUIC connection = nullptr;
         HQUIC stream = nullptr;
+        ConnectionContext* context = nullptr;
     };
 
     bool register_control_stream(ConnectionContext* const context,
@@ -341,7 +378,7 @@ private:
             return false;
         }
 
-        active_control_streams_.push_back({device_id, connection, stream});
+        active_control_streams_.push_back({device_id, connection, stream, context});
         return true;
     }
 
@@ -376,6 +413,33 @@ private:
         }
     }
 
+    void route_encrypted_packet(const relay::RoutedEncryptedPacket& routed) noexcept {
+        try {
+            auto payload = protocol::encode_forwarded_network_packet(routed.delivery);
+            std::lock_guard lock(active_control_streams_mutex_);
+            for (const auto& active : active_control_streams_) {
+                if (active.device_id != routed.recipient_device_id) {
+                    continue;
+                }
+                const auto max_length = active.context->max_datagram_send_length.load();
+                const auto status = max_length != 0 && payload.size() <= max_length
+                    ? send_datagram(api_, active.connection, std::move(payload))
+                    : send_frame(api_, active.stream,
+                        {protocol::MessageType::network_packet_forward, 0,
+                         std::move(payload)});
+                if (QUIC_FAILED(status)) {
+                    log_noexcept(logger_, core::LogLevel::warning,
+                                 "encrypted packet forwarding failed: " +
+                                     status_text(status));
+                }
+                break;
+            }
+        } catch (const std::exception&) {
+            log_noexcept(logger_, core::LogLevel::warning,
+                         "encrypted packet forwarding failed");
+        }
+    }
+
     void initialize() {
         auto status = MsQuicOpen2(&api_);
 
@@ -404,6 +468,8 @@ private:
         settings.IsSet.IdleTimeoutMs = TRUE;
         settings.PeerBidiStreamCount = 1;
         settings.IsSet.PeerBidiStreamCount = TRUE;
+        settings.DatagramReceiveEnabled = TRUE;
+        settings.IsSet.DatagramReceiveEnabled = TRUE;
 
         auto alpn = alpn_buffer();
         status = api_->ConfigurationOpen(registration_,
@@ -561,6 +627,41 @@ private:
                     raw_stream_context);
                 break;
             }
+            case QUIC_CONNECTION_EVENT_DATAGRAM_STATE_CHANGED:
+                context->max_datagram_send_length.store(
+                    event->DATAGRAM_STATE_CHANGED.SendEnabled
+                        ? event->DATAGRAM_STATE_CHANGED.MaxSendLength : 0);
+                break;
+            case QUIC_CONNECTION_EVENT_DATAGRAM_RECEIVED: {
+                if (context->closed.load()) {
+                    break;
+                }
+                auth::DeviceId actor{};
+                {
+                    std::lock_guard lock(context->handshake_mutex);
+                    if (!context->handshake.authenticated()) {
+                        break;
+                    }
+                    actor = context->handshake.device_id();
+                }
+                try {
+                    const auto* buffer = event->DATAGRAM_RECEIVED.Buffer;
+                    const auto payload = std::span<const std::byte>(
+                        reinterpret_cast<const std::byte*>(buffer->Buffer),
+                        buffer->Length);
+                    const auto routed = control_channel_.route_encrypted_packet(actor, payload);
+                    if (routed) {
+                        route_encrypted_packet(*routed);
+                    }
+                } catch (const std::exception&) {
+                    log_noexcept(logger_, core::LogLevel::warning,
+                                 "invalid encrypted datagram discarded");
+                }
+                break;
+            }
+            case QUIC_CONNECTION_EVENT_DATAGRAM_SEND_STATE_CHANGED:
+                complete_datagram_send(event);
+                break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE: {
                 {
                     std::lock_guard lock(active_control_streams_mutex_);
@@ -782,9 +883,7 @@ private:
             }
             const auto routed = control_channel_.route_encrypted_packet(actor, frame.payload);
             if (routed) {
-                route_control_events({{routed->recipient_device_id,
-                    {protocol::MessageType::network_packet_forward, 0,
-                     protocol::encode_forwarded_network_packet(routed->delivery)}}});
+                route_encrypted_packet(*routed);
             }
             return;
         }
@@ -918,6 +1017,24 @@ public:
     [[nodiscard]] std::optional<auth::SessionId> session_id() const noexcept {
         std::lock_guard lock(session_mutex_);
         return session_id_;
+    }
+
+    [[nodiscard]] std::uint16_t max_datagram_size() const noexcept {
+        std::shared_ptr<AttemptState> attempt;
+        {
+            std::lock_guard lock(active_mutex_);
+            attempt = active_attempt_.lock();
+        }
+        if (!attempt) {
+            return 0;
+        }
+        std::lock_guard lock(attempt->mutex);
+        return attempt->authenticated && !stop_requested_.load()
+            ? attempt->max_datagram_send_length : 0;
+    }
+
+    [[nodiscard]] std::uint64_t received_datagram_count() const noexcept {
+        return received_datagrams_.load();
     }
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
@@ -1055,8 +1172,11 @@ public:
             stop_requested_.load()) {
             throw std::runtime_error("encrypted packet connection is not authenticated");
         }
-        const auto status = send_frame(api_, attempt->control_stream,
-            {protocol::MessageType::network_packet_send, 0, std::move(payload)});
+        const auto status = attempt->max_datagram_send_length != 0 &&
+                            payload.size() <= attempt->max_datagram_send_length
+            ? send_datagram(api_, attempt->connection, std::move(payload))
+            : send_frame(api_, attempt->control_stream,
+                {protocol::MessageType::network_packet_send, 0, std::move(payload)});
         if (QUIC_FAILED(status)) {
             throw std::runtime_error("encrypted packet send failed: " + status_text(status));
         }
@@ -1274,6 +1394,7 @@ private:
         bool ever_authenticated = false;
         bool shutdown_requested = false;
         bool authenticated = false;
+        std::uint16_t max_datagram_send_length = 0;
         HQUIC control_stream = nullptr;
         std::unordered_map<std::uint32_t, std::shared_ptr<PendingControl>> pending;
         std::optional<auth::SessionId> session_id;
@@ -1403,6 +1524,8 @@ private:
         settings.IdleTimeoutMs =
             static_cast<std::uint64_t>(options_.authentication_timeout.count());
         settings.IsSet.IdleTimeoutMs = TRUE;
+        settings.DatagramReceiveEnabled = TRUE;
+        settings.IsSet.DatagramReceiveEnabled = TRUE;
 
         auto alpn = alpn_buffer();
         status = api_->ConfigurationOpen(registration_,
@@ -1661,6 +1784,35 @@ private:
                 }
                 log_noexcept(logger_, core::LogLevel::warning, "relay closed the connection");
                 break;
+            case QUIC_CONNECTION_EVENT_DATAGRAM_STATE_CHANGED:
+                {
+                    std::lock_guard lock(context->state->mutex);
+                    context->state->max_datagram_send_length =
+                        event->DATAGRAM_STATE_CHANGED.SendEnabled
+                            ? event->DATAGRAM_STATE_CHANGED.MaxSendLength : 0;
+                }
+                break;
+            case QUIC_CONNECTION_EVENT_DATAGRAM_RECEIVED:
+                {
+                    std::lock_guard lock(context->state->mutex);
+                    if (!context->state->authenticated || stop_requested_.load()) {
+                        break;
+                    }
+                }
+                try {
+                    const auto* buffer = event->DATAGRAM_RECEIVED.Buffer;
+                    handle_forwarded_packet(std::span<const std::byte>(
+                        reinterpret_cast<const std::byte*>(buffer->Buffer),
+                        buffer->Length));
+                    received_datagrams_.fetch_add(1);
+                } catch (const std::exception&) {
+                    log_noexcept(logger_, core::LogLevel::warning,
+                                 "invalid forwarded datagram discarded");
+                }
+                break;
+            case QUIC_CONNECTION_EVENT_DATAGRAM_SEND_STATE_CHANGED:
+                complete_datagram_send(event);
+                break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
                 connected_.store(false);
                 authenticated_.store(false);
@@ -1673,6 +1825,7 @@ private:
                     context->state->connection = nullptr;
                     context->state->control_stream = nullptr;
                     context->state->authenticated = false;
+                    context->state->max_datagram_send_length = 0;
                     fail_pending(*context->state, "relay connection ended");
                 }
 
@@ -1904,35 +2057,39 @@ private:
                          identity_->device_id_hex());
     }
 
+    void handle_forwarded_packet(const std::span<const std::byte> payload) {
+        auto delivery = protocol::decode_forwarded_network_packet(payload);
+        {
+            std::lock_guard lock(peer_state_mutex_);
+            const auto found = peer_states_.find(delivery.packet.network_id);
+            if (found == peer_states_.end() ||
+                found->second.key_epoch != delivery.packet.key_epoch ||
+                found->second.own_address != delivery.packet.destination_ipv4 ||
+                std::none_of(found->second.peers.begin(), found->second.peers.end(),
+                    [&](const auto& peer) {
+                        return peer.device_id == delivery.sender_device_id &&
+                               peer.signed_key.has_value();
+                    })) {
+                return;
+            }
+        }
+        {
+            std::lock_guard lock(event_queue_mutex_);
+            if (event_queue_.size() >= 1024) {
+                return;
+            }
+            event_queue_.emplace_back(std::move(delivery));
+        }
+        event_queue_wake_.notify_one();
+    }
+
     void handle_control_frame(const HQUIC stream,
                               StreamContext* context, const protocol::Frame& frame) {
         if (frame.type == protocol::MessageType::network_packet_forward) {
             if (frame.request_id != 0) {
                 throw std::runtime_error("forwarded packet has a request id");
             }
-            auto delivery = protocol::decode_forwarded_network_packet(frame.payload);
-            {
-                std::lock_guard lock(peer_state_mutex_);
-                const auto found = peer_states_.find(delivery.packet.network_id);
-                if (found == peer_states_.end() ||
-                    found->second.key_epoch != delivery.packet.key_epoch ||
-                    found->second.own_address != delivery.packet.destination_ipv4 ||
-                    std::none_of(found->second.peers.begin(), found->second.peers.end(),
-                        [&](const auto& peer) {
-                            return peer.device_id == delivery.sender_device_id &&
-                                   peer.signed_key.has_value();
-                        })) {
-                    return;
-                }
-            }
-            {
-                std::lock_guard lock(event_queue_mutex_);
-                if (event_queue_.size() == 1024) {
-                    event_queue_.pop_front();
-                }
-                event_queue_.emplace_back(std::move(delivery));
-            }
-            event_queue_wake_.notify_one();
+            handle_forwarded_packet(frame.payload);
             return;
         }
         if (frame.type == protocol::MessageType::network_peer_state_update ||
@@ -2061,9 +2218,10 @@ private:
     std::atomic_bool connected_ = false;
     std::atomic_bool authenticated_ = false;
     std::atomic_bool stop_requested_ = false;
+    std::atomic<std::uint64_t> received_datagrams_ = 0;
     mutable std::mutex session_mutex_;
     std::optional<auth::SessionId> session_id_;
-    std::mutex active_mutex_;
+    mutable std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
     std::atomic<std::uint32_t> next_request_id_ = 2;
     std::mutex event_handler_mutex_;
@@ -2132,6 +2290,14 @@ bool QuicRelayClient::authenticated() const noexcept {
 
 std::optional<auth::SessionId> QuicRelayClient::session_id() const noexcept {
     return impl_->session_id();
+}
+
+std::uint16_t QuicRelayClient::max_datagram_size() const noexcept {
+    return impl_->max_datagram_size();
+}
+
+std::uint64_t QuicRelayClient::received_datagram_count() const noexcept {
+    return impl_->received_datagram_count();
 }
 
 protocol::NetworkOperationResult QuicRelayClient::create_network(

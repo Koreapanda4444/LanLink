@@ -5,8 +5,12 @@
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <future>
@@ -251,8 +255,13 @@ void test_network_management(const std::filesystem::path& directory) {
     }, "approved member receives the owner generated network key");
     const auto shared_before_kick = *owner.cached_network_key(id);
 
+    wait_until([&] {
+        return owner.max_datagram_size() > 128 &&
+               member.max_datagram_size() > 128;
+    }, "authenticated peers must negotiate QUIC datagram support");
+
     std::atomic<int> forwarded_packets = 0;
-    std::atomic_bool forwarded_intact = false;
+    std::atomic_bool forwarded_intact = true;
     protocol::EncryptedNetworkPacket encrypted;
     encrypted.network_id = id;
     encrypted.destination_ipv4 = storage::virtual_ipv4_pool_first + 2;
@@ -261,17 +270,62 @@ void test_network_management(const std::filesystem::path& directory) {
     encrypted.nonce.back() = std::byte{1};
     encrypted.ciphertext.assign(24, std::byte{0xa5});
     encrypted.tag.fill(std::byte{0x7b});
+    auto oversized = encrypted;
+    oversized.sequence = 2;
+    oversized.nonce.back() = std::byte{2};
+    oversized.ciphertext.assign(std::min<std::size_t>(
+        protocol::max_virtual_ipv4_packet_size,
+        std::max<std::uint16_t>(owner.max_datagram_size(),
+                                member.max_datagram_size()) + 64U),
+        std::byte{0xb6});
+    const std::array sent{encrypted, oversized};
+    expect(protocol::encode_encrypted_network_packet(encrypted).size() <=
+               owner.max_datagram_size() &&
+               protocol::encode_forwarded_network_packet(
+                   {owner_identity.device_id(), encrypted}).size() <=
+                   member.max_datagram_size(),
+           "small encrypted packet fits datagrams in both directions");
+    expect(protocol::encode_encrypted_network_packet(oversized).size() >
+               owner.max_datagram_size() &&
+               protocol::encode_forwarded_network_packet(
+                   {owner_identity.device_id(), oversized}).size() >
+                   member.max_datagram_size(),
+           "oversized packet must use the stream fallback");
     member.set_encrypted_packet_handler([&](
         const protocol::ForwardedNetworkPacket& packet) {
-        forwarded_intact.store(packet.sender_device_id == owner_identity.device_id() &&
-                               packet.packet == encrypted);
-        forwarded_packets.fetch_add(1);
+        const auto index = forwarded_packets.fetch_add(1);
+        if (packet.sender_device_id != owner_identity.device_id() ||
+            index >= static_cast<int>(sent.size()) ||
+            packet.packet != sent[static_cast<std::size_t>(index)]) {
+            forwarded_intact.store(false);
+        }
     });
+    const auto datagrams_before = member.received_datagram_count();
     owner.send_encrypted_packet(encrypted);
     wait_until([&] { return forwarded_packets.load() == 1; },
-               "relay must forward an encrypted packet to the leased destination");
+               "relay must deliver encrypted datagram to the leased destination");
+    expect(member.received_datagram_count() == datagrams_before + 1,
+           "small encrypted payload arrived through the QUIC datagram callback");
+    owner.send_encrypted_packet(oversized);
+    wait_until([&] { return forwarded_packets.load() == 2; },
+               "relay must deliver oversized encrypted packets over the stream");
+    expect(member.received_datagram_count() == datagrams_before + 1,
+           "oversized packet bypassed the QUIC datagram receiver");
     expect(forwarded_intact.load(),
-           "relay must preserve the ciphertext and supply the authenticated sender");
+           "datagram and stream preserve ciphertext and the authenticated sender");
+    std::atomic_bool reverse_received = false;
+    owner.set_encrypted_packet_handler([&](
+        const protocol::ForwardedNetworkPacket& packet) {
+        reverse_received.store(packet.sender_device_id == member_identity.device_id() &&
+                               packet.packet.destination_ipv4 ==
+                                   storage::virtual_ipv4_pool_first + 1 &&
+                               packet.packet.ciphertext == encrypted.ciphertext);
+    });
+    auto reverse = encrypted;
+    reverse.destination_ipv4 = storage::virtual_ipv4_pool_first + 1;
+    member.send_encrypted_packet(reverse);
+    wait_until([&] { return reverse_received.load(); },
+               "member-to-owner QUIC datagram must reach the correct peer");
     auto wrong_epoch_packet = encrypted;
     ++wrong_epoch_packet.key_epoch;
     expect_error([&] { owner.send_encrypted_packet(wrong_epoch_packet); },
