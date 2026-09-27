@@ -275,6 +275,13 @@ if(BUILD_TESTING)
     lanlink_enable_warnings(lanlink_network_control_channel_tests)
     add_test(NAME lanlink-network-control-channel COMMAND lanlink_network_control_channel_tests)
 
+    add_executable(lanlink_packet_routing_tests
+        tests/packet_routing_tests.cpp
+    )
+    target_link_libraries(lanlink_packet_routing_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_packet_routing_tests)
+    add_test(NAME lanlink-packet-routing COMMAND lanlink_packet_routing_tests)
+
     if(UNIX)
         find_program(LANLINK_OPENSSL_EXECUTABLE openssl)
         find_program(LANLINK_BASH_EXECUTABLE bash)

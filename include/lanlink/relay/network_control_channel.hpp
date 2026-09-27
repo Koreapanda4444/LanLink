@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <span>
 #include <vector>
 
 namespace lanlink::relay {
@@ -47,6 +49,8 @@ public:
     [[nodiscard]] ControlDispatch handle_authenticated(
         const auth::DeviceId& actor,
         const protocol::Frame& request);
+    [[nodiscard]] std::optional<RoutedEncryptedPacket> route_encrypted_packet(
+        const auth::DeviceId& actor, std::span<const std::byte> payload);
 
 private:
     [[nodiscard]] std::int64_t now_ms() const;

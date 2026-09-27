@@ -251,6 +251,32 @@ void test_network_management(const std::filesystem::path& directory) {
     }, "approved member receives the owner generated network key");
     const auto shared_before_kick = *owner.cached_network_key(id);
 
+    std::atomic<int> forwarded_packets = 0;
+    std::atomic_bool forwarded_intact = false;
+    protocol::EncryptedNetworkPacket encrypted;
+    encrypted.network_id = id;
+    encrypted.destination_ipv4 = storage::virtual_ipv4_pool_first + 2;
+    encrypted.key_epoch = shared_before_kick.epoch;
+    encrypted.sequence = 1;
+    encrypted.nonce.back() = std::byte{1};
+    encrypted.ciphertext.assign(24, std::byte{0xa5});
+    encrypted.tag.fill(std::byte{0x7b});
+    member.set_encrypted_packet_handler([&](
+        const protocol::ForwardedNetworkPacket& packet) {
+        forwarded_intact.store(packet.sender_device_id == owner_identity.device_id() &&
+                               packet.packet == encrypted);
+        forwarded_packets.fetch_add(1);
+    });
+    owner.send_encrypted_packet(encrypted);
+    wait_until([&] { return forwarded_packets.load() == 1; },
+               "relay must forward an encrypted packet to the leased destination");
+    expect(forwarded_intact.load(),
+           "relay must preserve the ciphertext and supply the authenticated sender");
+    auto wrong_epoch_packet = encrypted;
+    ++wrong_epoch_packet.key_epoch;
+    expect_error([&] { owner.send_encrypted_packet(wrong_epoch_packet); },
+                 "client rejects packets without the active network epoch");
+
     const auto kicked = owner.kick_member(id, member_identity.device_id());
     expect(kicked.code == protocol::NetworkResultCode::success,
            "owner must kick member over relay");

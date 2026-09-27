@@ -27,9 +27,20 @@ struct EncryptedNetworkPacket {
     bool operator==(const EncryptedNetworkPacket&) const = default;
 };
 
+struct ForwardedNetworkPacket {
+    auth::DeviceId sender_device_id{};
+    EncryptedNetworkPacket packet;
+
+    bool operator==(const ForwardedNetworkPacket&) const = default;
+};
+
 [[nodiscard]] std::vector<std::byte> encode_encrypted_network_packet(
     const EncryptedNetworkPacket& packet);
 [[nodiscard]] EncryptedNetworkPacket decode_encrypted_network_packet(
+    std::span<const std::byte> payload);
+[[nodiscard]] std::vector<std::byte> encode_forwarded_network_packet(
+    const ForwardedNetworkPacket& packet);
+[[nodiscard]] ForwardedNetworkPacket decode_forwarded_network_packet(
     std::span<const std::byte> payload);
 
 }

@@ -6,6 +6,7 @@
 #include "lanlink/protocol/codec.hpp"
 #include "lanlink/protocol/message.hpp"
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/protocol/stream_decoder.hpp"
 #include "lanlink/relay/network_control_channel.hpp"
 #include "lanlink/transport/reconnect.hpp"
@@ -33,6 +34,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace lanlink::transport {
@@ -774,6 +776,18 @@ private:
     void handle_control_frame(const HQUIC stream,
                               const auth::DeviceId& actor,
                               const protocol::Frame& frame) {
+        if (frame.type == protocol::MessageType::network_packet_send) {
+            if (frame.request_id != 0) {
+                throw std::runtime_error("encrypted packet request id must be zero");
+            }
+            const auto routed = control_channel_.route_encrypted_packet(actor, frame.payload);
+            if (routed) {
+                route_control_events({{routed->recipient_device_id,
+                    {protocol::MessageType::network_packet_forward, 0,
+                     protocol::encode_forwarded_network_packet(routed->delivery)}}});
+            }
+            return;
+        }
         auto dispatch = control_channel_.handle_authenticated(actor, frame);
         const auto status = send_frame(api_, stream, dispatch.response);
 
@@ -1015,6 +1029,45 @@ public:
         event_handler_ = std::move(handler);
     }
 
+    void send_encrypted_packet(const protocol::EncryptedNetworkPacket& packet) {
+        auto payload = protocol::encode_encrypted_network_packet(packet);
+        {
+            std::lock_guard lock(peer_state_mutex_);
+            const auto state = peer_states_.find(packet.network_id);
+            const auto key = network_keys_.find(packet.network_id);
+            if (state == peer_states_.end() || key == network_keys_.end() ||
+                state->second.key_epoch != packet.key_epoch ||
+                key->second.epoch != packet.key_epoch ||
+                state->second.own_address == packet.destination_ipv4) {
+                throw std::runtime_error("encrypted packet has no active network key");
+            }
+        }
+        std::shared_ptr<AttemptState> attempt;
+        {
+            std::lock_guard lock(active_mutex_);
+            attempt = active_attempt_.lock();
+        }
+        if (!attempt) {
+            throw std::runtime_error("encrypted packet connection is not authenticated");
+        }
+        std::lock_guard lock(attempt->mutex);
+        if (!attempt->authenticated || attempt->control_stream == nullptr ||
+            stop_requested_.load()) {
+            throw std::runtime_error("encrypted packet connection is not authenticated");
+        }
+        const auto status = send_frame(api_, attempt->control_stream,
+            {protocol::MessageType::network_packet_send, 0, std::move(payload)});
+        if (QUIC_FAILED(status)) {
+            throw std::runtime_error("encrypted packet send failed: " + status_text(status));
+        }
+    }
+
+    void set_encrypted_packet_handler(
+        std::function<void(const protocol::ForwardedNetworkPacket&)> handler) {
+        std::lock_guard lock(event_handler_mutex_);
+        encrypted_packet_handler_ = std::move(handler);
+    }
+
 private:
     static void verify_peer_keys(const protocol::NetworkPeerState& state) {
         for (const auto& peer : state.peers) {
@@ -1161,7 +1214,7 @@ private:
 
     void dispatch_network_events() noexcept {
         while (true) {
-            protocol::NetworkEvent event;
+            std::variant<protocol::NetworkEvent, protocol::ForwardedNetworkPacket> event;
             {
                 std::unique_lock lock(event_queue_mutex_);
                 event_queue_wake_.wait(lock, [this] {
@@ -1175,13 +1228,24 @@ private:
             }
 
             try {
-                std::function<void(const protocol::NetworkEvent&)> handler;
-                {
-                    std::lock_guard lock(event_handler_mutex_);
-                    handler = event_handler_;
-                }
-                if (handler) {
-                    handler(event);
+                if (const auto* network = std::get_if<protocol::NetworkEvent>(&event)) {
+                    std::function<void(const protocol::NetworkEvent&)> handler;
+                    {
+                        std::lock_guard lock(event_handler_mutex_);
+                        handler = event_handler_;
+                    }
+                    if (handler) {
+                        handler(*network);
+                    }
+                } else {
+                    std::function<void(const protocol::ForwardedNetworkPacket&)> handler;
+                    {
+                        std::lock_guard lock(event_handler_mutex_);
+                        handler = encrypted_packet_handler_;
+                    }
+                    if (handler) {
+                        handler(std::get<protocol::ForwardedNetworkPacket>(event));
+                    }
                 }
             } catch (const std::exception& error) {
                 log_noexcept(logger_, core::LogLevel::warning,
@@ -1842,6 +1906,35 @@ private:
 
     void handle_control_frame(const HQUIC stream,
                               StreamContext* context, const protocol::Frame& frame) {
+        if (frame.type == protocol::MessageType::network_packet_forward) {
+            if (frame.request_id != 0) {
+                throw std::runtime_error("forwarded packet has a request id");
+            }
+            auto delivery = protocol::decode_forwarded_network_packet(frame.payload);
+            {
+                std::lock_guard lock(peer_state_mutex_);
+                const auto found = peer_states_.find(delivery.packet.network_id);
+                if (found == peer_states_.end() ||
+                    found->second.key_epoch != delivery.packet.key_epoch ||
+                    found->second.own_address != delivery.packet.destination_ipv4 ||
+                    std::none_of(found->second.peers.begin(), found->second.peers.end(),
+                        [&](const auto& peer) {
+                            return peer.device_id == delivery.sender_device_id &&
+                                   peer.signed_key.has_value();
+                        })) {
+                    return;
+                }
+            }
+            {
+                std::lock_guard lock(event_queue_mutex_);
+                if (event_queue_.size() == 1024) {
+                    event_queue_.pop_front();
+                }
+                event_queue_.emplace_back(std::move(delivery));
+            }
+            event_queue_wake_.notify_one();
+            return;
+        }
         if (frame.type == protocol::MessageType::network_peer_state_update ||
             frame.type == protocol::MessageType::network_peer_state_revoked) {
             if (frame.request_id != 0) {
@@ -1979,9 +2072,10 @@ private:
     std::map<protocol::NetworkId, NetworkKeySnapshot> network_keys_;
     std::map<protocol::NetworkId, std::uint64_t> peer_revisions_;
     std::function<void(const protocol::NetworkEvent&)> event_handler_;
+    std::function<void(const protocol::ForwardedNetworkPacket&)> encrypted_packet_handler_;
     std::mutex event_queue_mutex_;
     std::condition_variable event_queue_wake_;
-    std::deque<protocol::NetworkEvent> event_queue_;
+    std::deque<std::variant<protocol::NetworkEvent, protocol::ForwardedNetworkPacket>> event_queue_;
     std::thread event_worker_;
     bool event_worker_stopping_ = false;
     std::mutex delay_mutex_;
@@ -2103,6 +2197,16 @@ std::optional<NetworkKeySnapshot> QuicRelayClient::cached_network_key(
 void QuicRelayClient::set_network_event_handler(
     std::function<void(const protocol::NetworkEvent&)> handler) {
     impl_->set_network_event_handler(std::move(handler));
+}
+
+void QuicRelayClient::send_encrypted_packet(
+    const protocol::EncryptedNetworkPacket& packet) {
+    impl_->send_encrypted_packet(packet);
+}
+
+void QuicRelayClient::set_encrypted_packet_handler(
+    std::function<void(const protocol::ForwardedNetworkPacket&)> handler) {
+    impl_->set_encrypted_packet_handler(std::move(handler));
 }
 
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/storage/relay_store.hpp"
 
 #include <cstdint>
@@ -55,6 +56,13 @@ struct NetworkKeyPublishOutcome {
     std::vector<protocol::NetworkKeyEnvelope> envelopes;
 
     bool operator==(const NetworkKeyPublishOutcome&) const = default;
+};
+
+struct RoutedEncryptedPacket {
+    auth::DeviceId recipient_device_id{};
+    protocol::ForwardedNetworkPacket delivery;
+
+    bool operator==(const RoutedEncryptedPacket&) const = default;
 };
 
 class NetworkService {
@@ -115,6 +123,9 @@ public:
         const protocol::NetworkKeyPublishRequest& request);
     [[nodiscard]] std::vector<RoutedPeerStateChange> peer_states_for_device(
         const auth::DeviceId& actor);
+    [[nodiscard]] std::optional<RoutedEncryptedPacket> route_encrypted_packet(
+        const auth::DeviceId& actor,
+        const protocol::EncryptedNetworkPacket& packet);
 
 private:
     [[nodiscard]] std::uint64_t revision_for(const storage::NetworkId& network_id) const;

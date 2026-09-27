@@ -36,6 +36,7 @@ enum class MessageType : std::uint16_t {
     network_kick_request = 0x0106,
     network_peer_state_request = 0x0107,
     network_key_publish_request = 0x0108,
+    network_packet_send = 0x0109,
     network_operation_result = 0x0180,
     network_list_result = 0x0181,
     network_event = 0x0182,
@@ -43,6 +44,7 @@ enum class MessageType : std::uint16_t {
     network_peer_state_update = 0x0184,
     network_peer_state_revoked = 0x0185,
     network_key_envelope = 0x0186,
+    network_packet_forward = 0x0187,
     error = 0x00ff,
 };
 

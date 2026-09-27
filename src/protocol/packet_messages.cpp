@@ -101,4 +101,37 @@ EncryptedNetworkPacket decode_encrypted_network_packet(
     return packet;
 }
 
+std::vector<std::byte> encode_forwarded_network_packet(
+    const ForwardedNetworkPacket& packet) {
+    if (std::all_of(packet.sender_device_id.begin(), packet.sender_device_id.end(),
+                    [](const std::byte value) { return value == std::byte{0}; })) {
+        throw std::invalid_argument("forwarded packet sender is empty");
+    }
+    auto encrypted = encode_encrypted_network_packet(packet.packet);
+    std::vector<std::byte> output;
+    output.reserve(packet.sender_device_id.size() + encrypted.size());
+    output.insert(output.end(), packet.sender_device_id.begin(),
+                  packet.sender_device_id.end());
+    output.insert(output.end(), encrypted.begin(), encrypted.end());
+    return output;
+}
+
+ForwardedNetworkPacket decode_forwarded_network_packet(
+    const std::span<const std::byte> payload) {
+    if (payload.size() < auth::device_id_size + fixed_size +
+                             min_virtual_ipv4_packet_size) {
+        throw std::runtime_error("forwarded packet is truncated");
+    }
+    ForwardedNetworkPacket result;
+    std::copy_n(payload.begin(), result.sender_device_id.size(),
+                result.sender_device_id.begin());
+    if (std::all_of(result.sender_device_id.begin(), result.sender_device_id.end(),
+                    [](const std::byte value) { return value == std::byte{0}; })) {
+        throw std::runtime_error("forwarded packet sender is empty");
+    }
+    result.packet = decode_encrypted_network_packet(payload.subspan(
+        result.sender_device_id.size()));
+    return result;
+}
+
 }

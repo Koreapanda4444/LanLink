@@ -2,6 +2,7 @@
 
 #include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/packet_messages.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -139,6 +140,9 @@ public:
     [[nodiscard]] std::optional<NetworkKeySnapshot> cached_network_key(
         const protocol::NetworkId& network_id) const;
     void set_network_event_handler(std::function<void(const protocol::NetworkEvent&)> handler);
+    void send_encrypted_packet(const protocol::EncryptedNetworkPacket& packet);
+    void set_encrypted_packet_handler(
+        std::function<void(const protocol::ForwardedNetworkPacket&)> handler);
 
 private:
     class Impl;

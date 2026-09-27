@@ -236,6 +236,36 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
     return changes;
 }
 
+std::optional<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
+    const auth::DeviceId& actor,
+    const protocol::EncryptedNetworkPacket& packet) {
+    if (is_zero(actor)) {
+        return std::nullopt;
+    }
+    static_cast<void>(protocol::encode_encrypted_network_packet(packet));
+
+    std::lock_guard lock(mutex_);
+    if (!store_.find_network(packet.network_id) ||
+        packet.key_epoch != key_epoch_for(packet.network_id) ||
+        !active_keys_.contains(actor)) {
+        return std::nullopt;
+    }
+    const auto sender = store_.find_virtual_ipv4_lease(packet.network_id, actor);
+    if (!sender || sender->address == packet.destination_ipv4) {
+        return std::nullopt;
+    }
+    const auto leases = store_.list_virtual_ipv4_leases(packet.network_id);
+    const auto destination = std::find_if(leases.begin(), leases.end(),
+        [&](const auto& lease) {
+            return lease.address == packet.destination_ipv4;
+        });
+    if (destination == leases.end() ||
+        !active_keys_.contains(destination->device_id)) {
+        return std::nullopt;
+    }
+    return RoutedEncryptedPacket{destination->device_id, {actor, packet}};
+}
+
 NetworkOperationOutcome NetworkService::create_network(
     const auth::DeviceId& actor,
     const protocol::NetworkCreateRequest& request,
