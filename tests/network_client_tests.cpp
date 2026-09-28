@@ -4,6 +4,7 @@
 #include "lanlink/relay/network_service.hpp"
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
+#include "lanlink/transport/tls.hpp"
 
 #include <algorithm>
 #include <array>
@@ -537,6 +538,148 @@ void test_peer_state_reconnect(const std::filesystem::path& directory) {
     server.stop();
 }
 
+void test_tls_tcp_fallback(const std::filesystem::path& directory) {
+    storage::RelayStore store(directory / "tcp-relay.db");
+    relay::NetworkService service(store);
+    relay::NetworkControlChannel channel(service);
+    core::Logger relay_logger(directory / "tcp-relay.log", "tcp-relay", core::LogLevel::info,
+                              1024 * 1024, 2);
+    core::Logger owner_logger(directory / "tcp-owner.log", "tcp-owner", core::LogLevel::info,
+                              1024 * 1024, 2);
+    core::Logger member_logger(directory / "tcp-member.log", "tcp-member", core::LogLevel::info,
+                               1024 * 1024, 2);
+    const auto owner_identity = auth::DeviceIdentity::load_or_create(
+        directory / "tcp-owner.identity");
+    const auto member_identity = auth::DeviceIdentity::load_or_create(
+        directory / "tcp-member.identity");
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    transport::QuicServerOptions server_options;
+    server_options.listen_host = "127.0.0.1";
+    server_options.port = static_cast<std::uint16_t>(34'000 + (ticks % 20'000));
+    server_options.certificate_file = directory / "cert.pem";
+    server_options.private_key_file = directory / "key.pem";
+    server_options.auth_token_file = directory / "auth.token";
+    server_options.handshake_timeout = 2s;
+    server_options.authentication_timeout = 2s;
+    server_options.enable_quic = false;
+    transport::QuicRelayServer server(std::move(server_options), relay_logger, channel);
+    server.start();
+
+    std::atomic_bool stop_connect = false;
+    bool rejected_certificate = false;
+    try {
+        static_cast<void>(transport::TlsChannel::connect(
+            "localhost", static_cast<std::uint16_t>(34'000 + (ticks % 20'000)),
+            600ms, stop_connect));
+    } catch (const std::exception& error) {
+        rejected_certificate =
+            std::string(error.what()) == "TLS relay handshake failed";
+    }
+    expect(rejected_certificate,
+           "TLS fallback must reject a relay certificate for the wrong hostname");
+
+    transport::QuicClientOptions owner_options;
+    owner_options.relay_host = "127.0.0.1";
+    owner_options.port = static_cast<std::uint16_t>(34'000 + (ticks % 20'000));
+    owner_options.identity_file = directory / "tcp-owner.identity";
+    owner_options.auth_token_file = directory / "auth.token";
+    owner_options.handshake_timeout = 400ms;
+    owner_options.authentication_timeout = 2s;
+    owner_options.reconnect_initial_delay = 30ms;
+    owner_options.reconnect_maximum_delay = 100ms;
+    owner_options.tcp_probe_interval = 500ms;
+    auto member_options = owner_options;
+    member_options.identity_file = directory / "tcp-member.identity";
+    member_options.tcp_probe_interval = 20s;
+    transport::QuicRelayClient owner(std::move(owner_options), owner_logger);
+    transport::QuicRelayClient member(std::move(member_options), member_logger);
+    std::exception_ptr owner_error;
+    std::exception_ptr member_error;
+    std::jthread owner_worker([&](std::stop_token token) {
+        try { owner.run(token); } catch (...) { owner_error = std::current_exception(); }
+    });
+    std::jthread member_worker([&](std::stop_token token) {
+        try { member.run(token); } catch (...) { member_error = std::current_exception(); }
+    });
+    wait_until([&] {
+        return owner.authenticated() && member.authenticated() &&
+               owner.using_tcp_fallback() && member.using_tcp_fallback();
+    }, "UDP outage must authenticate both clients through TLS TCP");
+    const auto id = owner.create_network("TLS fallback LAN").network_id;
+    expect(member.join_network(id).code == protocol::NetworkResultCode::pending_approval,
+           "TCP control requests must use the existing approval protocol");
+    expect(owner.approve_member(id, member_identity.device_id()).code ==
+               protocol::NetworkResultCode::success,
+           "TCP control responses must allow member approval");
+    wait_until([&] {
+        const auto first = owner.cached_network_key(id);
+        const auto second = member.cached_network_key(id);
+        return first && second && first->epoch == second->epoch &&
+               first->key == second->key;
+    }, "TCP peers must exchange the existing network key envelopes");
+    std::atomic<int> owner_received = 0;
+    std::atomic<int> member_received = 0;
+    owner.set_encrypted_packet_handler([&](const protocol::ForwardedNetworkPacket& packet) {
+        if (packet.sender_device_id == member_identity.device_id() &&
+            packet.packet.ciphertext == std::vector<std::byte>(24, std::byte{0xa7})) {
+            owner_received.fetch_add(1);
+        }
+    });
+    member.set_encrypted_packet_handler([&](const protocol::ForwardedNetworkPacket& packet) {
+        if (packet.sender_device_id == owner_identity.device_id() &&
+            packet.packet.ciphertext == std::vector<std::byte>(24, std::byte{0xa7})) {
+            member_received.fetch_add(1);
+        }
+    });
+    const auto send_both_ways = [&] {
+        const auto epoch = owner.cached_network_key(id)->epoch;
+        protocol::EncryptedNetworkPacket packet;
+        packet.network_id = id;
+        packet.key_epoch = epoch;
+        packet.sequence = static_cast<std::uint32_t>(member_received.load() + 1);
+        packet.nonce.back() = static_cast<std::byte>(packet.sequence);
+        packet.ciphertext.assign(24, std::byte{0xa7});
+        packet.tag.fill(std::byte{0x4b});
+        packet.destination_ipv4 = storage::virtual_ipv4_pool_first + 2;
+        owner.send_encrypted_packet(packet);
+        packet.destination_ipv4 = storage::virtual_ipv4_pool_first + 1;
+        member.send_encrypted_packet(packet);
+    };
+    send_both_ways();
+    wait_until([&] { return owner_received.load() == 1 && member_received.load() == 1; },
+               "TLS TCP relay must forward ciphertext in both directions");
+    std::this_thread::sleep_for(1200ms);
+    expect(owner.authenticated() && owner.using_tcp_fallback() &&
+               owner.list_networks().result.networks.size() == 1,
+           "failed UDP probes must preserve the live TLS TCP connection");
+
+    server.enable_quic();
+    wait_until([&] {
+        return owner.authenticated() && !owner.using_tcp_fallback() &&
+               owner.max_datagram_size() > 128 && member.using_tcp_fallback();
+    }, "UDP recovery must move the client back to QUIC");
+    wait_until([&] {
+        const auto first = owner.cached_network_key(id);
+        const auto second = member.cached_network_key(id);
+        return first && second && first->epoch == second->epoch &&
+               first->key == second->key;
+    }, "QUIC reauthentication must restore peer encryption keys");
+    send_both_ways();
+    wait_until([&] { return owner_received.load() == 2 && member_received.load() == 2; },
+               "QUIC and TLS TCP peers must exchange encrypted packets");
+    expect(member.list_networks().result.networks.size() == 1,
+           "TCP control stream must remain active after QUIC resumes");
+    owner_worker.request_stop();
+    member_worker.request_stop();
+    owner.stop();
+    member.stop();
+    owner_worker.join();
+    member_worker.join();
+    if (owner_error) { std::rethrow_exception(owner_error); }
+    if (member_error) { std::rethrow_exception(member_error); }
+    server.stop();
+}
+
 }
 
 int main(const int argc, char* argv[]) {
@@ -546,7 +689,8 @@ int main(const int argc, char* argv[]) {
         }
         test_network_management(argv[1]);
         test_peer_state_reconnect(argv[1]);
-        std::cout << "network management QUIC integration passed\n";
+        test_tls_tcp_fallback(argv[1]);
+        std::cout << "network management QUIC and TLS TCP integration passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "network management QUIC integration failed: " << error.what() << '\n';

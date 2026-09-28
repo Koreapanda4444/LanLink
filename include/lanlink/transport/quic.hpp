@@ -34,6 +34,7 @@ struct QuicServerOptions {
     std::chrono::milliseconds authentication_timeout{10'000};
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
+    bool enable_quic = true;
 };
 
 struct QuicClientOptions {
@@ -47,6 +48,7 @@ struct QuicClientOptions {
     std::uint32_t keep_alive_interval_ms = 15'000;
     std::chrono::milliseconds reconnect_initial_delay{1'000};
     std::chrono::milliseconds reconnect_maximum_delay{30'000};
+    std::chrono::milliseconds tcp_probe_interval{60'000};
 };
 
 struct NetworkListReply {
@@ -83,6 +85,7 @@ public:
     QuicRelayServer& operator=(QuicRelayServer&&) = delete;
 
     void start();
+    void enable_quic();
     void stop() noexcept;
     [[nodiscard]] bool running() const noexcept;
 
@@ -109,6 +112,7 @@ public:
     [[nodiscard]] std::optional<auth::SessionId> session_id() const noexcept;
     [[nodiscard]] std::uint16_t max_datagram_size() const noexcept;
     [[nodiscard]] std::uint64_t received_datagram_count() const noexcept;
+    [[nodiscard]] bool using_tcp_fallback() const noexcept;
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name,

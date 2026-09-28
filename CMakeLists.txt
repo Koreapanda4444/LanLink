@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
 find_package(msquic CONFIG REQUIRED)
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 find_package(SQLite3 REQUIRED)
 
 if(TARGET SQLite3::SQLite3)
@@ -133,6 +133,7 @@ lanlink_enable_warnings(lanlink_relay_domain)
 add_library(lanlink_transport STATIC
     src/transport/quic.cpp
     src/transport/reconnect.cpp
+    src/transport/tls.cpp
 )
 
 target_include_directories(lanlink_transport
@@ -148,10 +149,11 @@ target_link_libraries(lanlink_transport
         lanlink_protocol
         lanlink_relay_domain
         ${LANLINK_MSQUIC_TARGET}
+        OpenSSL::SSL
 )
 
 if(WIN32)
-    target_link_libraries(lanlink_transport PRIVATE ntdll)
+    target_link_libraries(lanlink_transport PRIVATE ntdll ws2_32)
 endif()
 
 lanlink_enable_warnings(lanlink_transport)

@@ -10,6 +10,7 @@
 #include "lanlink/protocol/stream_decoder.hpp"
 #include "lanlink/relay/network_control_channel.hpp"
 #include "lanlink/transport/reconnect.hpp"
+#include "lanlink/transport/tls.hpp"
 
 #include <msquic.h>
 
@@ -228,7 +229,8 @@ void validate_client_options(const QuicClientOptions& options) {
     }
 
     if (options.reconnect_initial_delay <= std::chrono::milliseconds::zero() ||
-        options.reconnect_maximum_delay < options.reconnect_initial_delay) {
+        options.reconnect_maximum_delay < options.reconnect_initial_delay ||
+        options.tcp_probe_interval <= std::chrono::milliseconds::zero()) {
         throw std::invalid_argument("invalid QUIC reconnect settings");
     }
 }
@@ -271,12 +273,41 @@ public:
             throw std::logic_error("QUIC relay cannot be restarted after stop");
         }
 
-        QUIC_ADDR address{};
+        if (options_.enable_quic) {
+            start_quic_listener();
+        }
+        try {
+            tls_listener_->start();
+        } catch (...) {
+            if (listener_ != nullptr) {
+                api_->ListenerClose(listener_);
+                listener_ = nullptr;
+            }
+            throw;
+        }
 
+        running_.store(true);
+        log_noexcept(logger_, core::LogLevel::info,
+                     "relay listening on TLS TCP" +
+                         std::string(options_.enable_quic ? " and QUIC UDP " : " ") +
+                         options_.listen_host + ":" + std::to_string(options_.port));
+    }
+
+    void enable_quic() {
+        std::lock_guard lock(lifecycle_mutex_);
+        if (!running_.load() || shutdown_started_) {
+            throw std::logic_error("relay must be running to enable QUIC");
+        }
+        if (listener_ == nullptr) {
+            start_quic_listener();
+        }
+    }
+
+    void start_quic_listener() {
+        QUIC_ADDR address{};
         if (!QuicAddrFromString(options_.listen_host.c_str(), options_.port, &address)) {
             throw std::invalid_argument("listen_host must be an IPv4 or IPv6 address");
         }
-
         auto status = api_->ListenerOpen(registration_, listener_callback, this, &listener_);
 
         if (QUIC_FAILED(status)) {
@@ -293,16 +324,14 @@ public:
             throw_status("ListenerStart", status);
         }
 
-        running_.store(true);
-        log_noexcept(logger_,
-                     core::LogLevel::info,
-                     "QUIC relay listening on " + options_.listen_host + ":" +
-                         std::to_string(options_.port));
     }
 
     void stop() noexcept {
         std::lock_guard lock(lifecycle_mutex_);
 
+        if (tls_listener_) {
+            tls_listener_->stop();
+        }
         if (listener_ != nullptr) {
             api_->ListenerClose(listener_);
             listener_ = nullptr;
@@ -360,6 +389,20 @@ private:
         HQUIC connection = nullptr;
         HQUIC stream = nullptr;
         ConnectionContext* context = nullptr;
+        std::shared_ptr<TlsChannel> tcp;
+    };
+
+    struct TcpContext {
+        TcpContext(Impl* owner, std::shared_ptr<TlsChannel> socket)
+            : channel(std::move(socket)),
+              handshake(*owner->auth_token_,
+                        reinterpret_cast<std::uintptr_t>(channel.get()),
+                        auth::ServerHandshake::Clock::now() +
+                            owner->options_.authentication_timeout) {}
+
+        std::shared_ptr<TlsChannel> channel;
+        auth::ServerHandshake handshake;
+        bool rejected = false;
     };
 
     bool register_control_stream(ConnectionContext* const context,
@@ -372,14 +415,97 @@ private:
             return false;
         }
 
-        if (std::any_of(active_control_streams_.begin(),
-                        active_control_streams_.end(),
+        for (auto it = active_control_streams_.begin();
+             it != active_control_streams_.end();) {
+            if (it->device_id != device_id) {
+                ++it;
+            } else if (it->tcp) {
+                it->tcp->stop();
+                it = active_control_streams_.erase(it);
+            } else {
+                return false;
+            }
+        }
+
+        active_control_streams_.push_back({device_id, connection, stream, context, nullptr});
+        return true;
+    }
+
+    bool register_tcp(const std::shared_ptr<TlsChannel>& channel,
+                      const auth::DeviceId& device_id) {
+        std::lock_guard lock(active_control_streams_mutex_);
+        if (std::any_of(active_control_streams_.begin(), active_control_streams_.end(),
                         [&](const auto& active) { return active.device_id == device_id; })) {
             return false;
         }
-
-        active_control_streams_.push_back({device_id, connection, stream, context});
+        active_control_streams_.push_back({device_id, nullptr, nullptr, nullptr, channel});
         return true;
+    }
+
+    void handle_tcp_frame(TcpContext& context, const protocol::Frame& frame) {
+        if (context.handshake.expire()) {
+            throw std::runtime_error("TLS TCP authentication expired");
+        }
+        if (!context.handshake.authenticated()) {
+            protocol::Frame reply;
+            if (frame.type == protocol::MessageType::client_hello) {
+                reply = context.handshake.handle_hello(frame);
+            } else if (frame.type == protocol::MessageType::client_auth) {
+                reply = context.handshake.handle_proof(frame);
+                context.rejected = context.handshake.rejected();
+            } else {
+                throw std::runtime_error("unexpected TLS TCP authentication frame");
+            }
+            if (!context.channel->enqueue(reply)) {
+                throw std::runtime_error("TLS TCP authentication response queue overflow");
+            }
+            if (context.handshake.authenticated()) {
+                if (!register_tcp(context.channel, context.handshake.device_id())) {
+                    throw std::runtime_error("duplicate TLS TCP device connection");
+                }
+                const auto events = control_channel_.note_authenticated(
+                    context.handshake.device_id(), context.handshake.session_id(),
+                    context.handshake.signed_device_key());
+                route_control_events(events);
+            }
+            return;
+        }
+        if (frame.type == protocol::MessageType::network_packet_send) {
+            if (frame.request_id != 0) {
+                throw std::runtime_error("encrypted packet request id must be zero");
+            }
+            const auto routed = control_channel_.route_encrypted_packet(
+                context.handshake.device_id(), frame.payload);
+            if (routed) {
+                route_encrypted_packet(*routed);
+            }
+            return;
+        }
+        auto result = control_channel_.handle_authenticated(context.handshake.device_id(), frame);
+        if (!context.channel->enqueue(result.response)) {
+            throw std::runtime_error("TLS TCP control response queue overflow");
+        }
+        route_control_events(result.events);
+    }
+
+    void close_tcp(const TcpContext& context) noexcept {
+        if (!context.handshake.authenticated()) {
+            return;
+        }
+        {
+            std::lock_guard lock(active_control_streams_mutex_);
+            std::erase_if(active_control_streams_,
+                          [&](const auto& entry) {
+                              return entry.tcp == context.channel;
+                          });
+        }
+        try {
+            route_control_events(control_channel_.note_disconnected(
+                context.handshake.device_id(), context.handshake.session_id()));
+        } catch (const std::exception&) {
+            log_noexcept(logger_, core::LogLevel::warning,
+                         "TLS TCP peer cleanup failed");
+        }
     }
 
     void close_control_stream(const HQUIC stream, const bool app_close) noexcept {
@@ -402,12 +528,13 @@ private:
                     continue;
                 }
 
-                const auto status = send_frame(api_, active.stream, routed.frame);
-
-                if (QUIC_FAILED(status)) {
+                const auto delivered = active.tcp
+                    ? active.tcp->enqueue(routed.frame)
+                    : QUIC_SUCCEEDED(send_frame(api_, active.stream, routed.frame));
+                if (!delivered) {
                     log_noexcept(logger_,
                                  core::LogLevel::warning,
-                                 "network event send failed: " + status_text(status));
+                                 "network event send failed");
                 }
             }
         }
@@ -420,6 +547,15 @@ private:
             for (const auto& active : active_control_streams_) {
                 if (active.device_id != routed.recipient_device_id) {
                     continue;
+                }
+                if (active.tcp) {
+                    if (!active.tcp->enqueue(
+                            {protocol::MessageType::network_packet_forward, 0,
+                             std::move(payload)})) {
+                        log_noexcept(logger_, core::LogLevel::warning,
+                                     "TLS TCP encrypted packet queue overflow");
+                    }
+                    break;
                 }
                 const auto max_length = active.context->max_datagram_send_length.load();
                 const auto status = max_length != 0 && payload.size() <= max_length
@@ -500,6 +636,22 @@ private:
         if (QUIC_FAILED(status)) {
             throw_status("ConfigurationLoadCredential", status);
         }
+        tls_listener_ = std::make_unique<TlsListener>(
+            options_.listen_host, options_.port, options_.certificate_file,
+            options_.private_key_file, options_.handshake_timeout,
+            [this](std::shared_ptr<TlsChannel> channel) {
+                auto context = std::make_shared<TcpContext>(this, channel);
+                return TlsListener::Handler{
+                    [this, context](const protocol::Frame& frame) {
+                        handle_tcp_frame(*context, frame);
+                    },
+                    [context] {
+                        return !context->handshake.expire() &&
+                               (!context->rejected || context->channel->pending_output());
+                    },
+                    [this, context] { close_tcp(*context); },
+                };
+            });
     }
 
     void release() noexcept {
@@ -905,6 +1057,7 @@ private:
     HQUIC registration_ = nullptr;
     HQUIC configuration_ = nullptr;
     HQUIC listener_ = nullptr;
+    std::unique_ptr<TlsListener> tls_listener_;
     std::mutex lifecycle_mutex_;
     std::mutex active_control_streams_mutex_;
     std::vector<ActiveControlStream> active_control_streams_;
@@ -992,6 +1145,9 @@ public:
             state->authenticated = false;
             fail_pending(*state, "network control connection stopped");
 
+            if (state->tcp) {
+                state->tcp->stop();
+            }
             if (state->connection != nullptr && !state->shutdown_requested) {
                 state->shutdown_requested = true;
                 api_->ConnectionShutdown(state->connection,
@@ -1035,6 +1191,19 @@ public:
 
     [[nodiscard]] std::uint64_t received_datagram_count() const noexcept {
         return received_datagrams_.load();
+    }
+
+    [[nodiscard]] bool using_tcp_fallback() const noexcept {
+        std::shared_ptr<AttemptState> state;
+        {
+            std::lock_guard lock(active_mutex_);
+            state = active_attempt_.lock();
+        }
+        if (!state) {
+            return false;
+        }
+        std::lock_guard lock(state->mutex);
+        return state->authenticated && static_cast<bool>(state->tcp);
     }
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
@@ -1168,17 +1337,21 @@ public:
             throw std::runtime_error("encrypted packet connection is not authenticated");
         }
         std::lock_guard lock(attempt->mutex);
-        if (!attempt->authenticated || attempt->control_stream == nullptr ||
+        if (!attempt->authenticated ||
+            (attempt->control_stream == nullptr && !attempt->tcp) ||
             stop_requested_.load()) {
             throw std::runtime_error("encrypted packet connection is not authenticated");
         }
-        const auto status = attempt->max_datagram_send_length != 0 &&
-                            payload.size() <= attempt->max_datagram_send_length
-            ? send_datagram(api_, attempt->connection, std::move(payload))
-            : send_frame(api_, attempt->control_stream,
-                {protocol::MessageType::network_packet_send, 0, std::move(payload)});
-        if (QUIC_FAILED(status)) {
-            throw std::runtime_error("encrypted packet send failed: " + status_text(status));
+        const auto success = attempt->tcp
+            ? attempt->tcp->enqueue(
+                  {protocol::MessageType::network_packet_send, 0, std::move(payload)})
+            : attempt->max_datagram_send_length != 0 &&
+              payload.size() <= attempt->max_datagram_send_length
+            ? QUIC_SUCCEEDED(send_datagram(api_, attempt->connection, std::move(payload)))
+            : QUIC_SUCCEEDED(send_frame(api_, attempt->control_stream,
+                  {protocol::MessageType::network_packet_send, 0, std::move(payload)}));
+        if (!success) {
+            throw std::runtime_error("encrypted packet send failed");
         }
     }
 
@@ -1189,6 +1362,8 @@ public:
     }
 
 private:
+    struct AttemptState;
+
     static void verify_peer_keys(const protocol::NetworkPeerState& state) {
         for (const auto& peer : state.peers) {
             if (peer.signed_key &&
@@ -1205,7 +1380,7 @@ private:
         peer_revisions_.clear();
     }
 
-    void apply_peer_state(const HQUIC stream,
+    void apply_peer_state(const std::shared_ptr<AttemptState>& attempt,
                           const auth::DeviceEncryptionKey& own_encryption_key,
                           protocol::NetworkPeerState state) {
         verify_peer_keys(state);
@@ -1264,9 +1439,9 @@ private:
             }
         }
         if (!publish.envelopes.empty() &&
-            QUIC_FAILED(send_frame(api_, stream,
+            !send_client_frame(attempt,
                 {protocol::MessageType::network_key_publish_request, 0,
-                 protocol::encode_network_key_publish_request(publish)}))) {
+                 protocol::encode_network_key_publish_request(publish)})) {
             throw std::runtime_error("network key publication send failed");
         }
     }
@@ -1392,10 +1567,12 @@ private:
         HQUIC connection = nullptr;
         bool complete = false;
         bool ever_authenticated = false;
+        bool quic_connected = false;
         bool shutdown_requested = false;
         bool authenticated = false;
         std::uint16_t max_datagram_send_length = 0;
         HQUIC control_stream = nullptr;
+        std::shared_ptr<TlsChannel> tcp;
         std::unordered_map<std::uint32_t, std::shared_ptr<PendingControl>> pending;
         std::optional<auth::SessionId> session_id;
     };
@@ -1437,6 +1614,15 @@ private:
         state.pending.clear();
     }
 
+    bool send_client_frame(const std::shared_ptr<AttemptState>& state,
+                           const protocol::Frame& frame) {
+        if (state->tcp) {
+            return state->tcp->enqueue(frame);
+        }
+        return state->control_stream != nullptr &&
+               QUIC_SUCCEEDED(send_frame(api_, state->control_stream, frame));
+    }
+
     [[nodiscard]] protocol::Frame request_control(
         const protocol::MessageType type,
         std::vector<std::byte> payload,
@@ -1458,7 +1644,8 @@ private:
         }
 
         std::unique_lock lock(state->mutex);
-        if (!state->authenticated || state->control_stream == nullptr ||
+        if (!state->authenticated ||
+            (state->control_stream == nullptr && !state->tcp) ||
             stop_requested_.load()) {
             throw std::runtime_error("network control is not authenticated");
         }
@@ -1472,11 +1659,9 @@ private:
         pending->operation = operation;
         pending->network_id = network_id;
         state->pending.emplace(request_id, pending);
-        const auto status = send_frame(api_, state->control_stream,
-                                       {type, request_id, std::move(payload)});
-        if (QUIC_FAILED(status)) {
+        if (!send_client_frame(state, {type, request_id, std::move(payload)})) {
             state->pending.erase(request_id);
-            throw std::runtime_error("network control send failed: " + status_text(status));
+            throw std::runtime_error("network control send failed");
         }
 
         if (!pending->wake.wait_for(lock, timeout, [&] { return pending->finished; })) {
@@ -1599,7 +1784,13 @@ private:
 
             clear_active(state);
 
-            if (state->ever_authenticated) {
+            const auto quic_succeeded = state->ever_authenticated;
+            const auto quic_connected = state->quic_connected;
+            if (!quic_connected && !stop_requested_.load()) {
+                static_cast<void>(run_tcp_attempt());
+            }
+
+            if (quic_succeeded) {
                 reconnect_.reset();
             }
 
@@ -1692,6 +1883,159 @@ private:
         return true;
     }
 
+    bool run_tcp_attempt() {
+        const auto state = std::make_shared<AttemptState>();
+        std::atomic_bool cancel_probe = false;
+        std::atomic_bool probe_running = false;
+        std::atomic_bool udp_available = false;
+        std::thread probe_worker;
+        try {
+            auto tcp = TlsChannel::connect(options_.relay_host, options_.port,
+                                           options_.handshake_timeout, stop_requested_);
+            if (stop_requested_.load()) {
+                return false;
+            }
+            auto context = std::make_unique<StreamContext>(
+                this, nullptr, state, *identity_, *auth_token_,
+                auth::ServerHandshake::Clock::now() + options_.authentication_timeout);
+            {
+                std::lock_guard lock(state->mutex);
+                state->tcp = tcp;
+            }
+            {
+                std::lock_guard lock(active_mutex_);
+                active_attempt_ = state;
+            }
+            connected_.store(true);
+            if (!tcp->enqueue(context->handshake.begin(1))) {
+                throw std::runtime_error("TLS TCP authentication hello queue overflow");
+            }
+            log_noexcept(logger_, core::LogLevel::info,
+                         "connected to TLS TCP relay " + options_.relay_host + ":" +
+                             std::to_string(options_.port));
+            auto next_probe = std::chrono::steady_clock::now() +
+                              options_.tcp_probe_interval;
+            tcp->run(
+                [this, &context](const protocol::Frame& frame) {
+                    if (context->handshake.authenticated()) {
+                        handle_control_frame(context.get(), frame);
+                    } else {
+                        handle_auth_frame(nullptr, context.get(), frame);
+                    }
+                },
+                [this, &context, &cancel_probe, &probe_running, &udp_available,
+                 &probe_worker, &next_probe] {
+                    if (context->handshake.authenticated() &&
+                        !udp_available.load() &&
+                        std::chrono::steady_clock::now() >= next_probe &&
+                        !probe_running.load()) {
+                        if (probe_worker.joinable()) {
+                            probe_worker.join();
+                        }
+                        probe_running.store(true);
+                        probe_worker = std::thread([this, &cancel_probe,
+                                                    &probe_running, &udp_available] {
+                            udp_available.store(probe_quic_connectivity(cancel_probe));
+                            probe_running.store(false);
+                        });
+                        next_probe = std::chrono::steady_clock::now() +
+                                     options_.tcp_probe_interval;
+                    }
+                    return !stop_requested_.load() &&
+                           !udp_available.load() &&
+                           (context->handshake.authenticated() ||
+                            auth::ServerHandshake::Clock::now() < context->deadline);
+                });
+        } catch (const std::exception& error) {
+            log_noexcept(logger_, core::LogLevel::warning,
+                         "TLS TCP fallback failed: " + std::string(error.what()));
+        }
+        cancel_probe.store(true);
+        if (probe_worker.joinable()) {
+            probe_worker.join();
+        }
+        {
+            std::lock_guard lock(state->mutex);
+            state->authenticated = false;
+            if (state->tcp) {
+                state->tcp->stop();
+                state->tcp.reset();
+            }
+            fail_pending(*state, "TLS TCP fallback disconnected");
+        }
+        connected_.store(false);
+        authenticated_.store(false);
+        clear_session();
+        clear_peer_states();
+        clear_active(state);
+        if (state->ever_authenticated) {
+            reconnect_.reset();
+        }
+        return state->ever_authenticated;
+    }
+
+    struct ProbeState {
+        explicit ProbeState(Impl* owner_value) : owner(owner_value) {}
+        Impl* owner;
+        std::mutex mutex;
+        std::condition_variable wake;
+        bool connected = false;
+        bool complete = false;
+    };
+
+    static QUIC_STATUS QUIC_API probe_callback(HQUIC connection, void* user,
+                                                QUIC_CONNECTION_EVENT* event) {
+        auto* state = static_cast<ProbeState*>(user);
+        if (event->Type == QUIC_CONNECTION_EVENT_CONNECTED) {
+            {
+                std::lock_guard lock(state->mutex);
+                state->connected = true;
+            }
+            state->owner->api_->ConnectionShutdown(
+                connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, application_shutdown_code);
+        } else if (event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
+            state->owner->api_->ConnectionClose(connection);
+            {
+                std::lock_guard lock(state->mutex);
+                state->complete = true;
+            }
+            state->wake.notify_all();
+        }
+        return QUIC_STATUS_SUCCESS;
+    }
+
+    bool probe_quic_connectivity(const std::atomic_bool& cancelled) noexcept {
+        ProbeState state(this);
+        HQUIC connection = nullptr;
+        if (QUIC_FAILED(api_->ConnectionOpen(
+                registration_, probe_callback, &state, &connection))) {
+            return false;
+        }
+        const auto status = api_->ConnectionStart(
+            connection, configuration_, QUIC_ADDRESS_FAMILY_UNSPEC,
+            options_.relay_host.c_str(), options_.port);
+        if (QUIC_FAILED(status)) {
+            api_->ConnectionClose(connection);
+            return false;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + options_.handshake_timeout;
+        std::unique_lock lock(state.mutex);
+        while (!state.complete && !cancelled.load() && !stop_requested_.load() &&
+               std::chrono::steady_clock::now() < deadline) {
+            state.wake.wait_for(lock, std::chrono::milliseconds{50});
+        }
+        const auto connected = state.connected && !cancelled.load() &&
+                               !stop_requested_.load();
+        if (!state.complete) {
+            lock.unlock();
+            api_->ConnectionShutdown(
+                connection, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, application_shutdown_code);
+            lock.lock();
+            state.wake.wait(lock, [&] { return state.complete; });
+        }
+        return connected;
+    }
+
     void clear_active(const std::shared_ptr<AttemptState>& state) noexcept {
         std::lock_guard lock(active_mutex_);
         const auto active = active_attempt_.lock();
@@ -1748,6 +2092,10 @@ private:
                                     QUIC_CONNECTION_EVENT* event) {
         switch (event->Type) {
             case QUIC_CONNECTION_EVENT_CONNECTED:
+                {
+                    std::lock_guard lock(context->state->mutex);
+                    context->state->quic_connected = true;
+                }
                 connected_.store(true);
                 authenticated_.store(false);
                 clear_session();
@@ -1945,7 +2293,7 @@ private:
 
                         for (const auto& frame : frames) {
                             if (context->handshake.authenticated()) {
-                                handle_control_frame(stream, context, frame);
+                                handle_control_frame(context, frame);
                             } else {
                                 handle_auth_frame(stream, context, frame);
                             }
@@ -2000,11 +2348,10 @@ private:
                            const protocol::Frame& frame) {
         if (frame.type == protocol::MessageType::server_hello) {
             const auto response = context->handshake.handle_challenge(frame);
-            const auto status = send_frame(api_, stream, response);
-
-            if (QUIC_FAILED(status)) {
-                throw std::runtime_error("authentication proof send failed: " +
-                                         status_text(status));
+            if (!(context->state->tcp
+                    ? context->state->tcp->enqueue(response)
+                    : QUIC_SUCCEEDED(send_frame(api_, stream, response)))) {
+                throw std::runtime_error("authentication proof send failed");
             }
 
             return;
@@ -2016,9 +2363,13 @@ private:
 
         if (!context->handshake.handle_result(frame)) {
             log_noexcept(logger_, core::LogLevel::warning, "relay authentication rejected");
-            api_->ConnectionShutdown(context->connection,
-                                     QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
-                                     authentication_shutdown_code);
+            if (context->state->tcp) {
+                context->state->tcp->stop();
+            } else {
+                api_->ConnectionShutdown(context->connection,
+                                         QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
+                                         authentication_shutdown_code);
+            }
             return;
         }
 
@@ -2028,14 +2379,14 @@ private:
             throw std::runtime_error("relay accepted authentication without a session id");
         }
 
-        const auto settings_status = enable_authenticated_connection(api_,
-                                                                      context->connection,
-                                                                      options_.idle_timeout,
-                                                                      options_.keep_alive_interval_ms);
-
-        if (QUIC_FAILED(settings_status)) {
-            throw std::runtime_error("authenticated connection settings failed: " +
-                                     status_text(settings_status));
+        if (context->connection != nullptr) {
+            const auto settings_status = enable_authenticated_connection(
+                api_, context->connection, options_.idle_timeout,
+                options_.keep_alive_interval_ms);
+            if (QUIC_FAILED(settings_status)) {
+                throw std::runtime_error("authenticated connection settings failed: " +
+                                         status_text(settings_status));
+            }
         }
 
         set_session(*session_id);
@@ -2044,7 +2395,8 @@ private:
             std::lock_guard lock(context->state->mutex);
             context->state->ever_authenticated = true;
             context->state->session_id = *session_id;
-            if (!stop_requested_.load() && context->state->connection != nullptr) {
+            if (!stop_requested_.load() &&
+                (context->state->connection != nullptr || context->state->tcp)) {
                 context->state->control_stream = stream;
                 context->state->authenticated = true;
                 authenticated_.store(true);
@@ -2083,8 +2435,7 @@ private:
         event_queue_wake_.notify_one();
     }
 
-    void handle_control_frame(const HQUIC stream,
-                              StreamContext* context, const protocol::Frame& frame) {
+    void handle_control_frame(StreamContext* context, const protocol::Frame& frame) {
         if (frame.type == protocol::MessageType::network_packet_forward) {
             if (frame.request_id != 0) {
                 throw std::runtime_error("forwarded packet has a request id");
@@ -2098,7 +2449,7 @@ private:
                 throw std::runtime_error("network peer update has a request id");
             }
             if (frame.type == protocol::MessageType::network_peer_state_update) {
-                apply_peer_state(stream, context->handshake.encryption_key(),
+                apply_peer_state(context->state, context->handshake.encryption_key(),
                                  protocol::decode_network_peer_state(frame.payload));
             } else {
                 apply_peer_revocation(
@@ -2254,6 +2605,10 @@ void QuicRelayServer::start() {
     impl_->start();
 }
 
+void QuicRelayServer::enable_quic() {
+    impl_->enable_quic();
+}
+
 void QuicRelayServer::stop() noexcept {
     impl_->stop();
 }
@@ -2298,6 +2653,10 @@ std::uint16_t QuicRelayClient::max_datagram_size() const noexcept {
 
 std::uint64_t QuicRelayClient::received_datagram_count() const noexcept {
     return impl_->received_datagram_count();
+}
+
+bool QuicRelayClient::using_tcp_fallback() const noexcept {
+    return impl_->using_tcp_fallback();
 }
 
 protocol::NetworkOperationResult QuicRelayClient::create_network(
