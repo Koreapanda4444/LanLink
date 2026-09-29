@@ -1,4 +1,5 @@
 #include "lanlink/auth/packet_crypto.hpp"
+#include "lanlink/protocol/ipv4_fanout.hpp"
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -274,17 +275,24 @@ void NetworkPacketCipher::update_peers(const protocol::NetworkPeerState& state) 
         }
     }
     peers_.swap(updated);
+    subnet_address_ = state.subnet_address;
+    prefix_length_ = state.prefix_length;
 }
 
 protocol::EncryptedNetworkPacket NetworkPacketCipher::encrypt(
     const std::span<const std::byte> ipv4_packet) {
     const auto [source, destination] = ipv4_addresses(ipv4_packet);
     if (source != own_ipv4_address_ || destination == 0 ||
-        destination >= 0xe0000000U || destination == own_ipv4_address_) {
+        destination == own_ipv4_address_) {
         throw std::invalid_argument("virtual packet has an invalid source or destination");
     }
 
     std::lock_guard lock(mutex_);
+    if (destination >= 0xe0000000U &&
+        !protocol::is_ipv4_fanout_destination(destination, subnet_address_,
+                                             prefix_length_)) {
+        throw std::invalid_argument("virtual packet destination is not in the network");
+    }
     if (next_sequence_ == std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("virtual packet sequence exhausted");
     }
@@ -310,12 +318,16 @@ std::vector<std::byte> NetworkPacketCipher::decrypt(
     const protocol::EncryptedNetworkPacket& packet,
     const DeviceId& authenticated_sender) {
     static_cast<void>(protocol::encode_encrypted_network_packet(packet));
-    if (packet.network_id != network_id_ || packet.key_epoch != key_epoch_ ||
-        packet.destination_ipv4 != own_ipv4_address_) {
+    if (packet.network_id != network_id_ || packet.key_epoch != key_epoch_) {
         throw std::runtime_error("virtual packet does not match current network key");
     }
 
     std::lock_guard lock(mutex_);
+    if (packet.destination_ipv4 != own_ipv4_address_ &&
+        !protocol::is_ipv4_fanout_destination(packet.destination_ipv4,
+                                              subnet_address_, prefix_length_)) {
+        throw std::runtime_error("virtual packet destination is outside this network");
+    }
     const auto peer = peers_.find(authenticated_sender);
     if (peer == peers_.end()) {
         throw std::runtime_error("virtual packet sender is not an active peer");
@@ -337,7 +349,7 @@ std::vector<std::byte> NetworkPacketCipher::decrypt(
     try {
         const auto [source, destination] = ipv4_addresses(plaintext);
         addresses_match = source == receiver.ipv4_address &&
-                          destination == own_ipv4_address_;
+                          destination == packet.destination_ipv4;
     } catch (const std::invalid_argument&) {
     }
     if (!addresses_match) {

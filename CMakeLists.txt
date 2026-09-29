@@ -239,6 +239,14 @@ if(BUILD_TESTING)
     lanlink_enable_warnings(lanlink_packet_bridge_tests)
     add_test(NAME lanlink-packet-bridge COMMAND lanlink_packet_bridge_tests)
 
+    add_executable(lanlink_fanout_tests
+        tests/fanout_tests.cpp
+    )
+
+    target_link_libraries(lanlink_fanout_tests PRIVATE lanlink_relay_domain lanlink_auth)
+    lanlink_enable_warnings(lanlink_fanout_tests)
+    add_test(NAME lanlink-fanout COMMAND lanlink_fanout_tests)
+
     add_executable(lanlink_transport_tests
         tests/transport_tests.cpp
     )

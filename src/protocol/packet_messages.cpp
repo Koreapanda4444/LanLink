@@ -37,7 +37,8 @@ bool valid_packet(const EncryptedNetworkPacket& packet) {
                                          packet.network_id.end(),
         [](const std::byte byte) { return byte != std::byte{0}; });
     if (!has_network || packet.destination_ipv4 == 0 ||
-        packet.destination_ipv4 >= 0xe0000000U || packet.key_epoch == 0 ||
+        (packet.destination_ipv4 >= 0xf0000000U &&
+         packet.destination_ipv4 != 0xffffffffU) || packet.key_epoch == 0 ||
         packet.sequence == 0 ||
         packet.ciphertext.size() < min_virtual_ipv4_packet_size ||
         packet.ciphertext.size() > max_virtual_ipv4_packet_size) {

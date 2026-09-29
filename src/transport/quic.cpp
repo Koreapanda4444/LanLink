@@ -1,4 +1,5 @@
 #include "lanlink/transport/quic.hpp"
+#include "lanlink/protocol/ipv4_fanout.hpp"
 
 #include "lanlink/auth/handshake.hpp"
 #include "lanlink/auth/identity.hpp"
@@ -476,8 +477,8 @@ private:
             }
             const auto routed = control_channel_.route_encrypted_packet(
                 context.handshake.device_id(), frame.payload);
-            if (routed) {
-                route_encrypted_packet(*routed);
+            for (const auto& delivery : routed) {
+                route_encrypted_packet(delivery);
             }
             return;
         }
@@ -802,8 +803,8 @@ private:
                         reinterpret_cast<const std::byte*>(buffer->Buffer),
                         buffer->Length);
                     const auto routed = control_channel_.route_encrypted_packet(actor, payload);
-                    if (routed) {
-                        route_encrypted_packet(*routed);
+                    for (const auto& delivery : routed) {
+                        route_encrypted_packet(delivery);
                     }
                 } catch (const std::exception&) {
                     log_noexcept(logger_, core::LogLevel::warning,
@@ -1034,8 +1035,8 @@ private:
                 throw std::runtime_error("encrypted packet request id must be zero");
             }
             const auto routed = control_channel_.route_encrypted_packet(actor, frame.payload);
-            if (routed) {
-                route_encrypted_packet(*routed);
+            for (const auto& delivery : routed) {
+                route_encrypted_packet(delivery);
             }
             return;
         }
@@ -2434,7 +2435,11 @@ private:
             const auto found = peer_states_.find(delivery.packet.network_id);
             if (found == peer_states_.end() ||
                 found->second.key_epoch != delivery.packet.key_epoch ||
-                found->second.own_address != delivery.packet.destination_ipv4 ||
+                (found->second.own_address != delivery.packet.destination_ipv4 &&
+                 !protocol::is_ipv4_fanout_destination(
+                     delivery.packet.destination_ipv4,
+                     found->second.subnet_address,
+                     found->second.prefix_length)) ||
                 std::none_of(found->second.peers.begin(), found->second.peers.end(),
                     [&](const auto& peer) {
                         return peer.device_id == delivery.sender_device_id &&

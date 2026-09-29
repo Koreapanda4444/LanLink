@@ -49,7 +49,7 @@ public:
     [[nodiscard]] ControlDispatch handle_authenticated(
         const auth::DeviceId& actor,
         const protocol::Frame& request);
-    [[nodiscard]] std::optional<RoutedEncryptedPacket> route_encrypted_packet(
+    [[nodiscard]] std::vector<RoutedEncryptedPacket> route_encrypted_packet(
         const auth::DeviceId& actor, std::span<const std::byte> payload);
 
 private:

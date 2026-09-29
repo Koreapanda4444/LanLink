@@ -49,6 +49,8 @@ private:
     DeviceId own_device_id_;
     EncryptionPublicKey own_session_public_key_;
     std::uint32_t own_ipv4_address_;
+    std::uint32_t subnet_address_ = 0;
+    std::uint8_t prefix_length_ = 0;
     Secret32 outgoing_key_;
     std::array<std::byte, 8> outgoing_nonce_prefix_{};
     std::uint32_t next_sequence_ = 0;

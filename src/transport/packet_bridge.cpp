@@ -1,4 +1,5 @@
 #include "lanlink/transport/packet_bridge.hpp"
+#include "lanlink/protocol/ipv4_fanout.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -82,7 +83,9 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
             const auto& state = candidate->peers;
             const auto mask = 0xffffffffU << (32U - state.prefix_length);
             if (source == state.own_address &&
-                (destination & mask) == state.subnet_address) {
+                ((destination & mask) == state.subnet_address ||
+                 protocol::is_ipv4_fanout_destination(
+                     destination, state.subnet_address, state.prefix_length))) {
                 session = candidate;
                 break;
             }

@@ -246,6 +246,15 @@ public:
             }
             throw;
         }
+        if (addresses_.size() == 1) {
+            auto multicast = route_row(luid_, {{}, 0, 0xe0000000U, 4});
+            const auto result = CreateIpForwardEntry2(&multicast);
+            if (result != NO_ERROR && result != ERROR_OBJECT_ALREADY_EXISTS) {
+                remove(address.network_id);
+                check_windows(result, "CreateIpForwardEntry2(multicast)");
+            }
+            owns_multicast_route_ = result == NO_ERROR;
+        }
     }
 
     void remove(const protocol::NetworkId& network_id) noexcept {
@@ -262,6 +271,11 @@ public:
         if (installed.owns_unicast) {
             auto row = address_row(luid_, installed.address);
             static_cast<void>(DeleteUnicastIpAddressEntry(&row));
+        }
+        if (addresses_.empty() && owns_multicast_route_) {
+            auto route = route_row(luid_, {{}, 0, 0xe0000000U, 4});
+            static_cast<void>(DeleteIpForwardEntry2(&route));
+            owns_multicast_route_ = false;
         }
     }
 
@@ -404,6 +418,7 @@ private:
     AdapterHandle adapter_ = nullptr;
     NET_LUID luid_{};
     std::uint32_t original_mtu_ = 0;
+    bool owns_multicast_route_ = false;
     std::map<protocol::NetworkId, InstalledAddress> addresses_;
     SessionHandle session_ = nullptr;
     HANDLE stop_event_ = nullptr;

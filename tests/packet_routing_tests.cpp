@@ -105,52 +105,52 @@ void test_routing(const std::filesystem::path& directory) {
     packet.tag.fill(std::byte{0x79});
     const auto payload = protocol::encode_encrypted_network_packet(packet);
     const auto routed = channel.route_encrypted_packet(owner.device_id(), payload);
-    expect(routed && routed->recipient_device_id == member.device_id() &&
-               routed->delivery.sender_device_id == owner.device_id() &&
-               routed->delivery.packet == packet,
+    expect(routed.size() == 1 && routed.front().recipient_device_id == member.device_id() &&
+               routed.front().delivery.sender_device_id == owner.device_id() &&
+               routed.front().delivery.packet == packet,
            "authenticated sender's ciphertext goes to the leased recipient unchanged");
-    const auto delivered = protocol::encode_forwarded_network_packet(routed->delivery);
-    expect(protocol::decode_forwarded_network_packet(delivered) == routed->delivery,
+    const auto delivered = protocol::encode_forwarded_network_packet(routed.front().delivery);
+    expect(protocol::decode_forwarded_network_packet(delivered) == routed.front().delivery,
            "forwarded packet carries authenticated sender through the wire codec");
 
-    expect(!service.route_encrypted_packet(outsider.device_id(), packet),
+    expect(service.route_encrypted_packet(outsider.device_id(), packet).empty(),
            "member of another network cannot claim the sender's network");
     auto altered = packet;
     altered.network_id = second;
-    expect(!service.route_encrypted_packet(owner.device_id(), altered),
+    expect(service.route_encrypted_packet(owner.device_id(), altered).empty(),
            "same sender cannot route to a virtual address in a different network");
     altered = packet;
     altered.destination_ipv4 = owner_ip;
-    expect(!service.route_encrypted_packet(owner.device_id(), altered),
+    expect(service.route_encrypted_packet(owner.device_id(), altered).empty(),
            "sender cannot route packets back to its own address");
     altered.destination_ipv4 = member_ip + 10;
-    expect(!service.route_encrypted_packet(owner.device_id(), altered),
+    expect(service.route_encrypted_packet(owner.device_id(), altered).empty(),
            "unleased destination is not forwarded");
     altered = packet;
     ++altered.key_epoch;
-    expect(!service.route_encrypted_packet(owner.device_id(), altered),
+    expect(service.route_encrypted_packet(owner.device_id(), altered).empty(),
            "stale or unpublished key generation cannot be routed");
 
     altered = packet;
     altered.destination_ipv4 = owner_ip;
     altered.sequence = 2;
     altered.nonce.back() = std::byte{2};
-    expect(service.route_encrypted_packet(member.device_id(), altered)
-                   ->recipient_device_id == owner.device_id(),
+    expect(service.route_encrypted_packet(member.device_id(), altered).front()
+                   .recipient_device_id == owner.device_id(),
            "member can reply using its own authenticated session");
 
     static_cast<void>(service.remove_device_key(member.device_id(),
                                                 member_server.session_id()));
-    expect(!service.route_encrypted_packet(owner.device_id(), packet),
+    expect(service.route_encrypted_packet(owner.device_id(), packet).empty(),
            "disconnected destination is not forwarded packets");
     static_cast<void>(service.publish_device_key(
         member.device_id(), member_server.session_id(),
         member_server.signed_device_key(), 8));
-    expect(service.route_encrypted_packet(owner.device_id(), packet).has_value(),
+    expect(!service.route_encrypted_packet(owner.device_id(), packet).empty(),
            "reconnected network member receives packets again");
     expect(service.kick_member(owner.device_id(), {first, member.device_id()}, 9)
                    .result.code == protocol::NetworkResultCode::success &&
-               !service.route_encrypted_packet(owner.device_id(), packet),
+               service.route_encrypted_packet(owner.device_id(), packet).empty(),
            "revocation removes the lease and rejects earlier key generations");
 
     auto truncated = payload;
@@ -158,7 +158,7 @@ void test_routing(const std::filesystem::path& directory) {
     expect_error([&] {
         static_cast<void>(channel.route_encrypted_packet(owner.device_id(), truncated));
     }, "malformed ciphertext is rejected before routing");
-    auto invalid_delivery = routed->delivery;
+    auto invalid_delivery = routed.front().delivery;
     invalid_delivery.sender_device_id.fill(std::byte{0});
     expect_error([&] {
         static_cast<void>(protocol::encode_forwarded_network_packet(invalid_delivery));

@@ -120,12 +120,22 @@ void test_bridge(const std::filesystem::path& directory) {
     owner_bridge.outbound(ipv4_packet(owner_ip, 0x08080808U));
     require(sent.size() == 3, "unrelated traffic stays off the virtual network");
 
+    for (const auto destination : {0xffffffffU, 0xe00000fbU}) {
+        const auto discovery = ipv4_packet(owner_ip, destination);
+        owner_bridge.outbound(discovery);
+        require(sent.back().destination_ipv4 == destination,
+                "Wintun discovery packet retains its routing destination");
+        member_bridge.inbound({owner.device_id(), sent.back()});
+        require(delivered.back() == discovery,
+                "relay discovery packet returns to Wintun unchanged");
+    }
+
     member_bridge.synchronize(std::nullopt, {});
     member_bridge.inbound({owner.device_id(), sent[1]});
-    require(delivered.size() == 2, "disconnection revokes inbound packet injection");
+    require(delivered.size() == 4, "disconnection revokes inbound packet injection");
     owner_bridge.clear();
     owner_bridge.outbound(plaintext);
-    require(sent.size() == 3, "revoked network stops outbound packets");
+    require(sent.size() == 5, "revoked network stops outbound packets");
 }
 
 }

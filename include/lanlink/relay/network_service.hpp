@@ -4,6 +4,7 @@
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/storage/relay_store.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -68,9 +69,12 @@ struct RoutedEncryptedPacket {
 class NetworkService {
 public:
     using NetworkIdGenerator = std::function<storage::NetworkId()>;
+    using Clock = std::chrono::steady_clock;
+    using TimeSource = std::function<Clock::time_point()>;
 
     explicit NetworkService(storage::RelayStore& store,
-                            NetworkIdGenerator network_id_generator = {});
+                            NetworkIdGenerator network_id_generator = {},
+                            TimeSource time_source = {});
 
     NetworkService(const NetworkService&) = delete;
     NetworkService& operator=(const NetworkService&) = delete;
@@ -123,7 +127,7 @@ public:
         const protocol::NetworkKeyPublishRequest& request);
     [[nodiscard]] std::vector<RoutedPeerStateChange> peer_states_for_device(
         const auth::DeviceId& actor);
-    [[nodiscard]] std::optional<RoutedEncryptedPacket> route_encrypted_packet(
+    [[nodiscard]] std::vector<RoutedEncryptedPacket> route_encrypted_packet(
         const auth::DeviceId& actor,
         const protocol::EncryptedNetworkPacket& packet);
 
@@ -144,12 +148,21 @@ private:
         auth::SignedDeviceKey signed_key;
     };
 
+    struct FanoutBucket {
+        double tokens = 0;
+        Clock::time_point updated{};
+        bool initialized = false;
+    };
+
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;
+    TimeSource time_source_;
     std::mutex mutex_;
     std::map<storage::NetworkId, std::uint64_t> revisions_;
     std::map<storage::NetworkId, std::uint64_t> key_epochs_;
     std::map<auth::DeviceId, ActiveKey> active_keys_;
+    std::map<std::pair<storage::NetworkId, auth::DeviceId>, FanoutBucket> sender_fanout_;
+    std::map<storage::NetworkId, FanoutBucket> network_fanout_;
 };
 
 }

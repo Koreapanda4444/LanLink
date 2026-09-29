@@ -1,5 +1,6 @@
 #include "lanlink/relay/network_service.hpp"
 #include "lanlink/auth/network_keys.hpp"
+#include "lanlink/protocol/ipv4_fanout.hpp"
 
 #include <openssl/rand.h>
 
@@ -173,10 +174,13 @@ protocol::NetworkPeerState assemble_peer_state(
 }
 
 NetworkService::NetworkService(storage::RelayStore& store,
-                               NetworkIdGenerator network_id_generator)
+                               NetworkIdGenerator network_id_generator,
+                               TimeSource time_source)
     : store_(store),
       network_id_generator_(network_id_generator ? std::move(network_id_generator)
-                                                 : NetworkIdGenerator{generate_network_id}) {
+                                                 : NetworkIdGenerator{generate_network_id}),
+      time_source_(time_source ? std::move(time_source)
+                               : TimeSource{[] { return Clock::now(); }}) {
 }
 
 void NetworkService::record_authenticated_device(const auth::DeviceId& actor,
@@ -222,6 +226,9 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
     }
 
     active_keys_.erase(found);
+    std::erase_if(sender_fanout_, [&](const auto& entry) {
+        return entry.first.second == actor;
+    });
     const auto networks = store_.list_networks_for_device(actor);
     std::vector<RoutedPeerStateChange> changes;
     for (const auto& network : networks) {
@@ -236,11 +243,11 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
     return changes;
 }
 
-std::optional<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
+std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
     const auth::DeviceId& actor,
     const protocol::EncryptedNetworkPacket& packet) {
     if (is_zero(actor)) {
-        return std::nullopt;
+        return {};
     }
     static_cast<void>(protocol::encode_encrypted_network_packet(packet));
 
@@ -248,22 +255,68 @@ std::optional<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
     if (!store_.find_network(packet.network_id) ||
         packet.key_epoch != key_epoch_for(packet.network_id) ||
         !active_keys_.contains(actor)) {
-        return std::nullopt;
+        return {};
     }
     const auto sender = store_.find_virtual_ipv4_lease(packet.network_id, actor);
     if (!sender || sender->address == packet.destination_ipv4) {
-        return std::nullopt;
+        return {};
     }
+    const auto subnet = store_.find_subnet(packet.network_id);
+    if (!subnet) {
+        return {};
+    }
+    const bool fanout = protocol::is_ipv4_fanout_destination(
+        packet.destination_ipv4, subnet->network_address, subnet->prefix_length);
     const auto leases = store_.list_virtual_ipv4_leases(packet.network_id);
+    if (fanout) {
+        if (packet.ciphertext.size() > 1400) {
+            return {};
+        }
+        std::vector<RoutedEncryptedPacket> deliveries;
+        for (const auto& lease : leases) {
+            if (lease.device_id != actor && active_keys_.contains(lease.device_id)) {
+                deliveries.push_back({lease.device_id, {actor, packet}});
+            }
+        }
+        if (deliveries.empty()) {
+            return {};
+        }
+        const auto now = time_source_();
+        const auto replenish = [now](FanoutBucket& bucket,
+                                     const double capacity,
+                                     const double per_second) {
+            if (!bucket.initialized) {
+                bucket.tokens = capacity;
+                bucket.initialized = true;
+            } else if (now > bucket.updated) {
+                const auto seconds = std::chrono::duration<double>(
+                    now - bucket.updated).count();
+                bucket.tokens = std::min(capacity,
+                                         bucket.tokens + seconds * per_second);
+            }
+            bucket.updated = now;
+        };
+        auto& sender_bucket = sender_fanout_[{packet.network_id, actor}];
+        auto& network_bucket = network_fanout_[packet.network_id];
+        replenish(sender_bucket, 16, 8);
+        replenish(network_bucket, 256, 128);
+        if (sender_bucket.tokens < 1 ||
+            network_bucket.tokens < static_cast<double>(deliveries.size())) {
+            return {};
+        }
+        sender_bucket.tokens -= 1;
+        network_bucket.tokens -= static_cast<double>(deliveries.size());
+        return deliveries;
+    }
     const auto destination = std::find_if(leases.begin(), leases.end(),
         [&](const auto& lease) {
             return lease.address == packet.destination_ipv4;
         });
     if (destination == leases.end() ||
         !active_keys_.contains(destination->device_id)) {
-        return std::nullopt;
+        return {};
     }
-    return RoutedEncryptedPacket{destination->device_id, {actor, packet}};
+    return {RoutedEncryptedPacket{destination->device_id, {actor, packet}}};
 }
 
 NetworkOperationOutcome NetworkService::create_network(

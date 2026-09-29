@@ -274,7 +274,7 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
     }
 }
 
-std::optional<RoutedEncryptedPacket> NetworkControlChannel::route_encrypted_packet(
+std::vector<RoutedEncryptedPacket> NetworkControlChannel::route_encrypted_packet(
     const auth::DeviceId& actor, const std::span<const std::byte> payload) {
     return service_.route_encrypted_packet(
         actor, protocol::decode_encrypted_network_packet(payload));
