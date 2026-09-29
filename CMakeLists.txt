@@ -131,6 +131,7 @@ target_link_libraries(lanlink_relay_domain
 lanlink_enable_warnings(lanlink_relay_domain)
 
 add_library(lanlink_transport STATIC
+    src/transport/packet_bridge.cpp
     src/transport/quic.cpp
     src/transport/reconnect.cpp
     src/transport/tls.cpp
@@ -229,6 +230,14 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_packet_crypto_tests PRIVATE lanlink_auth)
     lanlink_enable_warnings(lanlink_packet_crypto_tests)
     add_test(NAME lanlink-packet-crypto COMMAND lanlink_packet_crypto_tests)
+
+    add_executable(lanlink_packet_bridge_tests
+        tests/packet_bridge_tests.cpp
+    )
+
+    target_link_libraries(lanlink_packet_bridge_tests PRIVATE lanlink_transport lanlink_auth)
+    lanlink_enable_warnings(lanlink_packet_bridge_tests)
+    add_test(NAME lanlink-packet-bridge COMMAND lanlink_packet_bridge_tests)
 
     add_executable(lanlink_transport_tests
         tests/transport_tests.cpp

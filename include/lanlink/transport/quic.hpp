@@ -72,6 +72,13 @@ struct NetworkKeySnapshot {
     bool operator==(const NetworkKeySnapshot&) const = default;
 };
 
+struct PacketIdentitySnapshot {
+    auth::DeviceId device_id{};
+    auth::SignedDeviceKey signed_key;
+
+    bool operator==(const PacketIdentitySnapshot&) const = default;
+};
+
 class QuicRelayServer {
 public:
     QuicRelayServer(QuicServerOptions options,
@@ -145,6 +152,7 @@ public:
     [[nodiscard]] std::vector<protocol::NetworkPeerState> cached_peer_states() const;
     [[nodiscard]] std::optional<NetworkKeySnapshot> cached_network_key(
         const protocol::NetworkId& network_id) const;
+    [[nodiscard]] std::optional<PacketIdentitySnapshot> cached_packet_identity() const;
     void set_network_event_handler(std::function<void(const protocol::NetworkEvent&)> handler);
     void send_encrypted_packet(const protocol::EncryptedNetworkPacket& packet);
     void set_encrypted_packet_handler(

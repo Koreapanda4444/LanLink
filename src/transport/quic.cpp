@@ -1309,6 +1309,14 @@ public:
                                             : std::optional{found->second};
     }
 
+    [[nodiscard]] std::optional<PacketIdentitySnapshot> cached_packet_identity() const {
+        std::lock_guard lock(peer_state_mutex_);
+        if (!own_signed_key_ || !authenticated_.load()) {
+            return std::nullopt;
+        }
+        return PacketIdentitySnapshot{identity_->device_id(), *own_signed_key_};
+    }
+
     void set_network_event_handler(
         std::function<void(const protocol::NetworkEvent&)> handler) {
         std::lock_guard lock(event_handler_mutex_);
@@ -1375,6 +1383,7 @@ private:
 
     void clear_peer_states() noexcept {
         std::lock_guard lock(peer_state_mutex_);
+        own_signed_key_.reset();
         network_keys_.clear();
         peer_states_.clear();
         peer_revisions_.clear();
@@ -2391,6 +2400,15 @@ private:
 
         set_session(*session_id);
 
+        const auto signed_key = context->handshake.signed_device_key();
+        if (!signed_key) {
+            throw std::runtime_error("authenticated client has no signed packet key");
+        }
+        {
+            std::lock_guard lock(peer_state_mutex_);
+            own_signed_key_ = *signed_key;
+        }
+
         {
             std::lock_guard lock(context->state->mutex);
             context->state->ever_authenticated = true;
@@ -2577,6 +2595,7 @@ private:
     std::atomic<std::uint32_t> next_request_id_ = 2;
     std::mutex event_handler_mutex_;
     mutable std::mutex peer_state_mutex_;
+    std::optional<auth::SignedDeviceKey> own_signed_key_;
     std::map<protocol::NetworkId, protocol::NetworkPeerState> peer_states_;
     std::map<protocol::NetworkId, NetworkKeySnapshot> network_keys_;
     std::map<protocol::NetworkId, std::uint64_t> peer_revisions_;
@@ -2717,6 +2736,10 @@ std::vector<protocol::NetworkPeerState> QuicRelayClient::cached_peer_states() co
 std::optional<NetworkKeySnapshot> QuicRelayClient::cached_network_key(
     const protocol::NetworkId& network_id) const {
     return impl_->cached_network_key(network_id);
+}
+
+std::optional<PacketIdentitySnapshot> QuicRelayClient::cached_packet_identity() const {
+    return impl_->cached_packet_identity();
 }
 
 void QuicRelayClient::set_network_event_handler(
