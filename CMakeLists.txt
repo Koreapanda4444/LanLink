@@ -154,6 +154,9 @@ target_link_libraries(lanlink_transport
 
 if(WIN32)
     target_link_libraries(lanlink_transport PRIVATE ntdll ws2_32)
+
+    target_sources(lanlink_transport PRIVATE src/transport/wintun_adapter.cpp)
+    target_link_libraries(lanlink_transport PRIVATE iphlpapi)
 endif()
 
 lanlink_enable_warnings(lanlink_transport)
