@@ -173,9 +173,10 @@ lanlink_enable_warnings(lanlink_relay)
 if(WIN32)
     add_executable(lanlink_service
         apps/service/main.cpp
+        apps/service/windows_service.cpp
     )
 
-    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport)
+    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport advapi32)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 
