@@ -274,4 +274,8 @@ bool stop_requested() noexcept {
     return requested_stop.load();
 }
 
+void request_stop() noexcept {
+    requested_stop.store(true);
+}
+
 }

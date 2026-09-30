@@ -57,6 +57,7 @@ lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
     src/protocol/codec.cpp
+    src/protocol/local_control.cpp
     src/protocol/network_messages.cpp
     src/protocol/packet_messages.cpp
     src/protocol/stream_decoder.cpp
@@ -171,12 +172,19 @@ set_target_properties(lanlink_relay PROPERTIES OUTPUT_NAME "lanlink-relay")
 lanlink_enable_warnings(lanlink_relay)
 
 if(WIN32)
+    add_library(lanlink_local_ipc STATIC
+        src/transport/local_pipe.cpp
+    )
+    target_include_directories(lanlink_local_ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lanlink_local_ipc PUBLIC lanlink_protocol PRIVATE advapi32)
+    lanlink_enable_warnings(lanlink_local_ipc)
+
     add_executable(lanlink_service
         apps/service/main.cpp
         apps/service/windows_service.cpp
     )
 
-    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport advapi32)
+    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport lanlink_local_ipc advapi32)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 
@@ -184,7 +192,7 @@ if(WIN32)
         apps/ui/main.cpp
     )
 
-    target_link_libraries(lanlink_ui PRIVATE lanlink_core)
+    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
 endif()
@@ -207,6 +215,20 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_protocol_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_protocol_tests)
     add_test(NAME lanlink-protocol COMMAND lanlink_protocol_tests)
+
+    add_executable(lanlink_local_control_tests
+        tests/local_control_tests.cpp
+    )
+    target_link_libraries(lanlink_local_control_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_local_control_tests)
+    add_test(NAME lanlink-local-control COMMAND lanlink_local_control_tests)
+
+    if(WIN32)
+        add_executable(lanlink_local_pipe_tests tests/local_pipe_tests.cpp)
+        target_link_libraries(lanlink_local_pipe_tests PRIVATE lanlink_local_ipc)
+        lanlink_enable_warnings(lanlink_local_pipe_tests)
+        add_test(NAME lanlink-local-pipe COMMAND lanlink_local_pipe_tests)
+    endif()
 
     add_executable(lanlink_network_protocol_tests
         tests/network_protocol_tests.cpp

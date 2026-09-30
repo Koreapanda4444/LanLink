@@ -3,6 +3,9 @@
 #include "lanlink/core/config.hpp"
 #include "lanlink/core/component.hpp"
 #include "lanlink/core/logger.hpp"
+#include "lanlink/protocol/local_control.hpp"
+#include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/transport/local_pipe.hpp"
 #include "lanlink/transport/packet_bridge.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/transport/wintun_adapter.hpp"
@@ -128,7 +131,89 @@ void run_runtime(const std::optional<std::filesystem::path>& config_path,
              lanlink::transport::WintunNetworkAddress> installed;
     std::exception_ptr adapter_error;
 
+    std::unique_ptr<lanlink::transport::LocalPipeServer> pipe;
+    try {
+        pipe = std::make_unique<lanlink::transport::LocalPipeServer>([&](
+            const lanlink::protocol::LocalMessage& request) {
+            namespace protocol = lanlink::protocol;
+            std::vector<std::byte> payload;
+            switch (request.command) {
+            case protocol::LocalCommand::status: {
+                if (!request.payload.empty()) {
+                    throw std::invalid_argument("status does not accept a payload");
+                }
+                const auto count = client.cached_peer_states().size();
+                payload = {std::byte{static_cast<unsigned char>(client.connected())},
+                           std::byte{static_cast<unsigned char>(client.authenticated())},
+                           std::byte{static_cast<unsigned char>(client.using_tcp_fallback())},
+                           std::byte{0}};
+                for (std::size_t i = 0; i < 4; ++i) {
+                    payload.push_back(static_cast<std::byte>((count >> (i * 8)) & 0xff));
+                }
+                break;
+            }
+            case protocol::LocalCommand::list: {
+                static_cast<void>(protocol::decode_network_list_request(request.payload));
+                const auto result = client.list_networks();
+                if (result.code != protocol::NetworkResultCode::success) {
+                    throw std::runtime_error(std::string{
+                        protocol::network_result_code_name(result.code)});
+                }
+                payload = protocol::encode_network_list_result(result.result);
+                break;
+            }
+            case protocol::LocalCommand::create: {
+                const auto name = protocol::decode_network_create_request(request.payload).name;
+                payload = protocol::encode_network_operation_result(
+                    client.create_network(name));
+                break;
+            }
+            case protocol::LocalCommand::join:
+            case protocol::LocalCommand::leave: {
+                const auto id = protocol::decode_network_selection_request(
+                    request.payload).network_id;
+                payload = protocol::encode_network_operation_result(
+                    request.command == protocol::LocalCommand::join
+                        ? client.join_network(id) : client.leave_network(id));
+                break;
+            }
+            case protocol::LocalCommand::invite:
+            case protocol::LocalCommand::approve:
+            case protocol::LocalCommand::kick: {
+                const auto member = protocol::decode_network_member_request(request.payload);
+                protocol::NetworkOperationResult result;
+                if (request.command == protocol::LocalCommand::invite) {
+                    result = client.invite_member(member.network_id, member.device_id);
+                } else if (request.command == protocol::LocalCommand::approve) {
+                    result = client.approve_member(member.network_id, member.device_id);
+                } else {
+                    result = client.kick_member(member.network_id, member.device_id);
+                }
+                payload = protocol::encode_network_operation_result(result);
+                break;
+            }
+            case protocol::LocalCommand::stop:
+                if (!request.payload.empty()) {
+                    throw std::invalid_argument("stop does not accept a payload");
+                }
+                lanlink::service::request_stop();
+                break;
+            }
+            return protocol::LocalMessage{request.command, true, false,
+                                          std::move(payload)};
+        });
+    } catch (...) {
+        adapter->stop();
+        bridge->clear();
+        client.set_encrypted_packet_handler({});
+        worker.request_stop();
+        client.stop();
+        worker.join();
+        throw;
+    }
+
     const auto shutdown = [&] {
+        pipe->stop();
         adapter->stop();
         bridge->clear();
         client.set_encrypted_packet_handler({});

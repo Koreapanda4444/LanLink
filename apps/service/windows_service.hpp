@@ -17,5 +17,6 @@ void dispatch(std::optional<std::filesystem::path> config_path,
               const std::filesystem::path& working_directory,
               Runtime runtime);
 [[nodiscard]] bool stop_requested() noexcept;
+void request_stop() noexcept;
 
 }
