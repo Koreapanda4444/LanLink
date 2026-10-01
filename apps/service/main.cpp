@@ -198,6 +198,25 @@ void run_runtime(const std::optional<std::filesystem::path>& config_path,
                 }
                 lanlink::service::request_stop();
                 break;
+            case protocol::LocalCommand::diagnostics: {
+                if (!request.payload.empty()) {
+                    throw std::invalid_argument("diagnostics does not accept a payload");
+                }
+                const auto current = client.diagnostics();
+                protocol::LocalDiagnostics snapshot;
+                snapshot.connected = current.connected;
+                snapshot.authenticated = current.authenticated;
+                snapshot.tcp_fallback = current.tcp_fallback;
+                snapshot.active_networks = static_cast<std::uint32_t>(
+                    client.cached_peer_states().size());
+                snapshot.rtt_us = current.rtt_us;
+                snapshot.sent_bytes = current.sent_bytes;
+                snapshot.received_bytes = current.received_bytes;
+                snapshot.reconnects = current.reconnects;
+                snapshot.last_error = current.last_error;
+                payload = protocol::encode_local_diagnostics(snapshot);
+                break;
+            }
             }
             return protocol::LocalMessage{request.command, true, false,
                                           std::move(payload)};

@@ -72,6 +72,7 @@ lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     if (action == L"approve") return LocalCommand::approve;
     if (action == L"kick") return LocalCommand::kick;
     if (action == L"stop") return LocalCommand::stop;
+    if (action == L"diagnostics") return LocalCommand::diagnostics;
     throw std::invalid_argument("unknown local control command");
 }
 
@@ -86,8 +87,9 @@ int wmain(const int argc, wchar_t* argv[]) {
         switch (command) {
         case protocol::LocalCommand::status:
         case protocol::LocalCommand::stop:
+        case protocol::LocalCommand::diagnostics:
             if (argc != 1 && argc != 2) {
-                throw std::invalid_argument("status and stop take no arguments");
+                throw std::invalid_argument("status, stop and diagnostics take no arguments");
             }
             break;
         case protocol::LocalCommand::list:
@@ -140,6 +142,22 @@ int wmain(const int argc, wchar_t* argv[]) {
         } else if (command == protocol::LocalCommand::stop) {
             if (!response.payload.empty()) throw std::runtime_error("invalid stop response");
             std::cout << "service stopping\n";
+        } else if (command == protocol::LocalCommand::diagnostics) {
+            const auto metrics = protocol::decode_local_diagnostics(response.payload);
+            std::cout << "connected: " << metrics.connected
+                      << "\nauthenticated: " << metrics.authenticated
+                      << "\ntcp fallback: " << metrics.tcp_fallback
+                      << "\nactive networks: " << metrics.active_networks
+                      << "\nlatency: ";
+            if (metrics.rtt_us) {
+                std::cout << *metrics.rtt_us / 1000.0 << " ms";
+            } else {
+                std::cout << "unavailable";
+            }
+            std::cout << "\nsent bytes: " << metrics.sent_bytes
+                      << "\nreceived bytes: " << metrics.received_bytes
+                      << "\nreconnect attempts: " << metrics.reconnects
+                      << "\nlast error: " << metrics.last_error << '\n';
         } else {
             const auto result = protocol::decode_network_operation_result(response.payload);
             std::cout << protocol::network_result_code_name(result.code)

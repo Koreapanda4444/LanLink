@@ -11,7 +11,10 @@
 #include <wrl/client.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -57,6 +60,20 @@ std::string hex_id(const lanlink::protocol::NetworkId& id) {
     return text;
 }
 
+std::string format_bytes(const std::uint64_t bytes) {
+    if (bytes < 1024) return std::to_string(bytes) + " B";
+    double size = static_cast<double>(bytes);
+    const char* suffix = "KiB";
+    for (const auto* unit : {"KiB", "MiB", "GiB", "TiB"}) {
+        size /= 1024.0;
+        suffix = unit;
+        if (size < 1024.0) break;
+    }
+    char text[64]{};
+    std::snprintf(text, sizeof(text), "%.1f %s", size, suffix);
+    return text;
+}
+
 void require(const HRESULT result, const char* operation) {
     if (FAILED(result)) {
         throw std::runtime_error(std::string{operation} + " failed (HRESULT " +
@@ -88,7 +105,7 @@ public:
         klass.cbSize = sizeof(klass);
         klass.lpfnWndProc = window_proc;
         klass.hInstance = instance_;
-        klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(OCR_NORMAL));
         klass.lpszClassName = window_class;
         if (!RegisterClassExW(&klass)) {
             throw std::runtime_error("RegisterClassExW failed");
@@ -223,7 +240,38 @@ private:
 
     void render() {
         namespace protocol = lanlink::protocol;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_diagnostics_) {
+            attempt([&] { networks_.submit(protocol::LocalCommand::diagnostics); });
+            next_diagnostics_ = now + std::chrono::seconds{2};
+        }
         const auto state = networks_.snapshot();
+        if (state.diagnostics &&
+            state.diagnostics_generation != last_diagnostics_generation_) {
+            const auto& current = *state.diagnostics;
+            if (last_diagnostics_generation_ != 0 && last_connected_ &&
+                current.connected && last_tcp_ == current.tcp_fallback &&
+                last_reconnects_ == current.reconnects &&
+                current.sent_bytes >= last_sent_bytes_ &&
+                current.received_bytes >= last_received_bytes_) {
+                const auto elapsed = std::chrono::duration<double>(
+                    now - last_diagnostics_time_).count();
+                if (elapsed > 0) {
+                    send_rate_ = (current.sent_bytes - last_sent_bytes_) / elapsed;
+                    receive_rate_ = (current.received_bytes - last_received_bytes_) / elapsed;
+                }
+            } else {
+                send_rate_ = 0;
+                receive_rate_ = 0;
+            }
+            last_diagnostics_generation_ = state.diagnostics_generation;
+            last_diagnostics_time_ = now;
+            last_sent_bytes_ = current.sent_bytes;
+            last_received_bytes_ = current.received_bytes;
+            last_tcp_ = current.tcp_fallback;
+            last_connected_ = current.connected;
+            last_reconnects_ = current.reconnects;
+        }
         const auto* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);
         ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -232,7 +280,30 @@ private:
         ImGui::Begin("LanLink", nullptr, flags);
         ImGui::Text("LanLink %s", lanlink::core::project_version().data());
         ImGui::Separator();
+        ImGui::SeparatorText("Connection");
         ImGui::Text("Service: %s", state.service_online ? "Available" : "Unavailable");
+        if (state.diagnostics) {
+            const auto& diagnostics = *state.diagnostics;
+            ImGui::Text("Relay: %s", diagnostics.connected ? "Connected" : "Reconnecting");
+            ImGui::Text("Authentication: %s",
+                        diagnostics.authenticated ? "Ready" : "Waiting");
+            ImGui::Text("Transport: %s", diagnostics.tcp_fallback ? "TLS TCP" : "QUIC");
+            if (diagnostics.rtt_us) {
+                ImGui::Text("Latency: %.1f ms", *diagnostics.rtt_us / 1000.0);
+            } else {
+                ImGui::TextUnformatted("Latency: unavailable");
+            }
+            ImGui::Text("Reconnect attempts: %u", diagnostics.reconnects);
+            ImGui::Text("Active networks: %u", diagnostics.active_networks);
+            ImGui::Text("Sent: %s  (%.1f KiB/s)",
+                        format_bytes(diagnostics.sent_bytes).c_str(), send_rate_ / 1024.0);
+            ImGui::Text("Received: %s  (%.1f KiB/s)",
+                        format_bytes(diagnostics.received_bytes).c_str(),
+                        receive_rate_ / 1024.0);
+            if (!diagnostics.last_error.empty()) {
+                ImGui::TextWrapped("Last error: %s", diagnostics.last_error.c_str());
+            }
+        }
         if (state.busy) ImGui::TextUnformatted("Working...");
         if (!state.message.empty()) ImGui::TextUnformatted(state.message.c_str());
         if (!state.error.empty()) {
@@ -337,6 +408,16 @@ private:
     std::array<char, 33> network_id_{};
     std::array<char, 65> device_id_{};
     std::string local_error_;
+    std::chrono::steady_clock::time_point next_diagnostics_{};
+    std::chrono::steady_clock::time_point last_diagnostics_time_{};
+    std::uint64_t last_diagnostics_generation_ = 0;
+    std::uint64_t last_sent_bytes_ = 0;
+    std::uint64_t last_received_bytes_ = 0;
+    bool last_tcp_ = false;
+    bool last_connected_ = false;
+    std::uint32_t last_reconnects_ = 0;
+    double send_rate_ = 0;
+    double receive_rate_ = 0;
 };
 
 }

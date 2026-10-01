@@ -26,13 +26,15 @@ NetworkModel::~NetworkModel() {
 
 void NetworkModel::submit(const protocol::LocalCommand command,
                           std::vector<std::byte> payload) {
-    if (command < protocol::LocalCommand::list ||
-        command > protocol::LocalCommand::kick) {
+    if ((command < protocol::LocalCommand::list ||
+         command > protocol::LocalCommand::kick) &&
+        command != protocol::LocalCommand::diagnostics) {
         throw std::invalid_argument("unsupported desktop network command");
     }
     std::lock_guard lock(mutex_);
     if (stopping_) return;
-    if (command == protocol::LocalCommand::list) {
+    if (command == protocol::LocalCommand::list ||
+        command == protocol::LocalCommand::diagnostics) {
         for (const auto& request : pending_) {
             if (request.command == command) return;
         }
@@ -66,6 +68,13 @@ void NetworkModel::process() {
                 state_.networks = std::move(networks.networks);
                 state_.service_online = true;
                 state_.error.clear();
+            } else if (request.command == protocol::LocalCommand::diagnostics) {
+                auto diagnostics = protocol::decode_local_diagnostics(response.payload);
+                std::lock_guard lock(mutex_);
+                state_.diagnostics = std::move(diagnostics);
+                ++state_.diagnostics_generation;
+                state_.service_online = true;
+                state_.error.clear();
             } else {
                 const auto result = protocol::decode_network_operation_result(response.payload);
                 std::lock_guard lock(mutex_);
@@ -82,9 +91,13 @@ void NetworkModel::process() {
             std::lock_guard lock(mutex_);
             state_.error = error.what();
             state_.message.clear();
-            if (request.command == protocol::LocalCommand::list) {
+            if (request.command == protocol::LocalCommand::list ||
+                request.command == protocol::LocalCommand::diagnostics) {
                 state_.service_online = false;
-                state_.networks.clear();
+                state_.diagnostics.reset();
+                if (request.command == protocol::LocalCommand::list) {
+                    state_.networks.clear();
+                }
             }
         }
 

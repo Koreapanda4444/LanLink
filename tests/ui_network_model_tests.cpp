@@ -37,6 +37,17 @@ int main() {
                 return protocol::LocalMessage{request.command, true, false,
                     protocol::encode_network_list_result({{network}})};
             }
+            if (request.command == protocol::LocalCommand::diagnostics) {
+                protocol::LocalDiagnostics metrics;
+                metrics.connected = true;
+                metrics.authenticated = true;
+                metrics.active_networks = 1;
+                metrics.sent_bytes = 4096;
+                metrics.received_bytes = 8192;
+                metrics.rtt_us = 1200;
+                return protocol::LocalMessage{request.command, true, false,
+                    protocol::encode_local_diagnostics(metrics)};
+            }
             if (request.command == protocol::LocalCommand::create) {
                 if (protocol::decode_network_create_request(request.payload).name != "new-room") {
                     throw std::runtime_error("wrong network name");
@@ -60,6 +71,13 @@ int main() {
             const auto state = model.snapshot();
             return !state.busy && state.message == "success" &&
                    state.networks.size() == 1;
+        });
+        model.submit(protocol::LocalCommand::diagnostics);
+        wait_until([&] {
+            const auto state = model.snapshot();
+            return !state.busy && state.diagnostics &&
+                   state.diagnostics->sent_bytes == 4096 &&
+                   state.diagnostics->rtt_us == 1200;
         });
         server.stop();
         std::cout << "desktop network control validated\n";

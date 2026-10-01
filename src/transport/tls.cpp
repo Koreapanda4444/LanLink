@@ -336,6 +336,7 @@ public:
                     const auto result = SSL_write_ex(ssl_.get(), writing.data() + offset,
                                                       writing.size() - offset, &transferred);
                     if (result == 1) {
+                        sent_bytes_.fetch_add(transferred);
                         offset += transferred;
                         if (offset == writing.size()) {
                             std::lock_guard lock(queue_mutex_);
@@ -357,6 +358,7 @@ public:
                 const auto result = SSL_read_ex(ssl_.get(), received.data(),
                                                  received.size(), &transferred);
                 if (result == 1) {
+                    received_bytes_.fetch_add(transferred);
                     for (const auto& frame : decoder.push(
                              std::span<const std::byte>(received.data(), transferred))) {
                         on_frame(frame);
@@ -389,6 +391,12 @@ public:
     std::size_t queue_size_ = 0;
     std::atomic_bool stopping_ = false;
     std::atomic_bool finished_ = false;
+    std::atomic<std::uint64_t> sent_bytes_ = 0;
+    std::atomic<std::uint64_t> received_bytes_ = 0;
+
+    [[nodiscard]] TlsTrafficCounters traffic() const noexcept {
+        return {sent_bytes_.load(), received_bytes_.load()};
+    }
 };
 
 TlsChannel::TlsChannel(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -403,6 +411,7 @@ void TlsChannel::run(const FrameHandler& on_frame,
 }
 void TlsChannel::stop() noexcept { impl_->stop(); }
 bool TlsChannel::finished() const noexcept { return impl_->finished_.load(); }
+TlsTrafficCounters TlsChannel::traffic() const noexcept { return impl_->traffic(); }
 
 std::shared_ptr<TlsChannel> TlsChannel::connect(
     const std::string& host, const std::uint16_t port,

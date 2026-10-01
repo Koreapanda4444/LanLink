@@ -159,6 +159,11 @@ void test_network_management(const std::filesystem::path& directory) {
     expect(create.operation == protocol::NetworkOperation::create &&
                create.code == protocol::NetworkResultCode::success,
            "create must succeed over authenticated control stream");
+    const auto quic_metrics = owner.diagnostics();
+    expect(quic_metrics.connected && quic_metrics.authenticated &&
+               !quic_metrics.tcp_fallback && quic_metrics.sent_bytes > 0 &&
+               quic_metrics.received_bytes > 0,
+           "QUIC diagnostics must report live connection traffic");
     expect(store.find_network(id).has_value(), "create must persist network in SQLite");
     expect(store.find_subnet(id).has_value() &&
                store.find_subnet(id)->network_address ==
@@ -611,6 +616,11 @@ void test_tls_tcp_fallback(const std::filesystem::path& directory) {
     expect(owner.approve_member(id, member_identity.device_id()).code ==
                protocol::NetworkResultCode::success,
            "TCP control responses must allow member approval");
+    const auto tcp_metrics = owner.diagnostics();
+    expect(tcp_metrics.connected && tcp_metrics.authenticated &&
+               tcp_metrics.tcp_fallback && tcp_metrics.sent_bytes > 0 &&
+               tcp_metrics.received_bytes > 0 && !tcp_metrics.rtt_us,
+           "TLS fallback diagnostics must report traffic without a QUIC RTT");
     wait_until([&] {
         const auto first = owner.cached_network_key(id);
         const auto second = member.cached_network_key(id);

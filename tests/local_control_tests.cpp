@@ -50,6 +50,22 @@ int main() {
         rejects([&] { static_cast<void>(encode_local_message(
             {LocalCommand::status, false, false,
              std::vector<std::byte>(max_local_control_payload + 1)})); });
+        LocalDiagnostics diagnostics;
+        diagnostics.connected = true;
+        diagnostics.authenticated = true;
+        diagnostics.active_networks = 2;
+        diagnostics.rtt_us = 1350;
+        diagnostics.sent_bytes = 123456;
+        diagnostics.received_bytes = 654321;
+        diagnostics.reconnects = 4;
+        diagnostics.last_error = "relay timeout";
+        auto metrics = encode_local_diagnostics(diagnostics);
+        require(decode_local_diagnostics(metrics) == diagnostics);
+        metrics[3] = std::byte{1};
+        rejects([&] { static_cast<void>(decode_local_diagnostics(metrics)); });
+        metrics = encode_local_diagnostics(diagnostics);
+        metrics.pop_back();
+        rejects([&] { static_cast<void>(decode_local_diagnostics(metrics)); });
         std::cout << "local control frames validated\n";
         return 0;
     } catch (const std::exception& error) {

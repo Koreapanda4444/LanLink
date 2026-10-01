@@ -1117,6 +1117,11 @@ public:
         stop_requested_.store(false);
         connected_.store(false);
         authenticated_.store(false);
+        reconnect_count_.store(0);
+        {
+            std::lock_guard lock(diagnostics_mutex_);
+            last_error_.clear();
+        }
         clear_peer_states();
         std::stop_callback stop_callback(stop_token, [this] { stop(); });
 
@@ -1205,6 +1210,40 @@ public:
         }
         std::lock_guard lock(state->mutex);
         return state->authenticated && static_cast<bool>(state->tcp);
+    }
+
+    [[nodiscard]] ClientDiagnostics diagnostics() const {
+        ClientDiagnostics result;
+        result.connected = connected_.load();
+        result.authenticated = authenticated_.load();
+        result.reconnects = reconnect_count_.load();
+        {
+            std::lock_guard lock(diagnostics_mutex_);
+            result.last_error = last_error_;
+        }
+        std::shared_ptr<AttemptState> attempt;
+        {
+            std::lock_guard lock(active_mutex_);
+            attempt = active_attempt_.lock();
+        }
+        if (!attempt) return result;
+        std::lock_guard lock(attempt->mutex);
+        if (attempt->tcp) {
+            result.tcp_fallback = attempt->authenticated;
+            const auto traffic = attempt->tcp->traffic();
+            result.sent_bytes = traffic.sent_bytes;
+            result.received_bytes = traffic.received_bytes;
+        } else if (attempt->connection) {
+            QUIC_STATISTICS_V2 stats{};
+            std::uint32_t size = sizeof(stats);
+            if (QUIC_SUCCEEDED(api_->GetParam(attempt->connection,
+                    QUIC_PARAM_CONN_STATISTICS_V2, &size, &stats))) {
+                if (stats.Rtt != 0) result.rtt_us = stats.Rtt;
+                result.sent_bytes = stats.SendTotalBytes;
+                result.received_bytes = stats.RecvTotalBytes;
+            }
+        }
+        return result;
     }
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
@@ -1372,6 +1411,12 @@ public:
 
 private:
     struct AttemptState;
+
+    void record_error(std::string message) {
+        if (message.size() > 512) message.resize(512);
+        std::lock_guard lock(diagnostics_mutex_);
+        last_error_ = std::move(message);
+    }
 
     static void verify_peer_keys(const protocol::NetworkPeerState& state) {
         for (const auto& peer : state.peers) {
@@ -1808,6 +1853,7 @@ private:
                 break;
             }
 
+            reconnect_count_.fetch_add(1);
             const auto delay = reconnect_.next_delay();
             log_noexcept(logger_,
                          core::LogLevel::warning,
@@ -1822,6 +1868,7 @@ private:
             new (std::nothrow) ConnectionContext{this, state});
 
         if (!context) {
+            record_error("cannot allocate QUIC connection state");
             log_noexcept(logger_, core::LogLevel::error, "cannot allocate QUIC connection state");
             return false;
         }
@@ -1831,6 +1878,7 @@ private:
             registration_, connection_callback, context.get(), &connection);
 
         if (QUIC_FAILED(status)) {
+            record_error("ConnectionOpen failed: " + status_text(status));
             log_noexcept(logger_,
                          core::LogLevel::warning,
                          "ConnectionOpen failed: " + status_text(status));
@@ -1880,6 +1928,7 @@ private:
             api_->ConnectionClose(connection);
             delete raw_context;
             clear_active(state);
+            record_error("ConnectionStart failed: " + status_text(status));
             log_noexcept(logger_,
                          core::LogLevel::warning,
                          "ConnectionStart failed: " + status_text(status));
@@ -1895,6 +1944,7 @@ private:
 
     bool run_tcp_attempt() {
         const auto state = std::make_shared<AttemptState>();
+        bool tcp_failed = false;
         std::atomic_bool cancel_probe = false;
         std::atomic_bool probe_running = false;
         std::atomic_bool udp_available = false;
@@ -1957,8 +2007,13 @@ private:
                             auth::ServerHandshake::Clock::now() < context->deadline);
                 });
         } catch (const std::exception& error) {
+            tcp_failed = true;
+            record_error("TLS TCP fallback failed: " + std::string(error.what()));
             log_noexcept(logger_, core::LogLevel::warning,
                          "TLS TCP fallback failed: " + std::string(error.what()));
+        }
+        if (!tcp_failed && !stop_requested_.load() && !udp_available.load()) {
+            record_error("TLS TCP fallback disconnected");
         }
         cancel_probe.store(true);
         if (probe_worker.joinable()) {
@@ -2114,6 +2169,8 @@ private:
                 open_control_stream(connection, context->state);
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
+                record_error("relay transport shutdown: " +
+                             status_text(event->SHUTDOWN_INITIATED_BY_TRANSPORT.Status));
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
@@ -2130,6 +2187,7 @@ private:
                                  status_text(event->SHUTDOWN_INITIATED_BY_TRANSPORT.Status));
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
+                record_error("relay closed the connection");
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
@@ -2593,6 +2651,9 @@ private:
     std::atomic_bool authenticated_ = false;
     std::atomic_bool stop_requested_ = false;
     std::atomic<std::uint64_t> received_datagrams_ = 0;
+    std::atomic<std::uint32_t> reconnect_count_ = 0;
+    mutable std::mutex diagnostics_mutex_;
+    std::string last_error_;
     mutable std::mutex session_mutex_;
     std::optional<auth::SessionId> session_id_;
     mutable std::mutex active_mutex_;
@@ -2681,6 +2742,10 @@ std::uint64_t QuicRelayClient::received_datagram_count() const noexcept {
 
 bool QuicRelayClient::using_tcp_fallback() const noexcept {
     return impl_->using_tcp_fallback();
+}
+
+ClientDiagnostics QuicRelayClient::diagnostics() const {
+    return impl_->diagnostics();
 }
 
 protocol::NetworkOperationResult QuicRelayClient::create_network(

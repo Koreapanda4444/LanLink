@@ -51,6 +51,17 @@ struct QuicClientOptions {
     std::chrono::milliseconds tcp_probe_interval{60'000};
 };
 
+struct ClientDiagnostics {
+    bool connected = false;
+    bool authenticated = false;
+    bool tcp_fallback = false;
+    std::optional<std::uint32_t> rtt_us;
+    std::uint64_t sent_bytes = 0;
+    std::uint64_t received_bytes = 0;
+    std::uint32_t reconnects = 0;
+    std::string last_error;
+};
+
 struct NetworkListReply {
     protocol::NetworkResultCode code = protocol::NetworkResultCode::success;
     protocol::NetworkListResult result;
@@ -120,6 +131,7 @@ public:
     [[nodiscard]] std::uint16_t max_datagram_size() const noexcept;
     [[nodiscard]] std::uint64_t received_datagram_count() const noexcept;
     [[nodiscard]] bool using_tcp_fallback() const noexcept;
+    [[nodiscard]] ClientDiagnostics diagnostics() const;
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name,

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,6 +20,8 @@ struct NetworkSnapshot {
     std::string error;
     bool service_online = false;
     bool busy = false;
+    std::optional<protocol::LocalDiagnostics> diagnostics;
+    std::uint64_t diagnostics_generation = 0;
 };
 
 class NetworkModel {

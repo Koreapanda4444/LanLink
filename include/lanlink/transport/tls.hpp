@@ -12,6 +12,11 @@
 
 namespace lanlink::transport {
 
+struct TlsTrafficCounters {
+    std::uint64_t sent_bytes = 0;
+    std::uint64_t received_bytes = 0;
+};
+
 class TlsChannel {
 public:
     using FrameHandler = std::function<void(const protocol::Frame&)>;
@@ -29,6 +34,7 @@ public:
     void run(const FrameHandler& on_frame, const std::function<bool()>& keep_running);
     void stop() noexcept;
     [[nodiscard]] bool finished() const noexcept;
+    [[nodiscard]] TlsTrafficCounters traffic() const noexcept;
 
 private:
     class Impl;
