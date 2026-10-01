@@ -192,9 +192,10 @@ if(WIN32)
 
     add_executable(lanlink_ui WIN32
         apps/ui/main.cpp
+        apps/ui/network_model.cpp
     )
 
-    target_link_libraries(lanlink_ui PRIVATE lanlink_core imgui::imgui d3d11 dxgi)
+    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc imgui::imgui d3d11 dxgi)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
 
@@ -235,6 +236,16 @@ if(BUILD_TESTING)
         target_link_libraries(lanlink_local_pipe_tests PRIVATE lanlink_local_ipc)
         lanlink_enable_warnings(lanlink_local_pipe_tests)
         add_test(NAME lanlink-local-pipe COMMAND lanlink_local_pipe_tests)
+        set_tests_properties(lanlink-local-pipe PROPERTIES RESOURCE_LOCK lanlink-service-pipe)
+
+        add_executable(lanlink_ui_network_model_tests
+            tests/ui_network_model_tests.cpp
+            apps/ui/network_model.cpp
+        )
+        target_link_libraries(lanlink_ui_network_model_tests PRIVATE lanlink_local_ipc)
+        lanlink_enable_warnings(lanlink_ui_network_model_tests)
+        add_test(NAME lanlink-ui-network-model COMMAND lanlink_ui_network_model_tests)
+        set_tests_properties(lanlink-ui-network-model PROPERTIES RESOURCE_LOCK lanlink-service-pipe)
     endif()
 
     add_executable(lanlink_network_protocol_tests
