@@ -4,6 +4,11 @@
   "version-string": "0.1.0",
   "builtin-baseline": "a1cae005c39be7b18ba319fced856b68d7276271",
   "dependencies": [
+    {
+      "name": "imgui",
+      "features": ["dx11-binding", "win32-binding"],
+      "platform": "windows"
+    },
     "msquic",
     "openssl",
     "sqlite3"

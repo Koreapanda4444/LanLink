@@ -172,6 +172,8 @@ set_target_properties(lanlink_relay PROPERTIES OUTPUT_NAME "lanlink-relay")
 lanlink_enable_warnings(lanlink_relay)
 
 if(WIN32)
+    find_package(imgui CONFIG REQUIRED)
+
     add_library(lanlink_local_ipc STATIC
         src/transport/local_pipe.cpp
     )
@@ -188,13 +190,18 @@ if(WIN32)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 
-    add_executable(lanlink_ui
+    add_executable(lanlink_ui WIN32
         apps/ui/main.cpp
     )
 
-    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc)
+    target_link_libraries(lanlink_ui PRIVATE lanlink_core imgui::imgui d3d11 dxgi)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
+
+    add_executable(lanlink_ui_cli apps/ui/control_cli.cpp)
+    target_link_libraries(lanlink_ui_cli PRIVATE lanlink_core lanlink_local_ipc)
+    set_target_properties(lanlink_ui_cli PROPERTIES OUTPUT_NAME "lanlink-ui-cli")
+    lanlink_enable_warnings(lanlink_ui_cli)
 endif()
 
 include(CTest)
