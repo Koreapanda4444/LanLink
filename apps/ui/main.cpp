@@ -105,7 +105,7 @@ public:
         klass.cbSize = sizeof(klass);
         klass.lpfnWndProc = window_proc;
         klass.hInstance = instance_;
-        klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(OCR_NORMAL));
+        klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         klass.lpszClassName = window_class;
         if (!RegisterClassExW(&klass)) {
             throw std::runtime_error("RegisterClassExW failed");
