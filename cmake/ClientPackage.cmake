@@ -16,10 +16,10 @@ if(LANLINK_PACKAGE_WINDOWS_CLIENT)
         RUNTIME_DEPENDENCY_SET lanlink_client_dependencies
         RUNTIME DESTINATION bin COMPONENT client)
     install(RUNTIME_DEPENDENCY_SET lanlink_client_dependencies
-        RUNTIME DESTINATION bin COMPONENT client
         DIRECTORIES "$<TARGET_FILE_DIR:lanlink_service>"
         PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
-        POST_EXCLUDE_REGEXES ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*")
+        POST_EXCLUDE_REGEXES ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
+        RUNTIME DESTINATION bin COMPONENT client)
     install(FILES "${LANLINK_WINTUN_DLL}" DESTINATION bin
         RENAME wintun.dll COMPONENT client)
     install(FILES "${LANLINK_WINTUN_LICENSE_FILE}" DESTINATION licenses
