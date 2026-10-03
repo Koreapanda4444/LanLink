@@ -246,9 +246,9 @@ std::shared_ptr<SSL_CTX> make_context(const bool server) {
 
 class TlsChannel::Impl {
 public:
-    Impl(SocketOwner socket, std::shared_ptr<SSL_CTX> context)
+    Impl(SocketOwner socket, std::shared_ptr<SSL_CTX> context, SendQueueLimits limits = {})
         : socket_(std::move(socket)), context_(std::move(context)),
-          ssl_(SSL_new(context_.get()), SSL_free) {
+          ssl_(SSL_new(context_.get()), SSL_free), budget_(limits) {
         if (!ssl_ || SSL_set_fd(ssl_.get(), static_cast<int>(socket_.get())) != 1) {
             throw std::runtime_error("TLS socket initialization failed");
         }
@@ -299,13 +299,21 @@ public:
 
     bool enqueue(const protocol::Frame& frame) noexcept {
         try {
-            auto encoded = protocol::encode_frame(frame);
-            std::lock_guard lock(queue_mutex_);
-            if (stopping_.load() || queue_size_ + encoded.size() > 4U * 1024U * 1024U) {
+            if (frame.payload.size() > protocol::max_payload_size) {
                 return false;
             }
-            queue_.push_back(std::move(encoded));
-            queue_size_ += queue_.back().size();
+            const bool control = frame.type != protocol::MessageType::network_packet_send &&
+                                 frame.type != protocol::MessageType::network_packet_forward;
+            auto ticket = budget_.reserve(protocol::frame_header_size + frame.payload.size(), control);
+            if (!ticket) {
+                return false;
+            }
+            auto encoded = protocol::encode_frame(frame);
+            std::lock_guard lock(queue_mutex_);
+            if (stopping_.load() || finished_.load()) {
+                return false;
+            }
+            queue_.push_back({std::move(encoded), std::move(*ticket)});
             return true;
         } catch (...) {
             return false;
@@ -313,46 +321,45 @@ public:
     }
 
     bool pending_output() const noexcept {
-        std::lock_guard lock(queue_mutex_);
-        return queue_size_ != 0;
+        return budget_.usage().frames != 0;
     }
 
     void run(const FrameHandler& on_frame, const std::function<bool()>& keep_running) {
         protocol::FrameStreamDecoder decoder;
-        std::vector<std::byte> writing;
+        std::optional<QueuedFrame> writing;
         std::size_t offset = 0;
         std::array<std::byte, 16'384> received{};
         try {
             while (!stopping_.load() && keep_running()) {
-                if (writing.empty()) {
+                if (!writing) {
                     std::lock_guard lock(queue_mutex_);
                     if (!queue_.empty()) {
-                        writing = std::move(queue_.front());
+                        writing.emplace(std::move(queue_.front()));
                         queue_.pop_front();
                     }
                 }
-                if (!writing.empty()) {
+                if (writing) {
                     std::size_t transferred = 0;
-                    const auto result = SSL_write_ex(ssl_.get(), writing.data() + offset,
-                                                      writing.size() - offset, &transferred);
+                    const auto result = SSL_write_ex(ssl_.get(), writing->bytes.data() + offset,
+                                                      writing->bytes.size() - offset, &transferred);
                     if (result == 1) {
                         sent_bytes_.fetch_add(transferred);
                         offset += transferred;
-                        if (offset == writing.size()) {
-                            std::lock_guard lock(queue_mutex_);
-                            queue_size_ -= writing.size();
-                            writing.clear();
+                        if (offset == writing->bytes.size()) {
+                            writing.reset();
                             offset = 0;
+                        } else {
+                            continue;
                         }
+                    } else {
+                        const auto error = SSL_get_error(ssl_.get(), result);
+                        if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
+                            break;
+                        }
+                        static_cast<void>(wait_socket(socket_.get(), error == SSL_ERROR_WANT_READ,
+                                                      error == SSL_ERROR_WANT_WRITE));
                         continue;
                     }
-                    const auto error = SSL_get_error(ssl_.get(), result);
-                    if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
-                        break;
-                    }
-                    static_cast<void>(wait_socket(socket_.get(), error == SSL_ERROR_WANT_READ,
-                                                  error == SSL_ERROR_WANT_WRITE));
-                    continue;
                 }
                 std::size_t transferred = 0;
                 const auto result = SSL_read_ex(ssl_.get(), received.data(),
@@ -369,12 +376,19 @@ public:
                 if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
                     break;
                 }
+                if (error == SSL_ERROR_WANT_READ && pending_output()) {
+                    continue;
+                }
                 static_cast<void>(wait_socket(socket_.get(), error == SSL_ERROR_WANT_READ,
                                               error == SSL_ERROR_WANT_WRITE));
             }
         } catch (...) {
         }
+        stop();
         finished_.store(true);
+        writing.reset();
+        std::lock_guard lock(queue_mutex_);
+        queue_.clear();
     }
 
     void stop() noexcept {
@@ -387,8 +401,13 @@ public:
     std::shared_ptr<SSL_CTX> context_;
     std::unique_ptr<SSL, decltype(&SSL_free)> ssl_;
     mutable std::mutex queue_mutex_;
-    std::deque<std::vector<std::byte>> queue_;
-    std::size_t queue_size_ = 0;
+    struct QueuedFrame {
+        std::vector<std::byte> bytes;
+        SendBudget::Ticket ticket;
+    };
+    std::deque<QueuedFrame> queue_;
+    SendBudget budget_;
+    std::optional<SendBudget::Ticket> admission_;
     std::atomic_bool stopping_ = false;
     std::atomic_bool finished_ = false;
     std::atomic<std::uint64_t> sent_bytes_ = 0;
@@ -431,10 +450,19 @@ public:
     Impl(std::string host, const std::uint16_t port,
          const std::filesystem::path& certificate,
          const std::filesystem::path& private_key,
-         const std::chrono::milliseconds timeout, HandlerFactory factory)
+         const std::chrono::milliseconds timeout, HandlerFactory factory, TlsListenerLimits limits)
         : host_(std::move(host)), port_(port), timeout_(timeout),
-          factory_(std::move(factory)), context_(make_context(true)) {
-        sessions_.reserve(128);
+          factory_(std::move(factory)), context_(make_context(true)), limits_(std::move(limits)),
+          handshakes_({limits_.max_handshakes, limits_.max_handshakes, 0, 0}) {
+        if (limits_.max_connections == 0 || limits_.max_connections > 4096 ||
+            limits_.max_handshakes > limits_.max_connections) {
+            throw std::invalid_argument("invalid TLS listener limits");
+        }
+        if (!limits_.admission) {
+            limits_.admission = std::make_shared<SendBudget>(SendQueueLimits{
+                limits_.max_connections, limits_.max_connections, 0, 0});
+        }
+        sessions_.reserve(limits_.max_connections);
         if (SSL_CTX_use_certificate_chain_file(context_.get(),
                                                certificate.string().c_str()) != 1 ||
             SSL_CTX_use_PrivateKey_file(context_.get(), private_key.string().c_str(),
@@ -483,21 +511,27 @@ public:
                         ++it;
                     }
                 }
-                if (sessions_.size() >= 128 ||
-                    !wait_socket(socket_.get(), true, false)) {
+                if (!wait_socket(socket_.get(), true, false)) {
                     continue;
                 }
                 SocketOwner socket(::accept(socket_.get(), nullptr, nullptr));
                 if (socket.get() == invalid_socket) {
                     continue;
                 }
+                auto admission = limits_.admission->reserve(1, true);
+                auto handshake = handshakes_.reserve(1, true);
+                if (!admission || !handshake || sessions_.size() >= limits_.max_connections) {
+                    continue;
+                }
                 set_nonblocking(socket.get());
                 auto channel = std::shared_ptr<TlsChannel>(
                     new TlsChannel(std::make_unique<TlsChannel::Impl>(
-                        std::move(socket), context_)));
-                std::thread worker([this, channel] {
+                        std::move(socket), context_, limits_.send_queue)));
+                channel->impl_->admission_ = std::move(admission);
+                std::thread worker([this, channel, handshake = std::move(handshake)]() mutable {
                     try {
                         channel->impl_->handshake(true, timeout_, stopping_);
+                        handshake.reset();
                         auto handler = factory_(channel);
                         channel->run(handler.on_frame, handler.keep_running);
                         if (handler.on_close) {
@@ -506,6 +540,7 @@ public:
                     } catch (...) {
                     }
                     channel->stop();
+                    channel->impl_->admission_.reset();
                     channel->impl_->finished_.store(true);
                 });
                 sessions_.push_back({std::move(channel), std::move(worker)});
@@ -527,6 +562,8 @@ private:
     std::chrono::milliseconds timeout_;
     HandlerFactory factory_;
     std::shared_ptr<SSL_CTX> context_;
+    TlsListenerLimits limits_;
+    SendBudget handshakes_;
     SocketOwner socket_;
     std::atomic_bool stopping_ = false;
     std::thread accept_thread_;
@@ -536,9 +573,10 @@ private:
 TlsListener::TlsListener(std::string host, const std::uint16_t port,
                          std::filesystem::path certificate,
                          std::filesystem::path private_key,
-                         const std::chrono::milliseconds timeout, HandlerFactory factory)
+                         const std::chrono::milliseconds timeout, HandlerFactory factory,
+                         TlsListenerLimits limits)
     : impl_(std::make_unique<Impl>(std::move(host), port, certificate, private_key,
-                                   timeout, std::move(factory))) {}
+                                   timeout, std::move(factory), std::move(limits))) {}
 TlsListener::~TlsListener() = default;
 void TlsListener::start() { impl_->start(); }
 void TlsListener::stop() noexcept { impl_->stop(); }

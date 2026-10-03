@@ -135,6 +135,7 @@ add_library(lanlink_transport STATIC
     src/transport/packet_bridge.cpp
     src/transport/quic.cpp
     src/transport/reconnect.cpp
+    src/transport/resource_limits.cpp
     src/transport/tls.cpp
 )
 

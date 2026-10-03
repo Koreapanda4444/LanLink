@@ -62,6 +62,11 @@ int main(const int argc, char* argv[]) {
             std::chrono::milliseconds{config.authentication_timeout_ms};
         options.idle_timeout = std::chrono::milliseconds{config.quic_idle_timeout_ms};
         options.keep_alive_interval_ms = config.quic_keep_alive_interval_ms;
+        options.max_connections = config.relay_max_connections;
+        options.max_tls_handshakes = config.relay_max_tls_handshakes;
+        options.send_queue.bytes = config.relay_send_queue_bytes;
+        options.send_queue.frames = config.relay_send_queue_frames;
+        options.control_requests_per_second = config.relay_control_requests_per_second;
 
         lanlink::storage::RelayStore store(config.relay_database_file);
         lanlink::relay::NetworkService network_service(store);

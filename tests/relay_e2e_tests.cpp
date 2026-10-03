@@ -92,9 +92,13 @@ public:
     }
 
     ~Node() {
+        stop();
+    }
+
+    void stop() {
         worker.request_stop();
         client.stop();
-        worker.join();
+        if (worker.joinable()) worker.join();
     }
 
     void synchronize() {
@@ -331,8 +335,18 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp) {
     owner.check();
     member.check();
     outsider.check();
+    Node next(root, "next", port);
+    std::this_thread::sleep_for(600ms);
+    require(!next.client.authenticated(), "fourth client bypassed the shared connection limit");
+    require(owner.client.list_networks().code == protocol::NetworkResultCode::success,
+            "connection rejection disrupted an existing client's control channel");
+    outsider.stop();
+    wait_for([&] { return next.client.authenticated(); },
+             "closing a client did not release the shared connection slot");
+    require(next.client.list_networks().code == protocol::NetworkResultCode::success,
+            "client admitted after capacity recovery cannot use the control channel");
     std::cout << (tcp ? "TLS fallback" : "QUIC")
-              << ": encryption, unicast, stream, fanout, isolation, restart, eviction passed\n";
+              << ": encryption, unicast, stream, fanout, isolation, restart, eviction, limits passed\n";
 }
 
 }

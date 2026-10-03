@@ -25,6 +25,11 @@ struct RuntimeConfig {
     std::uint32_t quic_keep_alive_interval_ms = 15'000;
     std::uint32_t reconnect_initial_delay_ms = 1'000;
     std::uint32_t reconnect_max_delay_ms = 30'000;
+    std::uint32_t relay_max_connections = 128;
+    std::uint32_t relay_max_tls_handshakes = 16;
+    std::uint32_t relay_send_queue_bytes = 4U * 1024U * 1024U;
+    std::uint32_t relay_send_queue_frames = 256;
+    std::uint32_t relay_control_requests_per_second = 32;
     LogLevel log_level = LogLevel::info;
     std::filesystem::path log_directory = "logs";
     std::uintmax_t log_max_size_bytes = 5U * 1024U * 1024U;

@@ -91,6 +91,21 @@ void test_configuration() {
     expect(config.log_max_size_bytes == 65536, "log size");
     expect(config.log_max_files == 3, "log files");
 
+    const auto limits = lanlink::core::parse_config(
+        "relay_max_connections=24\nrelay_max_tls_handshakes=4\n"
+        "relay_send_queue_bytes=524288\nrelay_send_queue_frames=64\n"
+        "relay_control_requests_per_second=16\n");
+    expect(limits.relay_max_connections == 24 && limits.relay_max_tls_handshakes == 4 &&
+               limits.relay_send_queue_bytes == 524288 && limits.relay_send_queue_frames == 64 &&
+               limits.relay_control_requests_per_second == 16, "relay resource configuration");
+    for (const auto invalid : {"relay_max_connections=0\n", "relay_max_connections=4097\n",
+                              "relay_max_tls_handshakes=129\n", "relay_send_queue_bytes=65536\n",
+                              "relay_send_queue_frames=8\n", "relay_control_requests_per_second=0\n",
+                              "relay_send_queue_bytes=4294967296\n"}) {
+        expect_error([&] { static_cast<void>(lanlink::core::parse_config(invalid)); },
+                     "invalid relay resource configuration");
+    }
+
     expect_error([] {
         static_cast<void>(lanlink::core::parse_config("relay_port=0\n"));
     }, "zero port");

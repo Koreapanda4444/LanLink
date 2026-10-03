@@ -68,6 +68,7 @@ def scenario(openssl, relay_binary, client_binary, mode):
             f"tls_certificate_file={root / 'cert.pem'}\n"
             f"tls_private_key_file={root / 'key.pem'}\n"
             f"auth_token_file={root / 'auth.token'}\n"
+            "relay_max_connections=3\nrelay_max_tls_handshakes=2\n"
             f"relay_database_file={root / 'relay.db'}\nlog_directory={root / 'logs'}\n")
         environment = dict(os.environ, SSL_CERT_FILE=str(root / "cert.pem"))
         relay = None

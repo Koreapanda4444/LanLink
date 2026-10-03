@@ -3,6 +3,7 @@
 #include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
+#include "lanlink/transport/resource_limits.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -35,6 +36,10 @@ struct QuicServerOptions {
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
     bool enable_quic = true;
+    std::size_t max_connections = 128;
+    std::size_t max_tls_handshakes = 16;
+    SendQueueLimits send_queue;
+    std::uint32_t control_requests_per_second = 32;
 };
 
 struct QuicClientOptions {

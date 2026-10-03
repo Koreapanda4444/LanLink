@@ -174,6 +174,21 @@ RuntimeConfig parse_config(const std::string_view content) {
                 }
 
                 config.reconnect_max_delay_ms = static_cast<std::uint32_t>(parsed);
+            } else if (key == "relay_max_connections" || key == "relay_max_tls_handshakes" ||
+                       key == "relay_send_queue_bytes" || key == "relay_send_queue_frames" ||
+                       key == "relay_control_requests_per_second") {
+                const auto parsed = parse_unsigned(value, key_view, line_number);
+                if (parsed > std::numeric_limits<std::uint32_t>::max()) {
+                    fail(line_number, key + " is out of range");
+                }
+                const auto number = static_cast<std::uint32_t>(parsed);
+                if (key == "relay_max_connections") config.relay_max_connections = number;
+                if (key == "relay_max_tls_handshakes") config.relay_max_tls_handshakes = number;
+                if (key == "relay_send_queue_bytes") config.relay_send_queue_bytes = number;
+                if (key == "relay_send_queue_frames") config.relay_send_queue_frames = number;
+                if (key == "relay_control_requests_per_second") {
+                    config.relay_control_requests_per_second = number;
+                }
             } else if (key == "log_level") {
                 try {
                     config.log_level = parse_log_level(value);
@@ -277,6 +292,17 @@ void validate_config(const RuntimeConfig& config) {
 
     if (config.log_directory.empty()) {
         throw std::runtime_error("log_directory is empty");
+    }
+
+    if (config.relay_max_connections == 0 || config.relay_max_connections > 4096 ||
+        config.relay_max_tls_handshakes == 0 ||
+        config.relay_max_tls_handshakes > config.relay_max_connections ||
+        config.relay_send_queue_bytes < 256U * 1024U ||
+        config.relay_send_queue_bytes > 64U * 1024U * 1024U ||
+        config.relay_send_queue_frames < 32 || config.relay_send_queue_frames > 4096 ||
+        config.relay_control_requests_per_second == 0 ||
+        config.relay_control_requests_per_second > 10'000) {
+        throw std::runtime_error("relay resource limits are out of range");
     }
 
     if (config.log_max_size_bytes < min_log_size || config.log_max_size_bytes > max_log_size) {

@@ -49,11 +49,11 @@ struct PendingSend {
     PendingSend(std::vector<std::byte> encoded,
                 const QUIC_API_TABLE* api_table,
                 const HQUIC connection_handle,
-                const bool shutdown)
+                const bool shutdown, SendBudget::Ticket reservation)
         : bytes(std::move(encoded)),
           api(api_table),
           connection(connection_handle),
-          shutdown_after_send(shutdown) {
+          shutdown_after_send(shutdown), ticket(std::move(reservation)) {
         buffer.Length = static_cast<std::uint32_t>(bytes.size());
         buffer.Buffer = reinterpret_cast<std::uint8_t*>(bytes.data());
     }
@@ -63,17 +63,19 @@ struct PendingSend {
     const QUIC_API_TABLE* api;
     HQUIC connection;
     bool shutdown_after_send;
+    SendBudget::Ticket ticket;
 };
 
 struct PendingDatagram {
-    explicit PendingDatagram(std::vector<std::byte> encoded)
-        : bytes(std::move(encoded)) {
+    PendingDatagram(std::vector<std::byte> encoded, SendBudget::Ticket reservation)
+        : bytes(std::move(encoded)), ticket(std::move(reservation)) {
         buffer.Length = static_cast<std::uint32_t>(bytes.size());
         buffer.Buffer = reinterpret_cast<std::uint8_t*>(bytes.data());
     }
 
     std::vector<std::byte> bytes;
     QUIC_BUFFER buffer{};
+    SendBudget::Ticket ticket;
 };
 
 std::string status_text(const QUIC_STATUS status) {
@@ -96,19 +98,30 @@ QUIC_BUFFER alpn_buffer() noexcept {
 QUIC_STATUS send_frame(const QUIC_API_TABLE* api,
                        const HQUIC stream,
                        const protocol::Frame& frame,
+                       SendBudget& budget,
                        const HQUIC connection = nullptr,
                        const bool shutdown_after_send = false) noexcept {
     try {
+        if (frame.payload.size() > protocol::max_payload_size) {
+            return QUIC_STATUS_INVALID_PARAMETER;
+        }
+        const bool control = frame.type != protocol::MessageType::network_packet_send &&
+                             frame.type != protocol::MessageType::network_packet_forward;
+        auto ticket = budget.reserve(protocol::frame_header_size + frame.payload.size(), control);
+        if (!ticket) {
+            return QUIC_STATUS_OUT_OF_MEMORY;
+        }
         auto pending = std::make_unique<PendingSend>(
-            protocol::encode_frame(frame), api, connection, shutdown_after_send);
+            protocol::encode_frame(frame), api, connection, shutdown_after_send, std::move(*ticket));
+        auto* const raw = pending.release();
         const auto status = api->StreamSend(stream,
-                                            &pending->buffer,
+                                            &raw->buffer,
                                             1,
                                             QUIC_SEND_FLAG_NONE,
-                                            pending.get());
+                                            raw);
 
-        if (QUIC_SUCCEEDED(status)) {
-            static_cast<void>(pending.release());
+        if (QUIC_FAILED(status)) {
+            delete raw;
         }
 
         return status;
@@ -130,9 +143,13 @@ void complete_send(QUIC_STREAM_EVENT* event) noexcept {
 
 QUIC_STATUS send_datagram(const QUIC_API_TABLE* api,
                           const HQUIC connection,
-                          std::vector<std::byte> payload) noexcept {
+                          std::vector<std::byte> payload, SendBudget& budget) noexcept {
     try {
-        auto pending = std::make_unique<PendingDatagram>(std::move(payload));
+        auto ticket = budget.reserve(payload.size(), false);
+        if (!ticket) {
+            return QUIC_STATUS_OUT_OF_MEMORY;
+        }
+        auto pending = std::make_unique<PendingDatagram>(std::move(payload), std::move(*ticket));
         auto* const raw = pending.release();
         const auto status = api->DatagramSend(connection, &raw->buffer, 1,
                                               QUIC_SEND_FLAG_NONE, raw);
@@ -181,6 +198,12 @@ void log_noexcept(core::Logger& logger,
 }
 
 void validate_server_options(const QuicServerOptions& options) {
+    if (options.max_connections == 0 || options.max_connections > 4096 ||
+        options.max_tls_handshakes == 0 || options.max_tls_handshakes > options.max_connections ||
+        options.control_requests_per_second == 0) {
+        throw std::invalid_argument("invalid relay resource limits");
+    }
+    static_cast<void>(SendBudget(options.send_queue));
     if (options.listen_host.empty()) {
         throw std::invalid_argument("QUIC listen host is empty");
     }
@@ -354,12 +377,14 @@ public:
 
 private:
     struct ConnectionContext {
-        ConnectionContext(Impl* owner_value, const HQUIC connection)
+        ConnectionContext(Impl* owner_value, const HQUIC connection, SendBudget::Ticket slot)
             : owner(owner_value),
               handshake(*owner_value->auth_token_,
                         reinterpret_cast<std::uintptr_t>(connection),
                         auth::ServerHandshake::Clock::now() +
-                            owner_value->options_.authentication_timeout) {
+                            owner_value->options_.authentication_timeout),
+              sends(owner_value->options_.send_queue), admission(std::move(slot)),
+              control_rate(owner_value->options_.control_requests_per_second) {
         }
 
         Impl* owner;
@@ -368,6 +393,9 @@ private:
         std::atomic_bool control_stream_started = false;
         std::atomic_bool closed = false;
         std::atomic<std::uint16_t> max_datagram_send_length = 0;
+        SendBudget sends;
+        SendBudget::Ticket admission;
+        ControlRateLimit control_rate;
     };
 
     struct StreamContext {
@@ -399,11 +427,13 @@ private:
               handshake(*owner->auth_token_,
                         reinterpret_cast<std::uintptr_t>(channel.get()),
                         auth::ServerHandshake::Clock::now() +
-                            owner->options_.authentication_timeout) {}
+                            owner->options_.authentication_timeout),
+              control_rate(owner->options_.control_requests_per_second) {}
 
         std::shared_ptr<TlsChannel> channel;
         auth::ServerHandshake handshake;
         bool rejected = false;
+        ControlRateLimit control_rate;
     };
 
     bool register_control_stream(ConnectionContext* const context,
@@ -482,6 +512,9 @@ private:
             }
             return;
         }
+        if (!context.control_rate.allow()) {
+            throw std::runtime_error("TLS TCP control request rate exceeded");
+        }
         auto result = control_channel_.handle_authenticated(context.handshake.device_id(), frame);
         if (!context.channel->enqueue(result.response)) {
             throw std::runtime_error("TLS TCP control response queue overflow");
@@ -531,8 +564,14 @@ private:
 
                 const auto delivered = active.tcp
                     ? active.tcp->enqueue(routed.frame)
-                    : QUIC_SUCCEEDED(send_frame(api_, active.stream, routed.frame));
+                    : QUIC_SUCCEEDED(send_frame(api_, active.stream, routed.frame, active.context->sends));
                 if (!delivered) {
+                    if (active.tcp) {
+                        active.tcp->stop();
+                    } else {
+                        api_->ConnectionShutdown(active.connection,
+                            QUIC_CONNECTION_SHUTDOWN_FLAG_NONE, application_shutdown_code);
+                    }
                     log_noexcept(logger_,
                                  core::LogLevel::warning,
                                  "network event send failed");
@@ -553,21 +592,18 @@ private:
                     if (!active.tcp->enqueue(
                             {protocol::MessageType::network_packet_forward, 0,
                              std::move(payload)})) {
-                        log_noexcept(logger_, core::LogLevel::warning,
-                                     "TLS TCP encrypted packet queue overflow");
+                        note_packet_drop();
                     }
                     break;
                 }
                 const auto max_length = active.context->max_datagram_send_length.load();
                 const auto status = max_length != 0 && payload.size() <= max_length
-                    ? send_datagram(api_, active.connection, std::move(payload))
+                    ? send_datagram(api_, active.connection, std::move(payload), active.context->sends)
                     : send_frame(api_, active.stream,
                         {protocol::MessageType::network_packet_forward, 0,
-                         std::move(payload)});
+                         std::move(payload)}, active.context->sends);
                 if (QUIC_FAILED(status)) {
-                    log_noexcept(logger_, core::LogLevel::warning,
-                                 "encrypted packet forwarding failed: " +
-                                     status_text(status));
+                    note_packet_drop();
                 }
                 break;
             }
@@ -578,6 +614,8 @@ private:
     }
 
     void initialize() {
+        admissions_ = std::make_shared<SendBudget>(SendQueueLimits{
+            options_.max_connections, options_.max_connections, 0, 0});
         auto status = MsQuicOpen2(&api_);
 
         if (QUIC_FAILED(status)) {
@@ -652,7 +690,8 @@ private:
                     },
                     [this, context] { close_tcp(*context); },
                 };
-            });
+            }, TlsListenerLimits{options_.max_connections, options_.max_tls_handshakes,
+                                 options_.send_queue, admissions_});
     }
 
     void release() noexcept {
@@ -710,8 +749,12 @@ private:
             return QUIC_STATUS_SUCCESS;
         }
 
+        auto admission = admissions_->reserve(1, true);
+        if (!admission) {
+            return QUIC_STATUS_CONNECTION_REFUSED;
+        }
         auto context = std::unique_ptr<ConnectionContext>(new (std::nothrow) ConnectionContext(
-            this, event->NEW_CONNECTION.Connection));
+            this, event->NEW_CONNECTION.Connection, std::move(*admission)));
 
         if (!context) {
             return QUIC_STATUS_OUT_OF_MEMORY;
@@ -903,7 +946,7 @@ private:
                             }
 
                             if (authenticated) {
-                                handle_control_frame(stream, actor, frame);
+                                handle_control_frame(stream, context->connection_context, actor, frame);
                             } else {
                                 handle_auth_frame(stream, context, frame);
                             }
@@ -998,6 +1041,7 @@ private:
         const auto status = send_frame(api_,
                                        stream,
                                        response,
+                                       context->connection_context->sends,
                                        context->connection,
                                        shutdown_after_send);
 
@@ -1028,6 +1072,7 @@ private:
     }
 
     void handle_control_frame(const HQUIC stream,
+                              ConnectionContext* context,
                               const auth::DeviceId& actor,
                               const protocol::Frame& frame) {
         if (frame.type == protocol::MessageType::network_packet_send) {
@@ -1040,8 +1085,11 @@ private:
             }
             return;
         }
+        if (!context->control_rate.allow()) {
+            throw std::runtime_error("QUIC control request rate exceeded");
+        }
         auto dispatch = control_channel_.handle_authenticated(actor, frame);
-        const auto status = send_frame(api_, stream, dispatch.response);
+        const auto status = send_frame(api_, stream, dispatch.response, context->sends);
 
         if (QUIC_FAILED(status)) {
             throw std::runtime_error("control response send failed: " + status_text(status));
@@ -1051,6 +1099,15 @@ private:
     }
 
     QuicServerOptions options_;
+    void note_packet_drop() noexcept {
+        const auto count = dropped_packets_.fetch_add(1) + 1;
+        if ((count & (count - 1)) == 0) {
+            log_noexcept(logger_, core::LogLevel::warning,
+                         "outgoing packet backpressure drops: " + std::to_string(count));
+        }
+    }
+    std::shared_ptr<SendBudget> admissions_;
+    std::atomic<std::uint64_t> dropped_packets_ = 0;
     core::Logger& logger_;
     relay::NetworkControlChannel& control_channel_;
     std::unique_ptr<auth::AuthToken> auth_token_;
@@ -1395,9 +1452,9 @@ public:
                   {protocol::MessageType::network_packet_send, 0, std::move(payload)})
             : attempt->max_datagram_send_length != 0 &&
               payload.size() <= attempt->max_datagram_send_length
-            ? QUIC_SUCCEEDED(send_datagram(api_, attempt->connection, std::move(payload)))
+            ? QUIC_SUCCEEDED(send_datagram(api_, attempt->connection, std::move(payload), attempt->sends))
             : QUIC_SUCCEEDED(send_frame(api_, attempt->control_stream,
-                  {protocol::MessageType::network_packet_send, 0, std::move(payload)}));
+                  {protocol::MessageType::network_packet_send, 0, std::move(payload)}, attempt->sends));
         if (!success) {
             throw std::runtime_error("encrypted packet send failed");
         }
@@ -1565,6 +1622,7 @@ private:
     void dispatch_network_events() noexcept {
         while (true) {
             std::variant<protocol::NetworkEvent, protocol::ForwardedNetworkPacket> event;
+            std::optional<SendBudget::Ticket> ticket;
             {
                 std::unique_lock lock(event_queue_mutex_);
                 event_queue_wake_.wait(lock, [this] {
@@ -1573,7 +1631,8 @@ private:
                 if (event_worker_stopping_) {
                     return;
                 }
-                event = event_queue_.front();
+                event = std::move(event_queue_.front().message);
+                ticket.emplace(std::move(event_queue_.front().ticket));
                 event_queue_.pop_front();
             }
 
@@ -1617,6 +1676,7 @@ private:
     };
 
     struct AttemptState {
+        SendBudget sends;
         std::mutex mutex;
         std::condition_variable complete_wake;
         HQUIC connection = nullptr;
@@ -1675,7 +1735,7 @@ private:
             return state->tcp->enqueue(frame);
         }
         return state->control_stream != nullptr &&
-               QUIC_SUCCEEDED(send_frame(api_, state->control_stream, frame));
+               QUIC_SUCCEEDED(send_frame(api_, state->control_stream, frame, state->sends));
     }
 
     [[nodiscard]] protocol::Frame request_control(
@@ -2314,7 +2374,7 @@ private:
         }
 
         const auto hello = raw_context->handshake.begin(1);
-        status = send_frame(api_, stream, hello);
+        status = send_frame(api_, stream, hello, raw_context->state->sends);
 
         if (QUIC_FAILED(status)) {
             log_noexcept(logger_,
@@ -2418,7 +2478,7 @@ private:
             const auto response = context->handshake.handle_challenge(frame);
             if (!(context->state->tcp
                     ? context->state->tcp->enqueue(response)
-                    : QUIC_SUCCEEDED(send_frame(api_, stream, response)))) {
+                    : QUIC_SUCCEEDED(send_frame(api_, stream, response, context->state->sends)))) {
                 throw std::runtime_error("authentication proof send failed");
             }
 
@@ -2508,10 +2568,12 @@ private:
         }
         {
             std::lock_guard lock(event_queue_mutex_);
-            if (event_queue_.size() >= 1024) {
+            auto ticket = event_budget_.reserve(
+                sizeof(protocol::ForwardedNetworkPacket) + delivery.packet.ciphertext.size(), false);
+            if (!ticket) {
                 return;
             }
-            event_queue_.emplace_back(std::move(delivery));
+            event_queue_.push_back({std::move(delivery), std::move(*ticket)});
         }
         event_queue_wake_.notify_one();
     }
@@ -2579,12 +2641,17 @@ private:
 
             {
                 std::lock_guard lock(event_queue_mutex_);
-                if (event_queue_.size() == 1024) {
+                auto ticket = event_budget_.reserve(sizeof(protocol::NetworkEvent), true);
+                if (!ticket && !event_queue_.empty()) {
                     event_queue_.pop_front();
+                    ticket = event_budget_.reserve(sizeof(protocol::NetworkEvent), true);
                     log_noexcept(logger_, core::LogLevel::warning,
                                  "network event handler queue overflow");
                 }
-                event_queue_.push_back(event);
+                if (!ticket) {
+                    throw std::runtime_error("network event handler queue is full");
+                }
+                event_queue_.push_back({event, std::move(*ticket)});
             }
             event_queue_wake_.notify_one();
             return;
@@ -2669,7 +2736,12 @@ private:
     std::function<void(const protocol::ForwardedNetworkPacket&)> encrypted_packet_handler_;
     std::mutex event_queue_mutex_;
     std::condition_variable event_queue_wake_;
-    std::deque<std::variant<protocol::NetworkEvent, protocol::ForwardedNetworkPacket>> event_queue_;
+    struct QueuedEvent {
+        std::variant<protocol::NetworkEvent, protocol::ForwardedNetworkPacket> message;
+        SendBudget::Ticket ticket;
+    };
+    SendBudget event_budget_;
+    std::deque<QueuedEvent> event_queue_;
     std::thread event_worker_;
     bool event_worker_stopping_ = false;
     std::mutex delay_mutex_;

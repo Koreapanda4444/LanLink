@@ -10,12 +10,14 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <future>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -690,9 +692,94 @@ void test_tls_tcp_fallback(const std::filesystem::path& directory) {
     server.stop();
 }
 
+void test_tls_backpressure(const std::filesystem::path& directory) {
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto port = static_cast<std::uint16_t>(35'000 + (ticks % 20'000));
+    std::mutex mutex;
+    std::vector<std::shared_ptr<transport::TlsChannel>> channels;
+    std::atomic<int> closed = 0;
+    transport::TlsListenerLimits limits;
+    limits.max_connections = 2;
+    limits.max_handshakes = 1;
+    limits.send_queue = {512U * 1024U, 16, 64U * 1024U, 2};
+    transport::TlsListener listener("127.0.0.1", port, directory / "cert.pem",
+        directory / "key.pem", 2s,
+        [&](std::shared_ptr<transport::TlsChannel> channel) {
+            {
+                std::lock_guard lock(mutex);
+                channels.push_back(channel);
+            }
+            return transport::TlsListener::Handler{
+                [channel](const protocol::Frame& frame) {
+                    if (frame.type == protocol::MessageType::heartbeat) {
+                        expect(channel->enqueue({protocol::MessageType::heartbeat_ack,
+                                                  frame.request_id, {}}),
+                               "healthy client control response must fit");
+                    }
+                }, [] { return true; }, [&] { closed.fetch_add(1); }};
+        }, limits);
+    listener.start();
+    std::atomic_bool stopping = false;
+    const auto slow = transport::TlsChannel::connect("127.0.0.1", port, 2s, stopping);
+    wait_until([&] { std::lock_guard lock(mutex); return channels.size() == 1; },
+               "slow TLS client was not accepted");
+    std::shared_ptr<transport::TlsChannel> blocked;
+    {
+        std::lock_guard lock(mutex);
+        blocked = channels.front();
+    }
+    const protocol::Frame data{protocol::MessageType::network_packet_forward, 0,
+                               std::vector<std::byte>(64U * 1024U, std::byte{0x7a})};
+    bool rejected = false;
+    for (int i = 0; i < 512; ++i) {
+        if (!blocked->enqueue(data)) {
+            rejected = true;
+            break;
+        }
+    }
+    expect(rejected && blocked->pending_output(), "slow TLS output must apply backpressure");
+    expect(blocked->enqueue({protocol::MessageType::heartbeat_ack, 99, {}}),
+           "control response retains capacity when data is saturated");
+
+    const auto healthy = transport::TlsChannel::connect("127.0.0.1", port, 2s, stopping);
+    std::atomic_bool healthy_reply = false;
+    std::jthread healthy_worker([&](std::stop_token token) {
+        healthy->run([&](const protocol::Frame& frame) {
+            healthy_reply.store(frame.type == protocol::MessageType::heartbeat_ack &&
+                                frame.request_id == 100);
+        }, [&] { return !token.stop_requested(); });
+    });
+    expect(healthy->enqueue({protocol::MessageType::heartbeat, 100, {}}),
+           "healthy client heartbeat must enqueue");
+    wait_until([&] { return healthy_reply.load(); },
+               "a blocked TLS peer stalled a healthy peer's control channel");
+
+    std::atomic_bool reserved_reply = false;
+    std::jthread slow_worker([&](std::stop_token token) {
+        slow->run([&](const protocol::Frame& frame) {
+            if (frame.type == protocol::MessageType::heartbeat_ack && frame.request_id == 99) {
+                reserved_reply.store(true);
+            }
+        }, [&] { return !token.stop_requested(); });
+    });
+    wait_until([&] { return reserved_reply.load(); },
+               "reserved control response did not arrive after slow reader recovered");
+    slow->stop();
+    slow_worker.request_stop();
+    slow_worker.join();
+    wait_until([&] { return closed.load() >= 1 && !blocked->pending_output(); },
+               "closed TLS channel retained queued sends or reservations");
+    healthy->stop();
+    healthy_worker.request_stop();
+    healthy_worker.join();
+    listener.stop();
+    expect(closed.load() == 2, "both TLS sessions must close after recovery");
+}
+
 }
 
 int main(const int argc, char* argv[]) {
+    std::signal(SIGPIPE, SIG_IGN);
     try {
         if (argc != 2) {
             throw std::invalid_argument("usage: network-client-tests fixture-directory");
@@ -700,6 +787,7 @@ int main(const int argc, char* argv[]) {
         test_network_management(argv[1]);
         test_peer_state_reconnect(argv[1]);
         test_tls_tcp_fallback(argv[1]);
+        test_tls_backpressure(argv[1]);
         std::cout << "network management QUIC and TLS TCP integration passed\n";
         return 0;
     } catch (const std::exception& error) {

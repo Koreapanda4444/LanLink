@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/message.hpp"
+#include "lanlink/transport/resource_limits.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -15,6 +16,13 @@ namespace lanlink::transport {
 struct TlsTrafficCounters {
     std::uint64_t sent_bytes = 0;
     std::uint64_t received_bytes = 0;
+};
+
+struct TlsListenerLimits {
+    std::size_t max_connections = 128;
+    std::size_t max_handshakes = 16;
+    SendQueueLimits send_queue;
+    std::shared_ptr<SendBudget> admission;
 };
 
 class TlsChannel {
@@ -54,7 +62,8 @@ public:
 
     TlsListener(std::string host, std::uint16_t port,
                 std::filesystem::path certificate, std::filesystem::path private_key,
-                std::chrono::milliseconds handshake_timeout, HandlerFactory factory);
+                std::chrono::milliseconds handshake_timeout, HandlerFactory factory,
+                TlsListenerLimits limits = {});
     ~TlsListener();
     TlsListener(const TlsListener&) = delete;
     TlsListener& operator=(const TlsListener&) = delete;
