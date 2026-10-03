@@ -206,6 +206,7 @@ if(WIN32)
 endif()
 
 include(CTest)
+include(cmake/ClientPackage.cmake)
 
 if(BUILD_TESTING)
     add_executable(lanlink_core_tests

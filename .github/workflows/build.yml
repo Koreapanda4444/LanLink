@@ -23,6 +23,7 @@ jobs:
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
       VCPKG_DISABLE_METRICS: 1
+      VCPKG_BINARY_SOURCES: clear;files,${{ runner.temp }}/vcpkg-binaries,readwrite
     steps:
       - uses: actions/checkout@v5
       - name: Checkout vcpkg baseline
@@ -32,6 +33,15 @@ jobs:
           ref: a1cae005c39be7b18ba319fced856b68d7276271
           path: .vcpkg
           fetch-depth: 1
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binaries
+          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-
+      - name: Prepare binary cache
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/vcpkg-binaries" -Force | Out-Null
       - name: Install Linux build tools
         if: runner.os == 'Linux'
         run: |
@@ -48,8 +58,31 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -S . -B build -A x64 "-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+        run: |
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile "$env:RUNNER_TEMP/wintun.zip"
+          if ((Get-FileHash "$env:RUNNER_TEMP/wintun.zip" -Algorithm SHA256).Hash -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51') { throw 'Wintun archive hash mismatch' }
+          Expand-Archive "$env:RUNNER_TEMP/wintun.zip" "$env:RUNNER_TEMP/wintun"
+          $license = Get-ChildItem "$env:RUNNER_TEMP/wintun" -Recurse -File | Where-Object Name -Match '^(LICENSE|COPYING)(\.txt)?$' | Select-Object -First 1
+          if (-not $license) { throw 'Wintun license is missing' }
+          cmake -S . -B build -A x64 "-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DLANLINK_PACKAGE_WINDOWS_CLIENT=ON "-DLANLINK_WINTUN_DLL=$env:RUNNER_TEMP/wintun/wintun/bin/amd64/wintun.dll" "-DLANLINK_WINTUN_LICENSE_FILE=$($license.FullName)"
       - name: Build
         run: cmake --build build --config Release --parallel 2
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
+      - name: Package Windows client
+        if: runner.os == 'Windows'
+        run: cpack --config build/CPackConfig.cmake -C Release -B artifacts
+      - name: Test Windows installation
+        if: runner.os == 'Windows'
+        run: |
+          $archive = Get-ChildItem artifacts/*.zip | Select-Object -First 1
+          Expand-Archive $archive.FullName "$env:RUNNER_TEMP/client-package"
+          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
+          & ./tests/windows_package_tests.ps1 -PackageDirectory $installer.DirectoryName
+      - name: Upload Windows client
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanLink-windows-x64
+          path: artifacts/*.zip
+          if-no-files-found: error
