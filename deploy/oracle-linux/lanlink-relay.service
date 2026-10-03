@@ -1,0 +1,33 @@
+[Unit]
+Description=LanLink relay
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=lanlink
+Group=lanlink
+WorkingDirectory=/var/lib/lanlink
+ExecStart=/opt/lanlink/bin/lanlink-relay /etc/lanlink/relay.conf
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=lanlink
+StateDirectoryMode=0750
+LogsDirectory=lanlink
+LogsDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

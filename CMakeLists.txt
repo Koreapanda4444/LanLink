@@ -207,6 +207,7 @@ endif()
 
 include(CTest)
 include(cmake/ClientPackage.cmake)
+include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
     add_executable(lanlink_core_tests

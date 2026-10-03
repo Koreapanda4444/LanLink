@@ -93,3 +93,50 @@ jobs:
           name: LanLink-windows-x64
           path: artifacts/*.zip
           if-no-files-found: error
+  oracle-relay:
+    name: Oracle Linux 9 relay
+    runs-on: ubuntu-latest
+    container: oraclelinux:9
+    timeout-minutes: 45
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+      VCPKG_DISABLE_METRICS: 1
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
+    steps:
+      - name: Install Oracle Linux build tools
+        run: |
+          dnf install --assumeyes --allowerasing git gcc gcc-c++ make perl-core pkgconf-pkg-config kernel-headers python3 python3-pip tar unzip zip curl systemd openssl ca-certificates findutils which diffutils binutils
+          python3 -m pip install cmake==3.31.6 ninja==1.11.1.4
+      - uses: actions/checkout@v5
+      - name: Checkout vcpkg baseline
+        uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: a1cae005c39be7b18ba319fced856b68d7276271
+          path: .vcpkg
+          fetch-depth: 1
+      - name: Cache Oracle Linux vcpkg binaries
+        uses: actions/cache/restore@v4
+        id: vcpkg-cache
+        with:
+          path: ${{ github.workspace }}/.vcpkg-binaries
+          key: oraclelinux9-x64-vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: oraclelinux9-x64-vcpkg-
+      - name: Build and package relay
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
+          bash deploy/oracle-linux/build-relay.sh
+      - name: Save vcpkg binaries
+        if: always() && !cancelled() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-binaries
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+      - name: Test relay installation
+        run: python3 tests/relay_package_tests.py build/relay/artifacts/*.tar.gz
+      - name: Upload Oracle Linux relay
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanLink-relay-oraclelinux9-x64
+          path: build/relay/artifacts/*.tar.gz
+          if-no-files-found: error
