@@ -55,6 +55,7 @@ try {
     Assert-True ($rules.Count -eq 3) 'Repeated installation must create exactly three firewall rules.'
     $filter = Get-NetFirewallRule -Name LanLink-Virtual-LAN | Get-NetFirewallAddressFilter
     Assert-True ($filter.RemoteAddress -contains '10.77.0.0/255.255.0.0' -or $filter.RemoteAddress -contains '10.77.0.0/16') 'Inbound access must be limited to the virtual address pool.'
+    Assert-True ($filter.LocalAddress -contains '10.77.0.0/255.255.0.0' -or $filter.LocalAddress -contains '10.77.0.0/16') 'Inbound rules must target virtual LAN addresses before the adapter exists.'
     & $uninstall -InstallDirectory $program
     Assert-True (-not (Test-Path $program)) 'Uninstall must remove program files.'
     Assert-True (-not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink')) 'Uninstall must remove its Windows registration.'

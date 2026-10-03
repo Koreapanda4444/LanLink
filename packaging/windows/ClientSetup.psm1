@@ -74,7 +74,7 @@ function Set-LanLinkFirewallRules([string] $Executable) {
     }
     Get-NetFirewallRule -Name 'LanLink-Virtual-LAN' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -Name 'LanLink-Virtual-LAN' -DisplayName 'LanLink virtual LAN' -Group 'LanLink' `
-        -Direction Inbound -Action Allow -InterfaceAlias 'LanLink' -RemoteAddress '10.77.0.0/16' `
+        -Direction Inbound -Action Allow -LocalAddress '10.77.0.0/16' -RemoteAddress '10.77.0.0/16' `
         -Protocol Any -Profile Any | Out-Null
 }
 

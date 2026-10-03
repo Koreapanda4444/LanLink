@@ -34,7 +34,8 @@ jobs:
           path: .vcpkg
           fetch-depth: 1
       - name: Cache vcpkg binaries
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: vcpkg-cache
         with:
           path: ${{ github.workspace }}/.vcpkg-binaries
           key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-${{ hashFiles('vcpkg.json') }}
@@ -65,6 +66,12 @@ jobs:
           $license = Get-ChildItem "$env:RUNNER_TEMP/wintun" -Recurse -File | Where-Object Name -Match '^(LICENSE|COPYING)(\.txt)?$' | Select-Object -First 1
           if (-not $license) { throw 'Wintun license is missing' }
           cmake -S . -B build -A x64 "-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DLANLINK_PACKAGE_WINDOWS_CLIENT=ON "-DLANLINK_WINTUN_DLL=$env:RUNNER_TEMP/wintun/wintun/bin/amd64/wintun.dll" "-DLANLINK_WINTUN_LICENSE_FILE=$($license.FullName)"
+      - name: Save vcpkg binaries
+        if: always() && !cancelled() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-binaries
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Build
         run: cmake --build build --config Release --parallel 2
       - name: Test
