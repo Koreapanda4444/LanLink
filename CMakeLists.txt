@@ -375,6 +375,18 @@ if(BUILD_TESTING)
                     $<TARGET_FILE:lanlink_network_client_tests>
             )
             set_tests_properties(lanlink-network-client PROPERTIES TIMEOUT 40)
+
+            find_package(Python3 REQUIRED COMPONENTS Interpreter)
+            add_executable(lanlink_relay_e2e_tests tests/relay_e2e_tests.cpp)
+            target_link_libraries(lanlink_relay_e2e_tests PRIVATE lanlink_transport lanlink_auth)
+            lanlink_enable_warnings(lanlink_relay_e2e_tests)
+            add_test(
+                NAME lanlink-relay-e2e
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_e2e.py
+                    ${LANLINK_OPENSSL_EXECUTABLE} $<TARGET_FILE:lanlink_relay>
+                    $<TARGET_FILE:lanlink_relay_e2e_tests>
+            )
+            set_tests_properties(lanlink-relay-e2e PROPERTIES TIMEOUT 180)
         endif()
     endif()
 endif()

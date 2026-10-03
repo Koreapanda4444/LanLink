@@ -28,6 +28,10 @@ void handle_signal(int) {
 int main(const int argc, char* argv[]) {
     using lanlink::core::Component;
 
+#ifndef _WIN32
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
+
     try {
         if (argc > 2) {
             throw std::invalid_argument("usage: lanlink-relay [config-path]");
