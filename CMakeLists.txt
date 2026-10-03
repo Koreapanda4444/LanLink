@@ -206,11 +206,15 @@ if(WIN32)
     lanlink_enable_warnings(lanlink_ui_cli)
 endif()
 
+include(cmake/BuildMetadata.cmake)
 include(CTest)
 include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME lanlink-release-assets
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_assets_tests.py)
     add_executable(lanlink_core_tests
         tests/core_tests.cpp
     )

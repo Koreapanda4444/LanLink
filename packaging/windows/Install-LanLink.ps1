@@ -34,7 +34,8 @@ if (Test-Path -LiteralPath $InstallDirectory) {
     }
 }
 foreach ($file in 'bin\lanlink-service.exe', 'bin\lanlink-ui.exe', 'bin\lanlink-ui-cli.exe',
-                  'bin\wintun.dll', 'package-version.txt', 'Uninstall-LanLink.ps1') {
+                  'bin\wintun.dll', 'package-version.txt', 'Uninstall-LanLink.ps1',
+                  'build-info.json', 'INSTALL.md', 'RELEASE-NOTES.md') {
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $file) -PathType Leaf)) {
         throw "The client package is incomplete: $file"
     }
@@ -61,7 +62,8 @@ $moved = $false
 try {
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'bin') -Destination $staging -Recurse
-    foreach ($file in 'Install-LanLink.ps1', 'Uninstall-LanLink.ps1', 'ClientSetup.psm1', 'package-version.txt') {
+    foreach ($file in 'Install-LanLink.ps1', 'Uninstall-LanLink.ps1', 'ClientSetup.psm1', 'package-version.txt',
+                     'build-info.json', 'INSTALL.md', 'RELEASE-NOTES.md') {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $staging
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $staging -Recurse

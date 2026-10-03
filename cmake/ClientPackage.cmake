@@ -38,6 +38,11 @@ if(LANLINK_PACKAGE_WINDOWS_CLIENT)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt" "${PROJECT_VERSION}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"
         DESTINATION . COMPONENT client)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-info.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/release/INSTALL.md"
+        DESTINATION . COMPONENT client)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/release/0.1.0.md"
+        DESTINATION . RENAME RELEASE-NOTES.md COMPONENT client)
 
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT client)

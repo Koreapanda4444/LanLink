@@ -140,3 +140,39 @@ jobs:
           name: LanLink-relay-oraclelinux9-x64
           path: build/relay/artifacts/*.tar.gz
           if-no-files-found: error
+  release:
+    name: Publish LanLink 0.1.0
+    needs: [build, oracle-relay]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'release: package LanLink 0.1.0')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: lanlink-release-0.1.0
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: LanLink-windows-x64
+          path: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: LanLink-relay-oraclelinux9-x64
+          path: release-assets
+      - name: Validate packages and generate release checksums
+        run: python3 release/prepare.py release-assets --commit "$GITHUB_SHA"
+      - name: Preserve verified release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanLink-0.1.0-release
+          path: release-assets/*
+          if-no-files-found: error
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 release/publish.py release-assets "$GITHUB_SHA"

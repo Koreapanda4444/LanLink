@@ -29,6 +29,11 @@ if(LANLINK_PACKAGE_RELAY)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/relay-version.txt" "${PROJECT_VERSION}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/relay-version.txt"
         DESTINATION . COMPONENT relay)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-info.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/release/INSTALL.md"
+        DESTINATION . COMPONENT relay)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/release/0.1.0.md"
+        DESTINATION . RENAME RELEASE-NOTES.md COMPONENT relay)
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_NAME LanLink-relay)
     set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

@@ -39,6 +39,9 @@ try {
     Assert-True ($service.PathName.Contains('state files\client.conf')) 'The service must use the persistent configuration.'
     $registration = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink'
     Assert-True ($registration.InstallLocation -eq $program -and $registration.UninstallString.Contains('Uninstall-LanLink.ps1')) 'The installation must appear in Windows installed apps.'
+    $build = Get-Content (Join-Path $program 'build-info.json') -Raw | ConvertFrom-Json
+    Assert-True ($build.version -eq '0.1.0' -and $build.source_clean -and $build.architecture -eq 'x64') 'Installed build metadata must identify the release.'
+    Assert-True ((Test-Path (Join-Path $program 'INSTALL.md')) -and (Test-Path (Join-Path $program 'RELEASE-NOTES.md'))) 'Installation instructions and release notes must be preserved.'
     $config = [IO.File]::ReadAllBytes((Join-Path $state 'client.conf'))
     Assert-True ($config[0] -eq [byte][char]'r') 'The configuration must be UTF-8 without a BOM.'
     $userRules = @((Get-Acl $state).Access | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-545' })
