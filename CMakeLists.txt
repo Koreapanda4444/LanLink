@@ -238,7 +238,8 @@ if(BUILD_TESTING)
         target_link_libraries(lanlink_local_pipe_tests PRIVATE lanlink_local_ipc)
         lanlink_enable_warnings(lanlink_local_pipe_tests)
         add_test(NAME lanlink-local-pipe COMMAND lanlink_local_pipe_tests)
-        set_tests_properties(lanlink-local-pipe PROPERTIES RESOURCE_LOCK lanlink-service-pipe)
+        set_tests_properties(lanlink-local-pipe PROPERTIES
+            RESOURCE_LOCK lanlink-service-pipe TIMEOUT 30)
 
         add_executable(lanlink_ui_network_model_tests
             tests/ui_network_model_tests.cpp
@@ -247,7 +248,8 @@ if(BUILD_TESTING)
         target_link_libraries(lanlink_ui_network_model_tests PRIVATE lanlink_local_ipc)
         lanlink_enable_warnings(lanlink_ui_network_model_tests)
         add_test(NAME lanlink-ui-network-model COMMAND lanlink_ui_network_model_tests)
-        set_tests_properties(lanlink-ui-network-model PROPERTIES RESOURCE_LOCK lanlink-service-pipe)
+        set_tests_properties(lanlink-ui-network-model PROPERTIES
+            RESOURCE_LOCK lanlink-service-pipe TIMEOUT 30)
     endif()
 
     add_executable(lanlink_network_protocol_tests

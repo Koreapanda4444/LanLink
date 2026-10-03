@@ -192,6 +192,8 @@ void LocalPipeServer::serve() noexcept {
                      reinterpret_cast<const std::byte*>(message.data() + message.size())}};
             }
             send(pipe_, response, stopping_, io_timeout_ms);
+            std::byte closing{};
+            static_cast<void>(transfer(pipe_, &closing, 1, false, stopping_, io_timeout_ms));
         } catch (...) {
         }
         DisconnectNamedPipe(pipe_);
