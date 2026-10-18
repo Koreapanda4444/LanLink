@@ -158,8 +158,8 @@ target_link_libraries(lanlink_transport
 if(WIN32)
     target_link_libraries(lanlink_transport PRIVATE ntdll ws2_32)
 
-    target_sources(lanlink_transport PRIVATE src/transport/wintun_adapter.cpp)
-    target_link_libraries(lanlink_transport PRIVATE iphlpapi)
+    target_sources(lanlink_transport PRIVATE src/transport/wintun_adapter.cpp src/transport/windows_certificate.cpp)
+    target_link_libraries(lanlink_transport PRIVATE iphlpapi Crypt32)
 endif()
 
 lanlink_enable_warnings(lanlink_transport)
@@ -215,6 +215,14 @@ if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME lanlink-release-assets
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_assets_tests.py)
+    if(WIN32 AND LANLINK_PACKAGE_WINDOWS_CLIENT)
+        add_executable(lanlink_windows_network_tests tests/windows_network_tests.cpp)
+        target_link_libraries(lanlink_windows_network_tests PRIVATE lanlink_transport lanlink_local_ipc lanlink_auth iphlpapi)
+        lanlink_enable_warnings(lanlink_windows_network_tests)
+        add_custom_command(TARGET lanlink_windows_network_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LANLINK_WINTUN_DLL}"
+                "$<TARGET_FILE_DIR:lanlink_windows_network_tests>/wintun.dll")
+    endif()
     add_executable(lanlink_core_tests
         tests/core_tests.cpp
     )

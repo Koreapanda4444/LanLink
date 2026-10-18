@@ -13,6 +13,10 @@
 #include "lanlink/transport/reconnect.hpp"
 #include "lanlink/transport/tls.hpp"
 
+#ifdef _WIN32
+#include "windows_certificate.hpp"
+#endif
+
 #include <msquic.h>
 
 #include <algorithm>
@@ -660,16 +664,23 @@ private:
             throw_status("ConfigurationOpen", status);
         }
 
+        QUIC_CREDENTIAL_CONFIG credentials{};
+        credentials.Flags = QUIC_CREDENTIAL_FLAG_NONE;
+#ifdef _WIN32
+        certificate_ = std::make_unique<SchannelCertificate>(
+            options_.certificate_file, options_.private_key_file);
+        credentials.Type = QUIC_CREDENTIAL_TYPE_CERTIFICATE_CONTEXT;
+        credentials.CertificateContext = certificate_->context();
+#else
         const auto certificate_path = options_.certificate_file.string();
         const auto private_key_path = options_.private_key_file.string();
         QUIC_CERTIFICATE_FILE certificate{
             private_key_path.c_str(),
             certificate_path.c_str(),
         };
-        QUIC_CREDENTIAL_CONFIG credentials{};
         credentials.Type = QUIC_CREDENTIAL_TYPE_CERTIFICATE_FILE;
-        credentials.Flags = QUIC_CREDENTIAL_FLAG_NONE;
         credentials.CertificateFile = &certificate;
+#endif
         status = api_->ConfigurationLoadCredential(configuration_, &credentials);
 
         if (QUIC_FAILED(status)) {
@@ -709,6 +720,9 @@ private:
             MsQuicClose(api_);
             api_ = nullptr;
         }
+#ifdef _WIN32
+        certificate_.reset();
+#endif
     }
 
     static QUIC_STATUS QUIC_API listener_callback(HQUIC,
@@ -1116,6 +1130,9 @@ private:
     HQUIC configuration_ = nullptr;
     HQUIC listener_ = nullptr;
     std::unique_ptr<TlsListener> tls_listener_;
+#ifdef _WIN32
+    std::unique_ptr<SchannelCertificate> certificate_;
+#endif
     std::mutex lifecycle_mutex_;
     std::mutex active_control_streams_mutex_;
     std::vector<ActiveControlStream> active_control_streams_;

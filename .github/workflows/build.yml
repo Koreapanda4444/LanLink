@@ -90,6 +90,11 @@ jobs:
           Expand-Archive $archive.FullName "$env:RUNNER_TEMP/client-package"
           $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
           & ./tests/windows_package_tests.ps1 -PackageDirectory $installer.DirectoryName
+      - name: Test Windows service and Wintun networking
+        if: runner.os == 'Windows'
+        run: |
+          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
+          & ./tests/windows_network_tests.ps1 -PackageDirectory $installer.DirectoryName -RelayExecutable "$env:GITHUB_WORKSPACE/build/Release/lanlink-relay.exe" -DriverExecutable "$env:GITHUB_WORKSPACE/build/Release/lanlink_windows_network_tests.exe"
       - name: Upload Windows client
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -97,6 +102,13 @@ jobs:
           name: LanLink-windows-x64
           path: artifacts/*.zip
           if-no-files-found: error
+      - name: Preserve Windows network diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanLink-windows-network-diagnostics
+          path: ${{ runner.temp }}/lanlink-windows-network-*/**/*.log
+          if-no-files-found: ignore
   oracle-relay:
     name: Oracle Linux 9 relay
     runs-on: ubuntu-latest

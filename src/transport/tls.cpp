@@ -103,11 +103,15 @@ private:
     Socket socket_;
 };
 
-bool wait_socket(const Socket socket, const bool read, const bool write) {
+bool wait_socket(const Socket socket, const bool read, const bool write,
+                 const bool connecting = false) {
     fd_set readers;
     fd_set writers;
+    fd_set exceptions;
     FD_ZERO(&readers);
     FD_ZERO(&writers);
+    FD_ZERO(&exceptions);
+    FD_SET(socket, &exceptions);
     if (read) {
         FD_SET(socket, &readers);
     }
@@ -117,7 +121,8 @@ bool wait_socket(const Socket socket, const bool read, const bool write) {
     timeval delay{0, 50'000};
     const auto result = select(static_cast<int>(socket) + 1,
                                read ? &readers : nullptr,
-                               write ? &writers : nullptr, nullptr, &delay);
+                               write ? &writers : nullptr,
+                               connecting ? &exceptions : nullptr, &delay);
     if (result < 0) {
         throw std::runtime_error("TCP socket wait failed");
     }
@@ -154,7 +159,7 @@ SocketOwner connect_socket(const std::string& host, const std::uint16_t port,
             continue;
         }
         while (!stopping.load() && std::chrono::steady_clock::now() < deadline) {
-            if (!wait_socket(socket.get(), false, true)) {
+            if (!wait_socket(socket.get(), false, true, true)) {
                 continue;
             }
             int error = 0;
@@ -218,6 +223,11 @@ std::shared_ptr<SSL_CTX> make_context(const bool server) {
         if (SSL_CTX_set_default_verify_paths(context.get()) != 1) {
             throw std::runtime_error("TLS trust store initialization failed");
         }
+#ifdef _WIN32
+        if (SSL_CTX_load_verify_store(context.get(), "org.openssl.winstore:") != 1) {
+            throw std::runtime_error("Windows TLS trust store initialization failed");
+        }
+#endif
     } else {
         SSL_CTX_set_alpn_select_cb(context.get(),
             [](SSL*, const unsigned char** output, unsigned char* output_length,

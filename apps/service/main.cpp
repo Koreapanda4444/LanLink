@@ -37,21 +37,11 @@ void handle_signal(int) {
     console_stop_requested = 1;
 }
 
-void run_runtime(const std::optional<std::filesystem::path>& config_path,
-                 const std::function<void()>& ready) {
+void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
+                      lanlink::core::Logger& logger,
+                      const std::function<void()>& ready) {
     using lanlink::core::Component;
 
-    auto config = config_path
-                      ? lanlink::core::load_config(*config_path)
-                      : lanlink::core::RuntimeConfig{};
-    lanlink::core::validate_service_config(config);
-
-    lanlink::core::Logger logger(config.log_directory / "service.log",
-                                 "service",
-                                 config.log_level,
-                                 config.log_max_size_bytes,
-                                 config.log_max_files);
-    logger.info("starting");
     std::cout << "LanLink " << lanlink::core::component_name(Component::service)
               << " " << lanlink::core::project_version() << '\n';
 
@@ -299,6 +289,24 @@ void run_runtime(const std::optional<std::filesystem::path>& config_path,
     }
     logger.info("stopped");
     logger.flush();
+}
+
+void run_runtime(const std::optional<std::filesystem::path>& config_path,
+                 const std::function<void()>& ready) {
+    const auto config = config_path
+        ? lanlink::core::load_config(*config_path)
+        : lanlink::core::RuntimeConfig{};
+    lanlink::core::validate_service_config(config);
+    lanlink::core::Logger logger(config.log_directory / "service.log", "service",
+        config.log_level, config.log_max_size_bytes, config.log_max_files);
+    logger.info("starting");
+    try {
+        run_runtime_impl(config, logger, ready);
+    } catch (const std::exception& error) {
+        logger.error(std::string{"service failed: "} + error.what());
+        logger.flush();
+        throw;
+    }
 }
 
 }

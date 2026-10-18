@@ -131,6 +131,7 @@ public:
             row.Family = AF_INET;
             if (GetIpInterfaceEntry(&row) == NO_ERROR) {
                 row.NlMtu = original_mtu_;
+                row.SitePrefixLength = 0;
                 static_cast<void>(SetIpInterfaceEntry(&row));
             }
         }
@@ -195,6 +196,7 @@ public:
         if (row.NlMtu != mtu_) {
             const auto previous = row.NlMtu;
             row.NlMtu = mtu_;
+            row.SitePrefixLength = 0;
             check_windows(SetIpInterfaceEntry(&row), "SetIpInterfaceEntry");
             original_mtu_ = previous;
         }
