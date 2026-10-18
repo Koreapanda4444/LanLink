@@ -25,7 +25,9 @@ foreach ($path in $InstallDirectory, $DataDirectory) {
         throw 'Installation directories cannot be links or junctions.'
     }
 }
-if (Test-Path -LiteralPath $InstallDirectory) {
+$hadProgram = Test-Path -LiteralPath $InstallDirectory
+$hadData = Test-Path -LiteralPath $DataDirectory
+if ($hadProgram) {
     $marker = Join-Path $InstallDirectory 'installation.json'
     if (-not (Test-Path -LiteralPath $marker)) { throw 'The target directory is not a LanLink installation.' }
     $previous = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
@@ -55,10 +57,36 @@ $encoding = [Text.UTF8Encoding]::new($false)
 $staging = "$InstallDirectory.staging-$([Guid]::NewGuid().ToString('N'))"
 $backup = "$InstallDirectory.previous-$([Guid]::NewGuid().ToString('N'))"
 $service = Get-Service -Name LanLink -ErrorAction SilentlyContinue
-$wasRunning = $service -and $service.Status -eq 'Running'
-$oldConfig = if (Test-Path -LiteralPath $configPath) { [IO.File]::ReadAllBytes($configPath) } else { $null }
-$oldToken = if (Test-Path -LiteralPath $tokenPath) { [IO.File]::ReadAllBytes($tokenPath) } else { $null }
-$moved = $false
+$hadService = $null -ne $service
+$wasRunning = $hadService -and $service.Status -eq 'Running'
+$serviceStartMode = $null
+if ($service) {
+    $service.Dispose()
+    if (-not $hadProgram) { throw 'The existing LanLink service must be upgraded from its current installation directory.' }
+    $serviceDetails = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
+    $expectedExecutable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
+    if (-not $serviceDetails.PathName.StartsWith('"' + $expectedExecutable + '" ', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The existing LanLink service belongs to another installation directory.'
+    }
+    $serviceStartMode = $serviceDetails.StartMode
+}
+$oldConfig = if (Test-Path -LiteralPath $configPath) { ,[IO.File]::ReadAllBytes($configPath) } else { $null }
+$oldToken = if (Test-Path -LiteralPath $tokenPath) { ,[IO.File]::ReadAllBytes($tokenPath) } else { $null }
+$oldDataAcl = if ($hadData) { Get-Acl -LiteralPath $DataDirectory } else { $null }
+$oldRegistration = Get-LanLinkRegistrationSnapshot
+$shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'LanLink.lnk'
+$oldShortcut = if (Test-Path -LiteralPath $shortcutPath) { ,[IO.File]::ReadAllBytes($shortcutPath) } else { $null }
+$firewallBackups = @()
+$programBackedUp = $false
+$programInstallStarted = $false
+$serviceStopped = $false
+$serviceChanged = $false
+$dataChanged = $false
+$firewallChanged = $false
+$shortcutChanged = $false
+$registrationChanged = $false
+$committed = $false
+$rollbackComplete = $false
 try {
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'bin') -Destination $staging -Recurse
@@ -71,51 +99,101 @@ try {
     $marker = @{ install_directory = $InstallDirectory; data_directory = $DataDirectory; version = $version } | ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $staging 'installation.json'), $marker, $encoding)
     Set-LanLinkDirectoryAcl $staging -AllowUsers
+    $firewallBackups = Backup-LanLinkFirewallRules
+    $dataChanged = $true
     New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
     Set-LanLinkDirectoryAcl $DataDirectory
-    if ($service) {
-        try {
-            if ($service.Status -ne 'Stopped') {
-                $service.Stop()
-                $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
-            }
-        } finally { $service.Dispose() }
+    if ($hadService) {
+        $serviceStopped = $true
+        Stop-LanLinkService
     }
-    if (Test-Path -LiteralPath $InstallDirectory) { Move-Item -LiteralPath $InstallDirectory -Destination $backup }
+    if ($hadProgram) {
+        Move-Item -LiteralPath $InstallDirectory -Destination $backup
+        $programBackedUp = $true
+    }
+    $programInstallStarted = $true
     Move-Item -LiteralPath $staging -Destination $InstallDirectory
-    $moved = $true
     if ($AuthenticationTokenFile) { [IO.File]::WriteAllText($tokenPath, "$token`n", $encoding) }
     if ($configuration) { [IO.File]::WriteAllText($configPath, "$configuration`n", $encoding) }
     $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
+    $serviceChanged = $true
     Push-Location $DataDirectory
     try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
+    $firewallChanged = $true
     Set-LanLinkFirewallRules $executable
-    $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'LanLink.lnk'
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = Join-Path $InstallDirectory 'bin\lanlink-ui.exe'
     $shortcut.WorkingDirectory = Join-Path $InstallDirectory 'bin'
+    $shortcutChanged = $true
     $shortcut.Save()
     if (-not $NoStart) { Invoke-LanLinkServiceCommand $executable @('--start') }
+    $registrationChanged = $true
     Register-LanLinkInstallation $InstallDirectory $version
-    if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force }
+    $committed = $true
     Write-Output "LanLink $version installed in $InstallDirectory. Data: $DataDirectory"
 } catch {
     $failure = $_
-    if ($moved -and (Test-Path -LiteralPath $backup)) {
-        Stop-Service -Name LanLink -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $InstallDirectory -Recurse -Force
-        Move-Item -LiteralPath $backup -Destination $InstallDirectory
-        if ($null -ne $oldConfig) { [IO.File]::WriteAllBytes($configPath, $oldConfig) }
-        if ($null -ne $oldToken) { [IO.File]::WriteAllBytes($tokenPath, $oldToken) }
-        $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
-        Push-Location $DataDirectory
-        try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
-        Set-LanLinkFirewallRules $executable
-        if ($wasRunning) { Invoke-LanLinkServiceCommand $executable @('--start') }
-        Register-LanLinkInstallation $InstallDirectory $previous.version
+    $rollbackErrors = [Collections.Generic.List[Exception]]::new()
+    $actions = @(
+        {
+            if ($serviceChanged -or $serviceStopped) { Stop-LanLinkService }
+            if ($serviceChanged -and -not $hadService) { Remove-LanLinkService }
+        },
+        {
+            if ($programInstallStarted -and (Test-Path -LiteralPath $InstallDirectory)) {
+                Remove-Item -LiteralPath $InstallDirectory -Recurse -Force
+            }
+            if ($programBackedUp) { Move-Item -LiteralPath $backup -Destination $InstallDirectory }
+        },
+        {
+            if ($dataChanged) {
+                foreach ($entry in @(@{ path = $configPath; bytes = $oldConfig }, @{ path = $tokenPath; bytes = $oldToken })) {
+                    if ($null -ne $entry.bytes) { [IO.File]::WriteAllBytes($entry.path, $entry.bytes) }
+                    elseif (Test-Path -LiteralPath $entry.path) { Remove-Item -LiteralPath $entry.path -Force }
+                }
+                if ($hadData) { Set-Acl -LiteralPath $DataDirectory -AclObject $oldDataAcl }
+                elseif (Test-Path -LiteralPath $DataDirectory) { Remove-Item -LiteralPath $DataDirectory -Recurse -Force }
+            }
+        },
+        { if ($firewallChanged) { Restore-LanLinkFirewallRules $firewallBackups } },
+        {
+            if ($shortcutChanged) {
+                if ($null -ne $oldShortcut) { [IO.File]::WriteAllBytes($shortcutPath, $oldShortcut) }
+                elseif (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
+            }
+        },
+        { if ($registrationChanged) { Restore-LanLinkRegistration $oldRegistration } },
+        {
+            if ($hadService -and ($serviceChanged -or $serviceStopped)) {
+                $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
+                if ($serviceChanged) {
+                    Push-Location $DataDirectory
+                    try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
+                }
+                if ($wasRunning) { Invoke-LanLinkServiceCommand $executable @('--start') }
+                $startupType = switch ($serviceStartMode) { 'Auto' { 'Automatic' }; 'Manual' { 'Manual' }; 'Disabled' { 'Disabled' } }
+                Set-Service -Name LanLink -StartupType $startupType
+            }
+        }
+    )
+    foreach ($action in $actions) {
+        try { & $action } catch { $rollbackErrors.Add($_.Exception) }
+    }
+    $rollbackComplete = $rollbackErrors.Count -eq 0
+    if (-not $rollbackComplete) {
+        $rollbackErrors.Insert(0, $failure.Exception)
+        throw [AggregateException]::new("LanLink installation failed and rollback was incomplete. Retained backup: $backup", $rollbackErrors)
     }
     throw $failure
 } finally {
-    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    if ($committed -or $rollbackComplete) {
+        try { Remove-LanLinkFirewallBackups $firewallBackups } catch { Write-Warning "Cannot remove temporary firewall backups: $_" }
+    }
+    if ($committed -and (Test-Path -LiteralPath $backup)) {
+        try { Remove-Item -LiteralPath $backup -Recurse -Force } catch { Write-Warning "Previous program files remain in ${backup}: $_" }
+    }
+    if (Test-Path -LiteralPath $staging) {
+        try { Remove-Item -LiteralPath $staging -Recurse -Force } catch { Write-Warning "Staging files remain in ${staging}: $_" }
+    }
 }

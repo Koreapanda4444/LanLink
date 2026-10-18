@@ -65,6 +65,98 @@ function Invoke-LanLinkServiceCommand([string] $Executable, [string[]] $Argument
     if ($LASTEXITCODE -ne 0) { throw "LanLink service command failed with exit code $LASTEXITCODE." }
 }
 
+function Stop-LanLinkService {
+    $service = Get-Service -Name LanLink -ErrorAction SilentlyContinue
+    if (-not $service) { return }
+    try {
+        if ($service.Status -ne 'Stopped') {
+            Stop-Service -Name LanLink -ErrorAction Stop
+            $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+        }
+    } finally { $service.Dispose() }
+}
+
+function Remove-LanLinkService {
+    Stop-LanLinkService
+    $service = Get-Service -Name LanLink -ErrorAction SilentlyContinue
+    if (-not $service) { return }
+    $service.Dispose()
+    & "$env:SystemRoot\System32\sc.exe" delete LanLink | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot remove the failed LanLink service installation.' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $remaining = Get-Service -Name LanLink -ErrorAction SilentlyContinue
+        if (-not $remaining) { return }
+        $remaining.Dispose()
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out removing the failed LanLink service installation.' }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
+}
+
+function Get-LanLinkRegistrationSnapshot {
+    $path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $key = Get-Item -LiteralPath $path
+    try {
+        $values = @{}
+        foreach ($name in $key.GetValueNames()) {
+            $values[$name] = @{
+                value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                kind = $key.GetValueKind($name)
+            }
+        }
+        return $values
+    } finally { $key.Close() }
+}
+
+function Restore-LanLinkRegistration($Snapshot) {
+    $path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink'
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+    if ($null -eq $Snapshot) { return }
+    $key = New-Item -Path $path -Force
+    try {
+        foreach ($entry in $Snapshot.GetEnumerator()) {
+            $key.SetValue($entry.Key, $entry.Value.value, $entry.Value.kind)
+        }
+    } finally { $key.Close() }
+}
+
+function Backup-LanLinkFirewallRules {
+    $backups = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($name in 'LanLink-Client-TCP', 'LanLink-Client-UDP', 'LanLink-Virtual-LAN') {
+            $rule = Get-NetFirewallRule -Name $name -PolicyStore PersistentStore -ErrorAction SilentlyContinue
+            if (-not $rule) { continue }
+            $backupName = "$name-rollback-$([Guid]::NewGuid().ToString('N'))"
+            $backups.Add(@{ name = $name; backup = $backupName; enabled = $rule.Enabled })
+            Copy-NetFirewallRule -Name $name -PolicyStore PersistentStore -NewName $backupName | Out-Null
+            Disable-NetFirewallRule -Name $backupName -PolicyStore PersistentStore | Out-Null
+        }
+        return ,$backups
+    } catch {
+        foreach ($entry in $backups) {
+            Get-NetFirewallRule -Name $entry.backup -PolicyStore PersistentStore -ErrorAction SilentlyContinue |
+                Remove-NetFirewallRule
+        }
+        throw
+    }
+}
+
+function Restore-LanLinkFirewallRules($Backups) {
+    Remove-LanLinkFirewallRules
+    foreach ($entry in $Backups) {
+        Copy-NetFirewallRule -Name $entry.backup -PolicyStore PersistentStore -NewName $entry.name | Out-Null
+        Set-NetFirewallRule -Name $entry.name -PolicyStore PersistentStore -Enabled $entry.enabled | Out-Null
+    }
+}
+
+function Remove-LanLinkFirewallBackups($Backups) {
+    foreach ($entry in $Backups) {
+        Get-NetFirewallRule -Name $entry.backup -PolicyStore PersistentStore -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule
+    }
+}
+
 function Set-LanLinkFirewallRules([string] $Executable) {
     foreach ($protocol in 'TCP', 'UDP') {
         $name = "LanLink-Client-$protocol"

@@ -33,12 +33,16 @@ jobs:
           ref: a1cae005c39be7b18ba319fced856b68d7276271
           path: .vcpkg
           fetch-depth: 1
+      - name: Identify runner toolchain
+        id: toolchain
+        shell: pwsh
+        run: '"image=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
       - name: Cache vcpkg binaries
         uses: actions/cache/restore@v4
         id: vcpkg-cache
         with:
           path: ${{ github.workspace }}/.vcpkg-binaries
-          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-${{ hashFiles('vcpkg.json') }}-${{ steps.toolchain.outputs.image }}
           restore-keys: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-
       - name: Prepare binary cache
         shell: pwsh
