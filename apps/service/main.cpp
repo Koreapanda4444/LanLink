@@ -11,6 +11,7 @@
 #include "lanlink/transport/wintun_adapter.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -60,7 +62,20 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     options.reconnect_maximum_delay =
         std::chrono::milliseconds{config.reconnect_max_delay_ms};
 
+    std::mutex requests_mutex;
+    std::vector<lanlink::protocol::NetworkEvent> requests;
     lanlink::transport::QuicRelayClient client(std::move(options), logger);
+    client.set_network_event_handler([&](const lanlink::protocol::NetworkEvent& event) {
+        namespace protocol = lanlink::protocol;
+        std::lock_guard lock(requests_mutex);
+        std::erase_if(requests, [&](const auto& previous) {
+            return previous.network_id == event.network_id && previous.device_id == event.device_id;
+        });
+        if (event.kind == protocol::NetworkEventKind::join_requested) {
+            if (requests.size() == 128) requests.erase(requests.begin());
+            requests.push_back(event);
+        }
+    });
     auto adapter = std::make_shared<lanlink::transport::WintunAdapter>();
     auto bridge = std::make_shared<lanlink::transport::VirtualPacketBridge>(
         [&](const lanlink::protocol::EncryptedNetworkPacket& packet) {
@@ -179,7 +194,32 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 } else {
                     result = client.kick_member(member.network_id, member.device_id);
                 }
+                if (result.code == protocol::NetworkResultCode::success) {
+                    std::lock_guard lock(requests_mutex);
+                    std::erase_if(requests, [&](const auto& event) {
+                        return event.network_id == member.network_id && event.device_id == member.device_id;
+                    });
+                }
                 payload = protocol::encode_network_operation_result(result);
+                break;
+            }
+            case protocol::LocalCommand::peers: {
+                const auto id = protocol::decode_network_selection_request(request.payload).network_id;
+                const auto state = client.cached_peer_state(id);
+                if (!state) throw std::runtime_error("Network is not active. Wait for approval or reconnection.");
+                payload = protocol::encode_network_peer_state(*state);
+                break;
+            }
+            case protocol::LocalCommand::activity: {
+                if (!request.payload.empty()) throw std::invalid_argument("activity does not accept a payload");
+                protocol::LocalActivity activity;
+                if (const auto identity = client.cached_packet_identity()) activity.device_id = identity->device_id;
+                std::lock_guard lock(requests_mutex);
+                for (const auto& event : requests) {
+                    const auto state = client.cached_peer_state(event.network_id);
+                    if (state && state->owner_device_id == activity.device_id) activity.requests.push_back(event);
+                }
+                payload = protocol::encode_local_activity(activity);
                 break;
             }
             case protocol::LocalCommand::stop:
@@ -331,6 +371,9 @@ int wmain(const int argc, wchar_t* argv[]) {
         } else if (action == L"--stop" && argc == 2) {
             lanlink::service::stop();
             std::cout << "LanLink service stopped\n";
+        } else if (action == L"--create-shortcut" && argc == 3) {
+            lanlink::service::create_shortcut(argv[2]);
+            std::cout << "LanLink desktop shortcut created\n";
         } else if (action == L"--service" && argc == 4) {
             const std::optional<std::filesystem::path> path =
                 std::wstring_view{argv[2]} == L"-"
@@ -355,7 +398,7 @@ int wmain(const int argc, wchar_t* argv[]) {
         } else {
             throw std::invalid_argument(
                 "usage: lanlink-service [config-path] | --console [config-path] | "
-                "--install [config-path] | --start | --stop | --uninstall");
+                "--install [config-path] | --start | --stop | --uninstall | --create-shortcut path");
         }
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

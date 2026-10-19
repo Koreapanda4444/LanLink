@@ -401,8 +401,34 @@ void ready(Peer& peer, const protocol::NetworkId& id, std::optional<bool> tcp) {
 }
 
 void application_roundtrip(Peer& peer, std::uint32_t owner_ip, std::uint32_t peer_ip) {
-    wait_for([&] { return address_luid(owner_ip).has_value() && address_luid(mapped_peer).has_value(); },
-             "Wintun addresses did not pass Windows duplicate-address detection");
+    try {
+        wait_for([&] { return address_luid(owner_ip).has_value() && address_luid(mapped_peer).has_value(); },
+                 "Wintun virtual addresses did not become usable");
+    } catch (...) {
+        MIB_UNICASTIPADDRESS_TABLE* table = nullptr;
+        if (GetUnicastIpAddressTable(AF_INET, &table) == NO_ERROR) {
+            for (ULONG i = 0; i < table->NumEntries; ++i) {
+                const auto& row = table->Table[i];
+                const auto address = ntohl(row.Address.Ipv4.sin_addr.s_addr);
+                if (address == owner_ip || address == mapped_peer) {
+                    std::cerr << "Virtual address " << address << " interface " << row.InterfaceLuid.Value
+                              << " DAD state " << row.DadState << '\n';
+                }
+            }
+            FreeMibTable(table);
+        }
+        throw;
+    }
+    for (const auto address : {owner_ip, mapped_peer}) {
+        MIB_IPINTERFACE_ROW row;
+        InitializeIpInterfaceEntry(&row);
+        row.Family = AF_INET;
+        const auto luid = address_luid(address);
+        require(luid.has_value(), "virtual interface disappeared before the socket test");
+        row.InterfaceLuid = *luid;
+        require(GetIpInterfaceEntry(&row) == NO_ERROR && row.DadTransmits == 0,
+                "tunnel addresses must use relay-managed uniqueness");
+    }
     const std::vector<std::byte> datagram(256, std::byte{0x5a});
     auto receiver = bound_socket(SOCK_DGRAM, mapped_peer);
     auto sender = bound_socket(SOCK_DGRAM, owner_ip);
@@ -498,12 +524,22 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
     const auto id = created.network_id;
     require(peer.client.join_network(id).code == protocol::NetworkResultCode::pending_approval,
             "unapproved peer bypassed membership approval");
+    wait_for([&] {
+        const auto activity = protocol::decode_local_activity(local(protocol::LocalCommand::activity));
+        return std::any_of(activity.requests.begin(), activity.requests.end(), [&](const auto& request) {
+            return request.network_id == id && request.device_id == peer.identity.device_id();
+        });
+    }, "desktop control API did not expose the real join request");
     const auto approved = protocol::decode_network_operation_result(local(protocol::LocalCommand::approve,
         protocol::encode_network_member_request({id, peer.identity.device_id()})));
     require(approved.code == protocol::NetworkResultCode::success, "service peer approval failed");
     require(outsider.client.create_network("Separate Windows LAN").code == protocol::NetworkResultCode::success,
             "outsider network creation failed");
     ready(peer, id, tcp);
+    const auto desktop_peers = protocol::decode_network_peer_state(local(protocol::LocalCommand::peers,
+        protocol::encode_network_selection_request({id})));
+    require(desktop_peers.peers.size() == 1 && desktop_peers.peers.front().device_id == peer.identity.device_id(),
+        "desktop control API did not expose the real virtual device");
     const auto original = *peer.client.cached_peer_state(id);
     const auto owner_ip = original.peers.front().ipv4_address;
     const auto peer_ip = original.own_address;
@@ -530,6 +566,9 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
             "relay restart lost persisted virtual leases");
     application_roundtrip(peer, owner_ip, peer_ip);
     command(root, 5, "upgrade-failure");
+    ready(peer, id, tcp ? std::optional<bool>{true} : std::nullopt);
+    application_roundtrip(peer, owner_ip, peer_ip);
+    command(root, 6, "upgrade-failure");
     ready(peer, id, tcp ? std::optional<bool>{true} : std::nullopt);
     application_roundtrip(peer, owner_ip, peer_ip);
     require(outsider.deliveries() == 0, "traffic escaped its virtual network after restart");

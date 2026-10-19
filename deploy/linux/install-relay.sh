@@ -41,13 +41,18 @@ offline=0
 [[ -z $prefix ]] || offline=1
 if (( !offline )); then
     (( EUID == 0 )) || { printf 'Run the installer as root\n' >&2; exit 1; }
-    source /etc/os-release
-    [[ $ID == ol && ${VERSION_ID%%.*} == 9 ]] || { printf 'This installer targets Oracle Linux 9; use --root for offline staging\n' >&2; exit 1; }
+    [[ $(uname -s) == Linux && -d /run/systemd/system ]] || { printf 'A Linux host running systemd is required; use --root for offline staging\n' >&2; exit 1; }
     command -v systemctl >/dev/null
     if (( firewall )); then
-        firewall-cmd --state >/dev/null || { printf 'firewalld must be running, or specify --no-firewall\n' >&2; exit 1; }
-        firewall_zone=${firewall_zone:-$(firewall-cmd --get-default-zone)}
-        [[ $firewall_zone =~ ^[a-zA-Z0-9_-]+$ ]] || exit 1
+        if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+            firewall_zone=${firewall_zone:-$(firewall-cmd --get-default-zone)}
+            [[ $firewall_zone =~ ^[a-zA-Z0-9_-]+$ ]] || exit 1
+        elif [[ -n $firewall_zone ]]; then
+            printf 'The requested firewall zone requires running firewalld\n' >&2; exit 1
+        else
+            firewall=0
+            printf 'Host firewall not modified. Allow the relay TCP/UDP port in your host and provider firewalls.\n'
+        fi
     fi
 fi
 [[ $package_directory != "$program_directory" ]] || { printf 'Extract the new package outside the installation directory\n' >&2; exit 1; }
@@ -131,7 +136,7 @@ dependency_report=$(LD_LIBRARY_PATH="$staging/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY
 [[ ! -d $config_directory ]] || cp -a -- "$config_directory" "$backup/config"
 [[ ! -f $unit_path ]] || cp -a -- "$unit_path" "$backup/unit"
 if (( !offline )); then
-    id lanlink >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/lanlink --shell /sbin/nologin lanlink
+    id lanlink >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/lanlink --shell "$(command -v nologin)" lanlink
     if systemctl is-enabled --quiet lanlink-relay.service; then was_enabled=1; fi
     if systemctl is-active --quiet lanlink-relay.service; then
         was_active=1

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -89,6 +90,7 @@ MIB_UNICASTIPADDRESS_ROW address_row(const NET_LUID& luid,
     row.Address.Ipv4.sin_family = AF_INET;
     row.Address.Ipv4.sin_addr.S_un.S_addr = htonl(address.address);
     row.OnLinkPrefixLength = address.prefix_length;
+    row.DadState = IpDadStatePreferred;
     return row;
 }
 
@@ -124,13 +126,14 @@ public:
         while (!addresses_.empty()) {
             remove(addresses_.begin()->first);
         }
-        if (original_mtu_ != 0) {
+        if (original_mtu_ != 0 || original_dad_transmits_) {
             MIB_IPINTERFACE_ROW row;
             InitializeIpInterfaceEntry(&row);
             row.InterfaceLuid = luid_;
             row.Family = AF_INET;
             if (GetIpInterfaceEntry(&row) == NO_ERROR) {
-                row.NlMtu = original_mtu_;
+                if (original_mtu_ != 0) row.NlMtu = original_mtu_;
+                if (original_dad_transmits_) row.DadTransmits = *original_dad_transmits_;
                 row.SitePrefixLength = 0;
                 static_cast<void>(SetIpInterfaceEntry(&row));
             }
@@ -193,12 +196,15 @@ public:
         row.InterfaceLuid = luid_;
         row.Family = AF_INET;
         check_windows(GetIpInterfaceEntry(&row), "GetIpInterfaceEntry");
-        if (row.NlMtu != mtu_) {
-            const auto previous = row.NlMtu;
+        if (row.NlMtu != mtu_ || row.DadTransmits != 0) {
+            const auto previous_mtu = row.NlMtu;
+            const auto previous_dad = row.DadTransmits;
             row.NlMtu = mtu_;
+            row.DadTransmits = 0;
             row.SitePrefixLength = 0;
             check_windows(SetIpInterfaceEntry(&row), "SetIpInterfaceEntry");
-            original_mtu_ = previous;
+            if (previous_mtu != mtu_) original_mtu_ = previous_mtu;
+            if (previous_dad != 0) original_dad_transmits_ = previous_dad;
         }
     }
 
@@ -420,6 +426,7 @@ private:
     AdapterHandle adapter_ = nullptr;
     NET_LUID luid_{};
     std::uint32_t original_mtu_ = 0;
+    std::optional<ULONG> original_dad_transmits_;
     bool owns_multicast_route_ = false;
     std::map<protocol::NetworkId, InstalledAddress> addresses_;
     SessionHandle session_ = nullptr;

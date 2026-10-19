@@ -166,7 +166,7 @@ function Set-LanLinkFirewallRules([string] $Executable) {
     }
     Get-NetFirewallRule -Name 'LanLink-Virtual-LAN' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -Name 'LanLink-Virtual-LAN' -DisplayName 'LanLink virtual LAN' -Group 'LanLink' `
-        -Direction Inbound -Action Allow -LocalAddress '10.77.0.0/16' -RemoteAddress '10.77.0.0/16' `
+        -Direction Inbound -Action Allow -LocalAddress '10.64.0.0/10' -RemoteAddress '10.64.0.0/10' `
         -Protocol Any -Profile Any | Out-Null
 }
 
@@ -184,6 +184,7 @@ function Register-LanLinkInstallation([string] $Directory, [string] $Version) {
     foreach ($entry in @{
         DisplayName = 'LanLink'; DisplayVersion = $Version; Publisher = 'Koreapanda4444'
         InstallLocation = $Directory; UninstallString = $command
+        DataDirectory = (Get-Content -LiteralPath (Join-Path $Directory 'installation.json') -Raw -Encoding UTF8 | ConvertFrom-Json).data_directory
         DisplayIcon = (Join-Path $Directory 'bin\lanlink-ui.exe')
     }.GetEnumerator()) {
         New-ItemProperty -Path $key -Name $entry.Key -Value $entry.Value -PropertyType String -Force | Out-Null

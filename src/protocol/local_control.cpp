@@ -1,5 +1,6 @@
 #include "lanlink/protocol/local_control.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <limits>
 
@@ -10,9 +11,36 @@ constexpr std::byte magic[]{std::byte{'L'}, std::byte{'L'},
                             std::byte{'C'}, std::byte{'P'}};
 
 bool valid_command(const LocalCommand command) {
-    return command >= LocalCommand::status && command <= LocalCommand::diagnostics;
+    return command >= LocalCommand::status && command <= LocalCommand::activity;
 }
 
+
+}
+
+std::vector<std::byte> encode_local_activity(const LocalActivity& activity) {
+    if (activity.requests.size() > 128) throw std::invalid_argument("too many pending requests");
+    std::vector<std::byte> output(activity.device_id.begin(), activity.device_id.end());
+    output.push_back(static_cast<std::byte>(activity.requests.size()));
+    for (const auto& event : activity.requests) {
+        const auto bytes = encode_network_event(event);
+        output.insert(output.end(), bytes.begin(), bytes.end());
+    }
+    return output;
+}
+
+LocalActivity decode_local_activity(const std::span<const std::byte> payload) {
+    constexpr std::size_t event_size = 1 + network_id_size + network_device_id_size;
+    if (payload.size() < network_device_id_size + 1) throw std::invalid_argument("invalid local activity");
+    const auto count = std::to_integer<unsigned>(payload[network_device_id_size]);
+    if (count > 128 || payload.size() != network_device_id_size + 1 + count * event_size) {
+        throw std::invalid_argument("invalid local activity size");
+    }
+    LocalActivity result;
+    std::copy_n(payload.begin(), network_device_id_size, result.device_id.begin());
+    for (std::size_t index = 0; index < count; ++index) {
+        result.requests.push_back(decode_network_event(payload.subspan(network_device_id_size + 1 + index * event_size, event_size)));
+    }
+    return result;
 }
 
 std::vector<std::byte> encode_local_message(const LocalMessage& message) {

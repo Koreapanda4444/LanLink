@@ -22,6 +22,8 @@ struct NetworkSnapshot {
     bool busy = false;
     std::optional<protocol::LocalDiagnostics> diagnostics;
     std::uint64_t diagnostics_generation = 0;
+    std::optional<protocol::NetworkPeerState> peers;
+    protocol::LocalActivity activity;
 };
 
 class NetworkModel {

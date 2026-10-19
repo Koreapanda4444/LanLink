@@ -11,7 +11,7 @@ Assert-LanLinkAdministrator
 $InstallDirectory = Get-LanLinkFullPath $InstallDirectory
 $markerPath = Join-Path $InstallDirectory 'installation.json'
 if (-not (Test-Path -LiteralPath $markerPath)) { throw 'A LanLink installation marker is required.' }
-$marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+$marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($marker.install_directory -ne $InstallDirectory) { throw 'The installation marker does not match this directory.' }
 $dataDirectory = Get-LanLinkFullPath $marker.data_directory
 if (Get-Service -Name LanLink -ErrorAction SilentlyContinue) {

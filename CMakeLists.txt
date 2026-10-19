@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(LanLink VERSION 0.1.0 LANGUAGES CXX)
+project(LanLink VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,7 +29,7 @@ endif()
 
 function(lanlink_enable_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive-)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
@@ -187,7 +187,7 @@ if(WIN32)
         apps/service/windows_service.cpp
     )
 
-    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport lanlink_local_ipc advapi32)
+    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport lanlink_local_ipc advapi32 shell32 ole32 uuid)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 
@@ -196,7 +196,7 @@ if(WIN32)
         apps/ui/network_model.cpp
     )
 
-    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc imgui::imgui d3d11 dxgi)
+    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc imgui::imgui d3d11 dxgi shell32 windowscodecs ole32)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
 

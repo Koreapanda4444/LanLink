@@ -34,6 +34,7 @@ if(LANLINK_PACKAGE_WINDOWS_CLIENT)
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Install-LanLink.ps1"
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Uninstall-LanLink.ps1"
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ClientSetup.psm1"
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/SetupClient.ps1"
         DESTINATION . COMPONENT client)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt" "${PROJECT_VERSION}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"
@@ -41,7 +42,7 @@ if(LANLINK_PACKAGE_WINDOWS_CLIENT)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-info.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/release/INSTALL.md"
         DESTINATION . COMPONENT client)
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/release/0.1.0.md"
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/release/${PROJECT_VERSION}.md"
         DESTINATION . RENAME RELEASE-NOTES.md COMPONENT client)
 
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)

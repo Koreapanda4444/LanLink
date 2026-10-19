@@ -117,15 +117,15 @@ RuntimeConfig parse_config(const std::string_view content) {
             } else if (key == "listen_host") {
                 config.listen_host = value;
             } else if (key == "tls_certificate_file") {
-                config.tls_certificate_file = std::string(value);
+                config.tls_certificate_file = std::u8string(value.begin(), value.end());
             } else if (key == "tls_private_key_file") {
-                config.tls_private_key_file = std::string(value);
+                config.tls_private_key_file = std::u8string(value.begin(), value.end());
             } else if (key == "device_identity_file") {
-                config.device_identity_file = std::string(value);
+                config.device_identity_file = std::u8string(value.begin(), value.end());
             } else if (key == "auth_token_file") {
-                config.auth_token_file = std::string(value);
+                config.auth_token_file = std::u8string(value.begin(), value.end());
             } else if (key == "relay_database_file") {
-                config.relay_database_file = std::string(value);
+                config.relay_database_file = std::u8string(value.begin(), value.end());
             } else if (key == "quic_handshake_timeout_ms") {
                 const auto parsed = parse_unsigned(value, key_view, line_number);
 
@@ -196,7 +196,7 @@ RuntimeConfig parse_config(const std::string_view content) {
                     fail(line_number, "invalid log_level");
                 }
             } else if (key == "log_directory") {
-                config.log_directory = std::string(value);
+                config.log_directory = std::u8string(value.begin(), value.end());
             } else if (key == "log_max_size_bytes") {
                 config.log_max_size_bytes = parse_unsigned(value, key_view, line_number);
             } else if (key == "log_max_files") {

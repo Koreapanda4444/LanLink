@@ -15,10 +15,10 @@ if(LANLINK_PACKAGE_RELAY)
         POST_EXCLUDE_REGEXES "^/lib/.*" "^/lib64/.*" "^/usr/lib/.*" "^/usr/lib64/.*"
         LIBRARY DESTINATION lib COMPONENT relay)
     install(PROGRAMS
-        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/oracle-linux/install-relay.sh"
-        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/oracle-linux/uninstall-relay.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/install-relay.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/uninstall-relay.sh"
         DESTINATION . COMPONENT relay)
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/deploy/oracle-linux/lanlink-relay.service"
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/lanlink-relay.service"
         DESTINATION . COMPONENT relay)
     if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
         foreach(dependency msquic openssl sqlite3)
@@ -32,7 +32,7 @@ if(LANLINK_PACKAGE_RELAY)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-info.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/release/INSTALL.md"
         DESTINATION . COMPONENT relay)
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/release/0.1.0.md"
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/release/${PROJECT_VERSION}.md"
         DESTINATION . RENAME RELEASE-NOTES.md COMPONENT relay)
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_NAME LanLink-relay)

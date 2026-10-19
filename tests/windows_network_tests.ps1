@@ -156,7 +156,23 @@ try {
                 $parts = ([IO.File]::ReadAllText($request)).Split(' ')
                 if ([int] $parts[0] -gt $completed) {
                     switch ($parts[1]) {
-                        'service-stop' { Invoke-LanLinkServiceCommand (Join-Path $program 'bin\lanlink-service.exe') @('--stop') }
+                        'service-stop' {
+                            if ($mode -eq 'quic') {
+                                $capture = Join-Path $env:RUNNER_TEMP 'lanlink-desktop-connected.png'
+                                $ui = Start-Child (Join-Path $program 'bin\lanlink-ui.exe') @('--screenshot', $capture)
+                                try {
+                                    if (-not $ui.WaitForExit(20000)) { Stop-Child $ui; throw 'Desktop capture timed out.' }
+                                    if ($ui.ExitCode -ne 0 -or -not (Test-Path $capture)) {
+                                        $detail = if (Test-Path ($capture + '.log')) { Get-Content ($capture + '.log') -Raw } else { $ui.StandardError.ReadToEnd() }
+                                        throw "The installed desktop UI did not render: $detail"
+                                    }
+                                    Write-Output '::group::Desktop rendering capture'
+                                    Write-Output ("LANLINK_DESKTOP_PNG=" + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capture)))
+                                    Write-Output '::endgroup::'
+                                } finally { $ui.Dispose() }
+                            }
+                            Invoke-LanLinkServiceCommand (Join-Path $program 'bin\lanlink-service.exe') @('--stop')
+                        }
                         'service-start' { Invoke-LanLinkServiceCommand (Join-Path $program 'bin\lanlink-service.exe') @('--start') }
                         'relay-stop' { Stop-Child $relay; $relay.Dispose(); $relay = $null }
                         'relay-start' { $relay = Start-Relay $configuration $port }
@@ -186,7 +202,7 @@ try {
         [IO.File]::WriteAllText((Join-Path $scenario 'driver.log'), $output + $errors, $encoding)
         Write-Output $output
         if ($driver.ExitCode -ne 0) { throw "Native $mode Windows scenario failed: $errors" }
-        if ($completed -ne 5) { throw 'The Windows restart and running-upgrade scenarios were incomplete.' }
+        if ($completed -ne 6) { throw 'The Windows restart and repeated running-upgrade scenarios were incomplete.' }
         $driver.Dispose()
         $driver = $null
         & (Join-Path $program 'Uninstall-LanLink.ps1') -InstallDirectory $program -RemoveData
@@ -198,9 +214,13 @@ try {
     $passed = $true
     Write-Output 'Real Windows service, two Wintun adapters, kernel TCP/UDP, QUIC/TCP fallback, certificate validation and restart scenarios passed.'
 } catch {
+    try { Stop-LanLinkService } catch { Write-Warning "Integration service stop failed: $_" }
     Get-ChildItem -LiteralPath $root -Filter '*.log' -File -Recurse | ForEach-Object {
         Write-Output "Integration diagnostic: $($_.FullName)"
         Get-Content -LiteralPath $_.FullName -Tail 30
+        if ($_.Name -eq 'service.log') {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $root 'service-failure.log') -Force
+        }
     }
     throw
 } finally {

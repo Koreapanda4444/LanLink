@@ -1,6 +1,9 @@
 #include "windows_service.hpp"
 
 #include <windows.h>
+#include <shobjidl.h>
+#include <shlguid.h>
+#include <wrl/client.h>
 
 #include <atomic>
 #include <chrono>
@@ -251,6 +254,27 @@ void stop() {
     const auto scm = manager(SC_MANAGER_CONNECT);
     const auto handle = opened_service(scm.get(), SERVICE_STOP | SERVICE_QUERY_STATUS);
     stop_service(handle.get());
+}
+
+void create_shortcut(const std::filesystem::path& path) {
+    const auto check = [](const HRESULT result, const char* operation) {
+        if (FAILED(result)) fail(operation, static_cast<DWORD>(result));
+    };
+    check(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED), "CoInitializeEx");
+    struct Apartment {
+        ~Apartment() { CoUninitialize(); }
+    } apartment;
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    check(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                           IID_PPV_ARGS(link.GetAddressOf())), "CoCreateInstance(ShellLink)");
+    const auto directory = executable_path().parent_path();
+    const auto target = directory / L"lanlink-ui.exe";
+    check(link->SetPath(target.c_str()), "IShellLinkW::SetPath");
+    check(link->SetWorkingDirectory(directory.c_str()), "IShellLinkW::SetWorkingDirectory");
+    check(link->SetDescription(L"LanLink"), "IShellLinkW::SetDescription");
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    check(link->QueryInterface(IID_PPV_ARGS(file.GetAddressOf())), "IShellLinkW::QueryInterface(IPersistFile)");
+    check(file->Save(path.c_str(), TRUE), "IPersistFile::Save");
 }
 
 void dispatch(std::optional<std::filesystem::path> config_path,

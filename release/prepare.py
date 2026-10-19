@@ -10,18 +10,20 @@ import tarfile
 import zipfile
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 BASELINE = "a1cae005c39be7b18ba319fced856b68d7276271"
 ARCHIVES = {
     "windows": f"LanLink-{VERSION}-windows-x64.zip",
-    "relay": f"LanLink-relay-{VERSION}-oraclelinux9-x86_64.tar.gz",
+    "relay": f"LanLink-relay-{VERSION}-linux-x86_64.tar.gz",
 }
+INSTALLER = f"LanLink-Setup-{VERSION}-windows-x64.exe"
+PACKAGES = set(ARCHIVES.values()) | {INSTALLER}
 COMMON = {"build-info.json", "INSTALL.md", "RELEASE-NOTES.md"}
 REQUIRED = {
     "windows": COMMON | {"bin/lanlink-service.exe", "bin/lanlink-ui.exe",
         "bin/lanlink-ui-cli.exe", "bin/wintun.dll", "bin/msquic.dll",
         "Install-LanLink.ps1", "Uninstall-LanLink.ps1", "ClientSetup.psm1",
-        "package-version.txt", "licenses/Wintun.txt", "licenses/msquic.txt",
+        "SetupClient.ps1", "package-version.txt", "licenses/Wintun.txt", "licenses/msquic.txt",
         "licenses/openssl.txt", "licenses/sqlite3.txt", "licenses/imgui.txt"},
     "relay": COMMON | {"bin/lanlink-relay", "install-relay.sh", "uninstall-relay.sh",
         "lanlink-relay.service", "relay-version.txt", "licenses/msquic.txt",
@@ -148,7 +150,7 @@ def inspect_package(path, kind, commit, require_clean=True, distribution=None, r
                         "Windows binary is not x64")
     else:
         require(metadata["system"] == "Linux" and metadata["distribution"] ==
-                (distribution or "oraclelinux9"), "relay distribution mismatch")
+                (distribution or "linux"), "relay distribution mismatch")
         version_file = "relay-version.txt"
         binary = files["bin/lanlink-relay"]
         require(len(binary) >= 20 and binary[:6] == b"\x7fELF\x02\x01" and
@@ -160,17 +162,31 @@ def inspect_package(path, kind, commit, require_clean=True, distribution=None, r
             "file_count": len(files) + len(links), "build": metadata}
 
 
+def inspect_installer(path, commit):
+    data = Path(path).read_bytes()
+    require(len(data) >= 160 and data[:2] == b"MZ", "invalid Windows installer")
+    offset = struct.unpack_from("<I", data, 60)[0]
+    require(offset <= len(data) - 6 and data[offset:offset + 4] == b"PE\0\0" and
+            struct.unpack_from("<H", data, offset + 4)[0] in (0x014c, 0x8664), "invalid installer architecture")
+    major, minor, patch = map(int, VERSION.split("."))
+    version = struct.pack("<IIII", 0xfeef04bd, 0x00010000, (major << 16) | minor, patch << 16)
+    require(version in data and commit.encode("utf-16-le") in data, "installer version or source commit mismatch")
+    return {"name": Path(path).name, "sha256": digest(path), "size_bytes": len(data),
+            "build": {"version": VERSION, "source_commit": commit, "system": "Windows", "architecture": "x64"}}
+
+
 def prepare(directory, commit):
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "a full source commit is required")
     directory = Path(directory)
-    found = {p.name for p in directory.iterdir() if p.name.endswith((".zip", ".tar.gz"))}
-    require(found == set(ARCHIVES.values()), "release must contain exactly the two supported archives")
+    found = {p.name for p in directory.iterdir() if p.name.endswith((".zip", ".tar.gz", ".exe"))}
+    require(found == PACKAGES, "release must contain exactly the three supported packages")
     assets = [inspect_package(directory / name, kind, commit) for kind, name in ARCHIVES.items()]
+    assets.append(inspect_installer(directory / INSTALLER, commit))
     manifest = {"version": VERSION, "source_commit": commit, "protocol_version": 5,
                 "vcpkg_baseline": BASELINE, "assets": assets}
     (directory / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     shutil.copyfile(Path(__file__).with_name("INSTALL.md"), directory / "INSTALL.md")
-    checksummed = sorted(list(ARCHIVES.values()) + ["release-manifest.json", "INSTALL.md"])
+    checksummed = sorted(list(PACKAGES) + ["release-manifest.json", "INSTALL.md"])
     (directory / "SHA256SUMS").write_text("".join(
         f"{digest(directory / name)}  {name}\n" for name in checksummed))
     verify(directory, commit)
@@ -186,12 +202,12 @@ def verify(directory, commit):
                 name == PurePosixPath(name).name and name not in entries, "invalid checksum entry")
         entries[name] = checksum
         require(digest(directory / name) == checksum, f"checksum mismatch for {name}")
-    require(set(entries) == set(ARCHIVES.values()) | {"release-manifest.json", "INSTALL.md"},
+    require(set(entries) == PACKAGES | {"release-manifest.json", "INSTALL.md"},
             "release checksum list is incomplete")
     manifest = json.loads((directory / "release-manifest.json").read_text())
     require(manifest["source_commit"] == commit and manifest["version"] == VERSION,
             "published release provenance mismatch")
-    require({asset["name"] for asset in manifest["assets"]} == set(ARCHIVES.values()),
+    require({asset["name"] for asset in manifest["assets"]} == PACKAGES,
             "release manifest is incomplete")
     for asset in manifest["assets"]:
         require(asset["sha256"] == entries[asset["name"]] and

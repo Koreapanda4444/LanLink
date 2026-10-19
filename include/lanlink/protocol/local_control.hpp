@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lanlink/protocol/network_messages.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -23,6 +25,15 @@ enum class LocalCommand : std::uint8_t {
     kick = 8,
     stop = 9,
     diagnostics = 10,
+    peers = 11,
+    activity = 12,
+};
+
+struct LocalActivity {
+    NetworkDeviceId device_id{};
+    std::vector<NetworkEvent> requests;
+
+    bool operator==(const LocalActivity&) const = default;
 };
 
 struct LocalDiagnostics {
@@ -54,5 +65,7 @@ struct LocalMessage {
     const LocalDiagnostics& diagnostics);
 [[nodiscard]] LocalDiagnostics decode_local_diagnostics(
     std::span<const std::byte> payload);
+[[nodiscard]] std::vector<std::byte> encode_local_activity(const LocalActivity& activity);
+[[nodiscard]] LocalActivity decode_local_activity(std::span<const std::byte> payload);
 
 }

@@ -30,7 +30,7 @@ $hadData = Test-Path -LiteralPath $DataDirectory
 if ($hadProgram) {
     $marker = Join-Path $InstallDirectory 'installation.json'
     if (-not (Test-Path -LiteralPath $marker)) { throw 'The target directory is not a LanLink installation.' }
-    $previous = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+    $previous = Get-Content -LiteralPath $marker -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($previous.install_directory -ne $InstallDirectory -or $previous.data_directory -ne $DataDirectory) {
         throw 'An upgrade must preserve the existing program and data directories.'
     }
@@ -121,12 +121,8 @@ try {
     try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
     $firewallChanged = $true
     Set-LanLinkFirewallRules $executable
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = Join-Path $InstallDirectory 'bin\lanlink-ui.exe'
-    $shortcut.WorkingDirectory = Join-Path $InstallDirectory 'bin'
     $shortcutChanged = $true
-    $shortcut.Save()
+    Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $shortcutPath)
     if (-not $NoStart) { Invoke-LanLinkServiceCommand $executable @('--start') }
     $registrationChanged = $true
     Register-LanLinkInstallation $InstallDirectory $version

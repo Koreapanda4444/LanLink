@@ -28,13 +28,15 @@ void NetworkModel::submit(const protocol::LocalCommand command,
                           std::vector<std::byte> payload) {
     if ((command < protocol::LocalCommand::list ||
          command > protocol::LocalCommand::kick) &&
-        command != protocol::LocalCommand::diagnostics) {
+        command != protocol::LocalCommand::diagnostics &&
+        command != protocol::LocalCommand::peers && command != protocol::LocalCommand::activity) {
         throw std::invalid_argument("unsupported desktop network command");
     }
     std::lock_guard lock(mutex_);
     if (stopping_) return;
     if (command == protocol::LocalCommand::list ||
-        command == protocol::LocalCommand::diagnostics) {
+        command == protocol::LocalCommand::diagnostics || command == protocol::LocalCommand::peers ||
+        command == protocol::LocalCommand::activity) {
         for (const auto& request : pending_) {
             if (request.command == command) return;
         }
@@ -75,11 +77,28 @@ void NetworkModel::process() {
                 ++state_.diagnostics_generation;
                 state_.service_online = true;
                 state_.error.clear();
+            } else if (request.command == protocol::LocalCommand::peers) {
+                auto peers = protocol::decode_network_peer_state(response.payload);
+                std::lock_guard lock(mutex_);
+                state_.peers = std::move(peers);
+            } else if (request.command == protocol::LocalCommand::activity) {
+                auto activity = protocol::decode_local_activity(response.payload);
+                std::lock_guard lock(mutex_);
+                state_.activity = std::move(activity);
             } else {
                 const auto result = protocol::decode_network_operation_result(response.payload);
                 std::lock_guard lock(mutex_);
-                state_.message = std::string{protocol::network_result_code_name(result.code)};
-                state_.error.clear();
+                const auto successful = result.code == protocol::NetworkResultCode::success ||
+                                        result.code == protocol::NetworkResultCode::pending_approval;
+                if (successful) {
+                    state_.message = result.code == protocol::NetworkResultCode::pending_approval
+                        ? "Join request sent. Waiting for the network owner to approve this device."
+                        : "Network updated.";
+                    state_.error.clear();
+                } else {
+                    state_.message.clear();
+                    state_.error = std::string{protocol::network_result_code_name(result.code)};
+                }
                 if (result.code == protocol::NetworkResultCode::success ||
                     result.code == protocol::NetworkResultCode::pending_approval) {
                     pending_.push_back({protocol::LocalCommand::list, false, false,
@@ -89,15 +108,18 @@ void NetworkModel::process() {
             }
         } catch (const std::exception& error) {
             std::lock_guard lock(mutex_);
-            state_.error = error.what();
-            state_.message.clear();
-            if (request.command == protocol::LocalCommand::list ||
-                request.command == protocol::LocalCommand::diagnostics) {
+            if (request.command != protocol::LocalCommand::peers && request.command != protocol::LocalCommand::activity) {
+                state_.error = error.what();
+                state_.message.clear();
+            }
+            if (request.command == protocol::LocalCommand::peers) state_.peers.reset();
+            if (request.command == protocol::LocalCommand::list) state_.networks.clear();
+            if (request.command == protocol::LocalCommand::diagnostics ||
+                (request.command == protocol::LocalCommand::list && !state_.diagnostics)) {
                 state_.service_online = false;
                 state_.diagnostics.reset();
-                if (request.command == protocol::LocalCommand::list) {
-                    state_.networks.clear();
-                }
+                state_.peers.reset();
+                state_.activity = {};
             }
         }
 

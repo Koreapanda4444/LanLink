@@ -1,27 +1,30 @@
 # LanLink
 
-LanLink는 중앙 릴레이를 통해 여러 Windows PC를 하나의 가상 IPv4 네트워크처럼 연결하는 프로젝트다. 특정 게임에 종속되지 않으며, 게임에서는 상대방의 LanLink 가상 IP로 접속한다.
+여러 Windows PC를 가상 IPv4 네트워크로 연결하는 프로그램이다. 게임이나 일반 애플리케이션에서 상대 기기의 LanLink IP로 접속한다. 예를 들어 게임 서버의 가상 IP가 `10.77.0.2`라면 `10.77.0.2:8211`처럼 사용한다.
 
-예를 들어 서버를 연 PC가 `10.77.0.2`를 받았다면 Palworld에서는 `10.77.0.2:8211`처럼 접속한다. Oracle VM의 공인 IP는 클라이언트가 릴레이에 연결할 때만 사용하며, 게임 주소로 사용하지 않는다.
+Windows 서비스가 연결과 가상 어댑터를 유지하고, 데스크톱 UI에서 네트워크 생성·가입·기기 승인·가상 IP 복사를 처리한다. QUIC UDP를 사용하며 연결할 수 없으면 TLS TCP로 전환한다. 가상 네트워크 패킷은 클라이언트 사이에서 암호화하고 릴레이는 암호문을 전달한다.
 
-## 구성 요소
+## 설치
 
-- `lanlink-relay`: Linux 서버에서 실행할 중앙 패킷 릴레이
-- `lanlink-service`: Windows 부팅 시 자동 시작할 백그라운드 클라이언트
-- `lanlink-ui`: Dear ImGui Win32/DirectX 11 관리 화면
-- `lanlink-core`: 세 실행 파일이 공유하는 C++ 코드
+[Releases](https://github.com/Koreapanda4444/LanLink/releases/latest)에서 Windows용 `LanLink-Setup-0.2.0-windows-x64.exe`를 실행한다. 릴레이 주소와 관리자가 전달한 인증 토큰 파일을 입력하면 서비스, UI, 런타임 라이브러리와 Wintun을 함께 설치한다. ZIP은 PowerShell로 수동 설치할 때 사용한다.
 
+릴레이는 특정 클라우드에 종속되지 않는다. Oracle Cloud, 다른 VPS, 자체 서버에서 운영할 수 있다. 배포 파일은 Linux x64용이며 glibc 2.34 이상과 systemd를 기준으로 한다. 같은 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검증한다. 서버 설치와 방화벽 설정은 [설치 안내](release/INSTALL.md)를 참고한다.
 
-## 빌드
+## 구성
 
-필요 도구:
+- `lanlink-relay`: 서버의 패킷 중계와 네트워크 관리
+- `lanlink-service`: Windows 자동 시작 서비스와 Wintun 가상 어댑터
+- `lanlink-ui`: 네트워크·기기·접속 상태를 관리하는 데스크톱 화면
+- `lanlink-ui-cli`: 명령줄 관리 도구
 
-- CMake 3.24 이상
-- C++20 컴파일러
+## 소스 빌드
+
+CMake 3.24 이상, C++20 컴파일러, 저장소 `vcpkg.json`의 baseline과 일치하는 vcpkg가 필요하다.
 
 ```sh
-cmake -S . -B build
-cmake --build build
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
+ctest --test-dir build --build-config Release --output-on-failure
 ```
 
-Linux에서는 `lanlink-relay`만 빌드한다. Windows에서는 릴레이, 서비스, UI 실행 파일을 모두 빌드한다.
+Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux 릴레이 패키지는 `VCPKG_ROOT`를 지정한 뒤 `bash deploy/linux/build-relay.sh`로 만든다. 직접 빌드하는 서버의 라이브러리·glibc 요구 사항은 해당 빌드 환경을 따른다.

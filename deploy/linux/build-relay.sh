@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source /etc/os-release
-[[ $ID == ol && ${VERSION_ID%%.*} == 9 ]] || { printf 'Build the relay distribution on Oracle Linux 9\n' >&2; exit 1; }
+[[ $(uname -s) == Linux ]] || { printf 'Build the relay distribution on Linux\n' >&2; exit 1; }
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 build_directory=${1:-"$repository/build/relay"}
 cmake_binary=${LANLINK_CMAKE_BIN:-cmake}
@@ -27,7 +26,7 @@ fi
 "$cmake_binary" -S "$repository" -B "$build_directory" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET="$triplet" \
     -DCMAKE_TOOLCHAIN_FILE="$vcpkg_directory/scripts/buildsystems/vcpkg.cmake" \
-    -DLANLINK_PACKAGE_RELAY=ON -DLANLINK_RELAY_PACKAGE_PLATFORM=oraclelinux9
+    -DLANLINK_PACKAGE_RELAY=ON -DLANLINK_RELAY_PACKAGE_PLATFORM=linux
 "$cmake_binary" --build "$build_directory" --parallel "${LANLINK_BUILD_JOBS:-2}"
 cmake_bin_directory=$(dirname -- "$(command -v "$cmake_binary")")
 "$cmake_bin_directory/ctest" --test-dir "$build_directory" --output-on-failure

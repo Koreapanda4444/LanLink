@@ -120,7 +120,7 @@ try {
     $registration = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink'
     Assert-True ($registration.InstallLocation -eq $program -and $registration.UninstallString.Contains('Uninstall-LanLink.ps1')) 'The installation must appear in Windows installed apps.'
     $build = Get-Content (Join-Path $program 'build-info.json') -Raw | ConvertFrom-Json
-    Assert-True ($build.version -eq '0.1.0' -and $build.source_clean -and $build.architecture -eq 'x64') 'Installed build metadata must identify the release.'
+    Assert-True ($build.version -eq '0.2.0' -and $build.source_clean -and $build.architecture -eq 'x64') 'Installed build metadata must identify the release.'
     Assert-True ((Test-Path (Join-Path $program 'INSTALL.md')) -and (Test-Path (Join-Path $program 'RELEASE-NOTES.md'))) 'Installation instructions and release notes must be preserved.'
     $config = [IO.File]::ReadAllBytes((Join-Path $state 'client.conf'))
     Assert-True ($config[0] -eq [byte][char]'r') 'The configuration must be UTF-8 without a BOM.'
@@ -160,8 +160,8 @@ try {
     $rules = @(Get-NetFirewallRule -Group LanLink)
     Assert-True ($rules.Count -eq 3) 'Repeated installation must create exactly three firewall rules.'
     $filter = Get-NetFirewallRule -Name LanLink-Virtual-LAN | Get-NetFirewallAddressFilter
-    Assert-True ($filter.RemoteAddress -contains '10.77.0.0/255.255.0.0' -or $filter.RemoteAddress -contains '10.77.0.0/16') 'Inbound access must be limited to the virtual address pool.'
-    Assert-True ($filter.LocalAddress -contains '10.77.0.0/255.255.0.0' -or $filter.LocalAddress -contains '10.77.0.0/16') 'Inbound rules must target virtual LAN addresses before the adapter exists.'
+    Assert-True ($filter.RemoteAddress -contains '10.64.0.0/255.192.0.0' -or $filter.RemoteAddress -contains '10.64.0.0/10') 'Inbound access must be limited to the virtual address pool.'
+    Assert-True ($filter.LocalAddress -contains '10.64.0.0/255.192.0.0' -or $filter.LocalAddress -contains '10.64.0.0/10') 'Inbound rules must target virtual LAN addresses before the adapter exists.'
     & $uninstall -InstallDirectory $program
     Assert-True (-not (Test-Path $program)) 'Uninstall must remove program files.'
     Assert-True (-not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink')) 'Uninstall must remove its Windows registration.'

@@ -13,6 +13,7 @@ void install(std::optional<std::filesystem::path> config_path);
 void uninstall();
 void start();
 void stop();
+void create_shortcut(const std::filesystem::path& path);
 void dispatch(std::optional<std::filesystem::path> config_path,
               const std::filesystem::path& working_directory,
               Runtime runtime);

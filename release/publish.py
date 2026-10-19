@@ -21,6 +21,15 @@ def api(path):
     return json.loads(result.stdout)
 
 
+def retire_previous(repository):
+    previous = "v0.1.0"
+    if api(f"repos/{repository}/releases/tags/{previous}") is not None:
+        gh("release", "delete", previous, "--yes", "--cleanup-tag")
+        require(api(f"repos/{repository}/releases/tags/{previous}") is None and
+                api(f"repos/{repository}/git/ref/tags/{previous}") is None,
+                "previous release cleanup is incomplete")
+
+
 def main(directory, commit):
     directory = Path(directory)
     verify(directory, commit)
@@ -43,11 +52,12 @@ def main(directory, commit):
         with tempfile.TemporaryDirectory(prefix="lanlink-published-") as temporary:
             gh("release", "download", tag, "--dir", temporary)
             verify(temporary, commit)
+        retire_previous(repository)
         print(f"Verified existing release: {release['html_url']}")
         return
 
     assets = sorted(str(path) for path in directory.iterdir() if path.is_file())
-    require(len(assets) == 5, "release directory contains unexpected files")
+    require(len(assets) == 6, "release directory contains unexpected files")
     if release is None:
         gh("release", "create", tag, *assets, "--draft", "--target", commit,
            "--title", f"LanLink {VERSION}", "--notes-file", str(Path(__file__).with_name(f"{VERSION}.md")))
@@ -58,8 +68,9 @@ def main(directory, commit):
         verify(temporary, commit)
     gh("release", "edit", tag, "--draft=false", "--latest")
     published = api(f"repos/{repository}/releases/tags/{tag}")
-    require(published is not None and not published["draft"] and len(published["assets"]) == 5,
-            "release was not published with all five assets")
+    require(published is not None and not published["draft"] and len(published["assets"]) == 6,
+            "release was not published with all six assets")
+    retire_previous(repository)
     print(f"Published {published['html_url']}")
 
 

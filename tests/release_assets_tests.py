@@ -42,12 +42,12 @@ def fixture_files(kind):
     if kind == "relay":
         result["bin/lanlink-relay"] = linux_binary()
         result["lib/libmsquic.so.2.4.8"] = linux_binary()
-    result["package-version.txt" if kind == "windows" else "relay-version.txt"] = b"0.1.0\n"
+    result["package-version.txt" if kind == "windows" else "relay-version.txt"] = b"0.2.0\n"
     result["build-info.json"] = json.dumps({
-        "version": "0.1.0", "source_commit": COMMIT, "source_clean": True,
+        "version": "0.2.0", "source_commit": COMMIT, "source_clean": True,
         "protocol_version": 5, "system": "Windows" if kind == "windows" else "Linux",
-        "distribution": "Windows" if kind == "windows" else "oraclelinux9", "architecture": "x64",
-        "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": "0.1.0"},
+        "distribution": "Windows" if kind == "windows" else "linux", "architecture": "x64",
+        "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": "0.2.0"},
     }).encode()
     return result
 
@@ -75,27 +75,44 @@ def write_package(directory, kind, files=None, links=None, root=""):
     return path
 
 
+def write_installer(directory, commit=COMMIT):
+    data = bytearray(windows_binary(0x014c))
+    major, minor, patch = map(int, prepare.VERSION.split("."))
+    data.extend(struct.pack("<IIII", 0xfeef04bd, 0x00010000, (major << 16) | minor, patch << 16))
+    data.extend(commit.encode("utf-16-le"))
+    (directory / prepare.INSTALLER).write_bytes(data)
+
+
 class ReleaseAssetsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="lanlink-release-tests-")
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
+        write_installer(self.directory)
 
     def test_release_provenance_and_checksums(self):
         for kind in prepare.ARCHIVES:
             write_package(self.directory, kind)
         manifest = prepare.prepare(self.directory, COMMIT)
         self.assertEqual(manifest["source_commit"], COMMIT)
-        self.assertEqual(len(manifest["assets"]), 2)
-        self.assertEqual(len((self.directory / "SHA256SUMS").read_text().splitlines()), 4)
+        self.assertEqual(len(manifest["assets"]), 3)
+        self.assertEqual(len((self.directory / "SHA256SUMS").read_text().splitlines()), 5)
         self.assertEqual(prepare.verify(self.directory, COMMIT), manifest)
         with (self.directory / prepare.ARCHIVES["windows"]).open("ab") as destination:
             destination.write(b"changed after validation")
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             prepare.verify(self.directory, COMMIT)
 
+    def test_installer_provenance(self):
+        self.assertEqual(prepare.inspect_installer(self.directory / prepare.INSTALLER, COMMIT)["build"]["version"], prepare.VERSION)
+        with self.assertRaisesRegex(ValueError, "source commit"):
+            prepare.inspect_installer(self.directory / prepare.INSTALLER, "b" * 40)
+        (self.directory / prepare.INSTALLER).write_bytes(b"not an executable")
+        with self.assertRaisesRegex(ValueError, "invalid Windows installer"):
+            prepare.inspect_installer(self.directory / prepare.INSTALLER, COMMIT)
+
     def test_package_metadata_mismatch(self):
-        for field, value in (("source_commit", "b" * 40), ("version", "0.2.0"),
+        for field, value in (("source_commit", "b" * 40), ("version", "0.3.0"),
                              ("source_clean", False), ("architecture", "arm64"),
                              ("protocol_version", 4), ("distribution", "ubuntu")):
             with self.subTest(field=field):
@@ -143,13 +160,13 @@ class ReleaseAssetsTests(unittest.TestCase):
 
     def test_partial_release_is_rejected(self):
         write_package(self.directory, "windows")
-        with self.assertRaisesRegex(ValueError, "two supported archives"):
+        with self.assertRaisesRegex(ValueError, "three supported packages"):
             prepare.prepare(self.directory, COMMIT)
 
     def test_optional_top_directory(self):
         for kind in prepare.ARCHIVES:
             path = write_package(self.directory, kind, root="LanLink-package")
-            self.assertEqual(prepare.inspect_package(path, kind, COMMIT)["build"]["version"], "0.1.0")
+            self.assertEqual(prepare.inspect_package(path, kind, COMMIT)["build"]["version"], "0.2.0")
 
     def test_checksum_list_cannot_drop_a_package(self):
         for kind in prepare.ARCHIVES:
