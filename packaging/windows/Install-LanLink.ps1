@@ -142,12 +142,10 @@ try {
             }
             if ($programBackedUp) { Move-Item -LiteralPath $backup -Destination $InstallDirectory }
         },
+        { if ($dataChanged) { Restore-LanLinkFile $configPath $oldConfig } },
+        { if ($dataChanged) { Restore-LanLinkFile $tokenPath $oldToken } },
         {
             if ($dataChanged) {
-                foreach ($entry in @(@{ path = $configPath; bytes = $oldConfig }, @{ path = $tokenPath; bytes = $oldToken })) {
-                    if ($null -ne $entry.bytes) { [IO.File]::WriteAllBytes($entry.path, $entry.bytes) }
-                    elseif (Test-Path -LiteralPath $entry.path) { Remove-Item -LiteralPath $entry.path -Force }
-                }
                 if ($hadData) { Set-Acl -LiteralPath $DataDirectory -AclObject $oldDataAcl }
                 elseif (Test-Path -LiteralPath $DataDirectory) { Remove-Item -LiteralPath $DataDirectory -Recurse -Force }
             }
@@ -155,21 +153,24 @@ try {
         { if ($firewallChanged) { Restore-LanLinkFirewallRules $firewallBackups } },
         {
             if ($shortcutChanged) {
-                if ($null -ne $oldShortcut) { [IO.File]::WriteAllBytes($shortcutPath, $oldShortcut) }
-                elseif (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
+                Restore-LanLinkFile $shortcutPath $oldShortcut
             }
         },
         { if ($registrationChanged) { Restore-LanLinkRegistration $oldRegistration } },
         {
             if ($hadService -and ($serviceChanged -or $serviceStopped)) {
                 $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
-                if ($serviceChanged) {
-                    Push-Location $DataDirectory
-                    try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
-                }
-                if ($wasRunning) { Invoke-LanLinkServiceCommand $executable @('--start') }
                 $startupType = switch ($serviceStartMode) { 'Auto' { 'Automatic' }; 'Manual' { 'Manual' }; 'Disabled' { 'Disabled' } }
-                Set-Service -Name LanLink -StartupType $startupType
+                try {
+                    if ($rollbackErrors.Count -ne 0) {
+                        throw 'Service restart was skipped because rollback did not fully restore the previous state.'
+                    }
+                    if ($serviceChanged) {
+                        Push-Location $DataDirectory
+                        try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
+                    }
+                    if ($wasRunning) { Invoke-LanLinkServiceCommand $executable @('--start') }
+                } finally { Set-Service -Name LanLink -StartupType $startupType }
             }
         }
     )

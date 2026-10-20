@@ -146,6 +146,8 @@ try {
         if (-not $source.Contains($anchor)) { throw 'The running-upgrade failure anchor is missing.' }
         $source = $source.Replace($anchor, $anchor + "`n    throw 'Injected running upgrade failure'")
         [IO.File]::WriteAllText($faultyInstaller, $source, $encoding)
+        $replacementToken = Join-Path $scenario 'replacement.token'
+        [IO.File]::WriteAllText($replacementToken, 'lanlink-live-rollback-replacement-token-2026', $encoding)
         $driver = Start-Child $DriverExecutable @($scenario, "$clientPort", $mode, "$port")
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
         $completed = 0
@@ -187,6 +189,33 @@ try {
                             if ((Get-FileHash (Join-Path $state 'device.identity')).Hash -ne $identityHash -or
                                 (Get-FileHash (Join-Path $state 'auth.token')).Hash -ne $tokenHash) { throw 'Rollback changed the live client credentials.' }
                         }
+                        { $_ -like 'upgrade-locked-*' } {
+                            $name = if ($parts[1] -eq 'upgrade-locked-config') { 'client.conf' } else { 'auth.token' }
+                            $identityHash = (Get-FileHash (Join-Path $state 'device.identity')).Hash
+                            $tokenHash = (Get-FileHash (Join-Path $state 'auth.token')).Hash
+                            $configHash = (Get-FileHash (Join-Path $state 'client.conf')).Hash
+                            $acl = Get-Acl -LiteralPath $state
+                            $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+                                [Security.Principal.WindowsIdentity]::GetCurrent().User, 'ReadAndExecute', 'Allow'))
+                            Set-Acl -LiteralPath $state -AclObject $acl
+                            $oldAcl = (Get-Acl -LiteralPath $state).Sddl
+                            $locked = [IO.File]::Open((Join-Path $state $name), [IO.FileMode]::Open,
+                                [IO.FileAccess]::Read, [IO.FileShare]::Read)
+                            $caught = $null
+                            try {
+                                & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -RelayHost replacement.example `
+                                    -AuthenticationTokenFile $replacementToken -InstallDirectory $program -DataDirectory $state -NoStart
+                            } catch { $caught = $_ }
+                            finally { $locked.Dispose() }
+                            if ($null -eq $caught -or $caught.Exception.Message.Contains('rollback was incomplete')) { throw "Unexpected locked-file rollback result: $caught" }
+                            if ($caught.Exception.GetBaseException().HResult -ne -2147024864) { throw "The running upgrade did not reach the expected file-sharing violation: $caught" }
+                            if ((Get-CimInstance Win32_Service -Filter "Name='LanLink'").State -ne 'Running') { throw 'Locked-file rollback did not restart the previously running service.' }
+                            if ((Get-FileHash (Join-Path $state 'device.identity')).Hash -ne $identityHash -or
+                                (Get-FileHash (Join-Path $state 'auth.token')).Hash -ne $tokenHash -or
+                                (Get-FileHash (Join-Path $state 'client.conf')).Hash -ne $configHash -or
+                                (Get-Acl -LiteralPath $state).Sddl -ne $oldAcl) { throw 'Locked-file rollback changed the live client configuration, credentials or ACL.' }
+                            Write-Output "$mode running upgrade with locked ${name}: previous service restored."
+                        }
                         default { throw 'Invalid integration process control command.' }
                     }
                     $completed = [int] $parts[0]
@@ -202,7 +231,7 @@ try {
         [IO.File]::WriteAllText((Join-Path $scenario 'driver.log'), $output + $errors, $encoding)
         Write-Output $output
         if ($driver.ExitCode -ne 0) { throw "Native $mode Windows scenario failed: $errors" }
-        if ($completed -ne 6) { throw 'The Windows restart and repeated running-upgrade scenarios were incomplete.' }
+        if ($completed -ne 8) { throw 'The Windows restart and running-upgrade recovery scenarios were incomplete.' }
         $driver.Dispose()
         $driver = $null
         & (Join-Path $program 'Uninstall-LanLink.ps1') -InstallDirectory $program -RemoveData

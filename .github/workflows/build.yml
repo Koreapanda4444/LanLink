@@ -26,6 +26,15 @@ jobs:
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
     steps:
       - uses: actions/checkout@v5
+      - name: Validate Windows installer script syntax
+        if: runner.os == 'Windows'
+        run: |
+          Get-ChildItem packaging/windows, tests -Recurse -File -Include *.ps1, *.psm1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref] $tokens, [ref] $errors) | Out-Null
+            if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+          }
       - name: Checkout vcpkg baseline
         uses: actions/checkout@v5
         with:
@@ -90,13 +99,25 @@ jobs:
           Expand-Archive $archive.FullName "$env:RUNNER_TEMP/client-package"
           $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
           & ./tests/windows_package_tests.ps1 -PackageDirectory $installer.DirectoryName
+      - name: Reproduce and verify locked-file installation recovery
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.2.0 --repo "$env:GITHUB_REPOSITORY" --pattern LanLink-0.2.0-windows-x64.zip --dir "$env:RUNNER_TEMP/rollback-baseline"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download the released rollback regression fixture.' }
+          Expand-Archive "$env:RUNNER_TEMP/rollback-baseline/LanLink-0.2.0-windows-x64.zip" "$env:RUNNER_TEMP/rollback-baseline-expanded"
+          $baseline = Get-ChildItem "$env:RUNNER_TEMP/rollback-baseline-expanded" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
+          & ./tests/windows_rollback_lock_tests.ps1 -PackageDirectory $baseline.DirectoryName -ExpectIncompleteRollback
+          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
+          & ./tests/windows_rollback_lock_tests.ps1 -PackageDirectory $installer.DirectoryName
       - name: Build Windows EXE installer
         if: runner.os == 'Windows'
         run: |
           $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
           if (-not (Test-Path $iscc)) { throw 'The runner must provide Inno Setup 6.' }
           $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=0.2.0 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
+          & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=0.2.1 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
           if ($LASTEXITCODE -ne 0) { throw 'EXE installer compilation failed.' }
       - name: Test Windows EXE installer
         if: runner.os == 'Windows'
@@ -216,7 +237,7 @@ jobs:
       - name: Test the same Linux relay package
         run: python3 tests/relay_package_tests.py relay-package/*.tar.gz
   verify-release:
-    name: Verify 0.2.0 release packages
+    name: Verify 0.2.1 release packages
     needs: [build, relay-linux, relay-compatibility]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -236,19 +257,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           overwrite: true
-          name: LanLink-0.2.0-release
+          name: LanLink-0.2.1-release
           path: release-assets/*
           if-no-files-found: error
   release:
-    name: Publish LanLink 0.2.0
+    name: Publish LanLink 0.2.1
     needs: verify-release
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      startsWith(github.event.head_commit.message, 'release: package LanLink 0.2.0')
+      startsWith(github.event.head_commit.message, 'release: package LanLink 0.2.1')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: lanlink-release-0.2.0
+      group: lanlink-release-0.2.1
       cancel-in-progress: false
     permissions:
       contents: write
@@ -257,7 +278,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
-          name: LanLink-0.2.0-release
+          name: LanLink-0.2.1-release
           path: release-assets
       - name: Publish verified release
         env:

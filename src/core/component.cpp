@@ -1,7 +1,7 @@
 #include "lanlink/core/component.hpp"
 
 #ifndef LANLINK_VERSION
-#define LANLINK_VERSION "0.2.0-dev"
+#define LANLINK_VERSION "0.2.1-dev"
 #endif
 
 namespace lanlink::core {

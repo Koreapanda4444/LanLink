@@ -33,7 +33,7 @@ try {
     $service = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
     if ($service.State -ne 'Stopped' -or $service.StartMode -ne 'Auto') { throw 'EXE setup did not register an automatic service.' }
     $build = Get-Content (Join-Path $program 'build-info.json') -Raw | ConvertFrom-Json
-    if ($build.version -ne '0.2.0' -or $build.source_commit -ne $env:GITHUB_SHA) { throw 'EXE payload provenance differs from the CI commit.' }
+    if ($build.version -ne '0.2.1' -or $build.source_commit -ne $env:GITHUB_SHA) { throw 'EXE payload provenance differs from the CI commit.' }
     & (Join-Path $program 'bin\lanlink-service.exe') --start
     if ($LASTEXITCODE -ne 0) { throw 'The EXE-installed service could not start from a Unicode path.' }
     if (-not (Test-Path (Join-Path $state 'device.identity'))) { throw 'The service did not create its identity in the selected Unicode data directory.' }
@@ -68,6 +68,29 @@ try {
     [IO.File]::WriteAllText($invalidToken, 'too-short')
     Invoke-Setup @("/TokenFile=$invalidToken", '/NoStart=1') $false
     if ((Get-FileHash (Join-Path $state 'auth.token')).Hash -ne $tokenHash) { throw 'Rejected EXE upgrade changed the token.' }
+    $replacementToken = Join-Path $root 'replacement token'
+    [IO.File]::WriteAllText($replacementToken, 'lanlink-executable-replacement-token-2026')
+    foreach ($name in 'client.conf', 'auth.token') {
+        $acl = Get-Acl -LiteralPath $state
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            [Security.Principal.WindowsIdentity]::GetCurrent().User, 'ReadAndExecute', 'Allow'))
+        Set-Acl -LiteralPath $state -AclObject $acl
+        $oldAcl = (Get-Acl -LiteralPath $state).Sddl
+        $locked = [IO.File]::Open((Join-Path $state $name), [IO.FileMode]::Open,
+            [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try { Invoke-Setup @('/RelayHost=replacement.example', "/TokenFile=$replacementToken", '/NoStart=1') $false }
+        finally { $locked.Dispose() }
+        if ((Get-FileHash (Join-Path $state 'client.conf')).Hash -ne $configHash -or
+            (Get-FileHash (Join-Path $state 'auth.token')).Hash -ne $tokenHash -or
+            (Get-FileHash (Join-Path $state 'device.identity')).Hash -ne $identityHash -or
+            (Get-Acl -LiteralPath $state).Sddl -ne $oldAcl) { throw "EXE rollback did not restore persistent state after locking $name." }
+        $service = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
+        if ($service.State -ne 'Stopped' -or $service.StartMode -ne 'Auto') { throw 'EXE rollback changed the previous service state.' }
+        $transcript = Get-Content (Join-Path $root 'setup.log.client.log') -Raw
+        if ($transcript.Contains('rollback was incomplete')) { throw 'EXE rollback reported incomplete restoration.' }
+        if (-not $transcript.Contains('WriteAllText')) { throw 'The EXE test did not reach the locked-file write.' }
+        Write-Output "EXE upgrade with locked ${name}: previous state restored."
+    }
     & (Join-Path $program 'Uninstall-LanLink.ps1') -InstallDirectory $program -RemoveData
     if (Get-Service LanLink -ErrorAction SilentlyContinue) { throw 'EXE installation could not be uninstalled.' }
     Write-Output 'Windows EXE setup validation, provenance, installation, upgrade, failure propagation and uninstall passed.'

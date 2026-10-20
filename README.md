@@ -6,7 +6,7 @@ Windows 서비스가 연결과 가상 어댑터를 유지하고, 데스크톱 UI
 
 ## 설치
 
-[Releases](https://github.com/Koreapanda4444/LanLink/releases/latest)에서 Windows용 `LanLink-Setup-0.2.0-windows-x64.exe`를 실행한다. 릴레이 주소와 관리자가 전달한 인증 토큰 파일을 입력하면 서비스, UI, 런타임 라이브러리와 Wintun을 함께 설치한다. ZIP은 PowerShell로 수동 설치할 때 사용한다.
+[Releases](https://github.com/Koreapanda4444/LanLink/releases/latest)에서 Windows용 `LanLink-Setup-0.2.1-windows-x64.exe`를 실행한다. 릴레이 주소와 관리자가 전달한 인증 토큰 파일을 입력하면 서비스, UI, 런타임 라이브러리와 Wintun을 함께 설치한다. ZIP은 PowerShell로 수동 설치할 때 사용한다.
 
 릴레이는 특정 클라우드에 종속되지 않는다. Oracle Cloud, 다른 VPS, 자체 서버에서 운영할 수 있다. 배포 파일은 Linux x64용이며 glibc 2.34 이상과 systemd를 기준으로 한다. 같은 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검증한다. 서버 설치와 방화벽 설정은 [설치 안내](release/INSTALL.md)를 참고한다.
 

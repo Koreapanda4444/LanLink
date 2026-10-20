@@ -571,6 +571,12 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
     command(root, 6, "upgrade-failure");
     ready(peer, id, tcp ? std::optional<bool>{true} : std::nullopt);
     application_roundtrip(peer, owner_ip, peer_ip);
+    command(root, 7, "upgrade-locked-config");
+    ready(peer, id, tcp ? std::optional<bool>{true} : std::nullopt);
+    application_roundtrip(peer, owner_ip, peer_ip);
+    command(root, 8, "upgrade-locked-token");
+    ready(peer, id, tcp ? std::optional<bool>{true} : std::nullopt);
+    application_roundtrip(peer, owner_ip, peer_ip);
     require(outsider.deliveries() == 0, "traffic escaped its virtual network after restart");
     const auto kicked = protocol::decode_network_operation_result(local(protocol::LocalCommand::kick,
         protocol::encode_network_member_request({id, peer.identity.device_id()})));

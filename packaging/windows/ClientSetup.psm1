@@ -65,6 +65,22 @@ function Invoke-LanLinkServiceCommand([string] $Executable, [string[]] $Argument
     if ($LASTEXITCODE -ne 0) { throw "LanLink service command failed with exit code $LASTEXITCODE." }
 }
 
+function Restore-LanLinkFile([string] $Path, [byte[]] $Bytes) {
+    if ($null -eq $Bytes) {
+        if ([IO.File]::Exists($Path)) { Remove-Item -LiteralPath $Path -Force }
+        return
+    }
+    if ([IO.File]::Exists($Path)) {
+        $current = [IO.File]::ReadAllBytes($Path)
+        $equal = $current.Length -eq $Bytes.Length
+        for ($index = 0; $equal -and $index -lt $Bytes.Length; $index++) {
+            $equal = $current[$index] -eq $Bytes[$index]
+        }
+        if ($equal) { return }
+    }
+    [IO.File]::WriteAllBytes($Path, $Bytes)
+}
+
 function Stop-LanLinkService {
     $service = Get-Service -Name LanLink -ErrorAction SilentlyContinue
     if (-not $service) { return }
