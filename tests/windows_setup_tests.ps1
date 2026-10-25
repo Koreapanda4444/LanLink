@@ -33,7 +33,24 @@ try {
     $service = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
     if ($service.State -ne 'Stopped' -or $service.StartMode -ne 'Auto') { throw 'EXE setup did not register an automatic service.' }
     $build = Get-Content (Join-Path $program 'build-info.json') -Raw | ConvertFrom-Json
-    if ($build.version -ne '0.2.1' -or $build.source_commit -ne $env:GITHUB_SHA) { throw 'EXE payload provenance differs from the CI commit.' }
+    if ($build.version -ne '0.2.2' -or $build.source_commit -ne $env:GITHUB_SHA) { throw 'EXE payload provenance differs from the CI commit.' }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class LanLinkIconResources {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint ExtractIconEx(string file, int index, IntPtr large, IntPtr small, uint count);
+}
+'@
+    foreach ($name in 'lanlink-service.exe', 'lanlink-ui.exe', 'lanlink-ui-cli.exe') {
+        $executable = Join-Path $program "bin\$name"
+        if ([LanLinkIconResources]::ExtractIconEx($executable, -1, [IntPtr]::Zero, [IntPtr]::Zero, 0) -lt 1) {
+            throw "The installed $name has no embedded application icon."
+        }
+        if ((Get-Item $executable).VersionInfo.FileVersion -ne '0.2.2') {
+            throw "The installed $name has incorrect Windows version resources."
+        }
+    }
     & (Join-Path $program 'bin\lanlink-service.exe') --start
     if ($LASTEXITCODE -ne 0) { throw 'The EXE-installed service could not start from a Unicode path.' }
     if (-not (Test-Path (Join-Path $state 'device.identity'))) { throw 'The service did not create its identity in the selected Unicode data directory.' }

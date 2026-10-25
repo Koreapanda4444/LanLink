@@ -1,6 +1,7 @@
 #include "lanlink/core/component.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "network_model.hpp"
+#include "lanlink_resources.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -99,6 +100,7 @@ public:
         if (win32_ready_) ImGui_ImplWin32_Shutdown();
         if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
         target_.Reset();
+        logo_.Reset();
         context_.Reset();
         device_.Reset();
         swap_chain_.Reset();
@@ -118,6 +120,10 @@ public:
         klass.lpfnWndProc = window_proc;
         klass.hInstance = instance_;
         klass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        klass.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(IDI_LANLINK));
+        klass.hIconSm = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_LANLINK),
+            IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+        if (!klass.hIcon || !klass.hIconSm) throw std::runtime_error("Cannot load the LanLink application icon");
         klass.lpszClassName = window_class;
         if (!RegisterClassExW(&klass)) {
             throw std::runtime_error("RegisterClassExW failed");
@@ -152,6 +158,7 @@ public:
         }
         require(result, "D3D11CreateDeviceAndSwapChain");
         create_target();
+        create_logo();
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -283,6 +290,48 @@ private:
         }
     }
 
+    void create_logo() {
+        const auto resource = FindResourceW(instance_, MAKEINTRESOURCEW(IDB_LANLINK_LOGO), MAKEINTRESOURCEW(10));
+        if (!resource) throw std::runtime_error("Cannot find the LanLink logo");
+        const auto loaded = LoadResource(instance_, resource);
+        auto* data = static_cast<BYTE*>(LockResource(loaded));
+        const auto size = SizeofResource(instance_, resource);
+        if (!data || size == 0) throw std::runtime_error("Cannot load the LanLink logo");
+        Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+        require(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(factory.GetAddressOf())), "Logo imaging factory");
+        Microsoft::WRL::ComPtr<IWICStream> stream;
+        require(factory->CreateStream(stream.GetAddressOf()), "Logo stream");
+        require(stream->InitializeFromMemory(data, size), "Logo resource stream");
+        Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+        require(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad,
+            decoder.GetAddressOf()), "Logo PNG decoder");
+        Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+        require(decoder->GetFrame(0, frame.GetAddressOf()), "Logo frame");
+        Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+        require(factory->CreateFormatConverter(converter.GetAddressOf()), "Logo converter");
+        require(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom), "Logo pixel format");
+        UINT width = 0, height = 0;
+        require(converter->GetSize(&width, &height), "Logo dimensions");
+        if (width != 512 || height != 512) throw std::runtime_error("Unexpected logo dimensions");
+        std::vector<BYTE> pixels(width * height * 4);
+        require(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data()),
+            "Logo pixels");
+        D3D11_TEXTURE2D_DESC description{};
+        description.Width = width;
+        description.Height = height;
+        description.MipLevels = description.ArraySize = 1;
+        description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        description.SampleDesc.Count = 1;
+        description.Usage = D3D11_USAGE_IMMUTABLE;
+        description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        const D3D11_SUBRESOURCE_DATA initial{pixels.data(), width * 4, 0};
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+        require(device_->CreateTexture2D(&description, &initial, texture.GetAddressOf()), "Logo texture");
+        require(device_->CreateShaderResourceView(texture.Get(), nullptr, logo_.GetAddressOf()), "Logo view");
+    }
+
     void render() {
         namespace protocol = lanlink::protocol;
         const auto now = std::chrono::steady_clock::now();
@@ -336,7 +385,12 @@ private:
                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
         ImGui::Begin("LanLink", nullptr, flags);
         const bool connected = state.service_online && state.diagnostics && state.diagnostics->authenticated;
-        ImGui::Text("LanLink %s", lanlink::core::project_version().data());
+        ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(logo_.Get())), ImVec2(44, 44));
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::TextUnformatted("LanLink");
+        ImGui::TextDisabled("Private network  /  %s", lanlink::core::project_version().data());
+        ImGui::EndGroup();
         ImGui::SameLine(ImGui::GetWindowWidth() - 240);
         ImGui::TextColored(connected ? ImVec4(0.35f, 0.87f, 0.65f, 1) : ImVec4(0.95f, 0.70f, 0.35f, 1),
             "%s", connected ? "Connected" : state.service_online ? "Connecting to relay" : "Service unavailable");
@@ -602,6 +656,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> logo_;
     lanlink::ui::NetworkModel networks_;
     std::optional<lanlink::protocol::NetworkId> selected_;
     std::array<char, 129> name_{};

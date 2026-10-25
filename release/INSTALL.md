@@ -1,12 +1,12 @@
-# LanLink 0.2.1 설치
+# LanLink 0.2.2 설치
 
 ## 파일 선택
 
 | 파일 | 용도 |
 | --- | --- |
-| `LanLink-Setup-0.2.1-windows-x64.exe` | Windows 설치 프로그램 |
-| `LanLink-0.2.1-windows-x64.zip` | Windows 수동 설치 패키지 |
-| `LanLink-relay-0.2.1-linux-x86_64.tar.gz` | Linux x64 릴레이 서버 |
+| `LanLink-Setup-0.2.2-windows-x64.exe` | Windows 설치 프로그램 |
+| `LanLink-0.2.2-windows-x64.zip` | Windows 수동 설치 패키지 |
+| `LanLink-relay-0.2.2-linux-x86_64.tar.gz` | Linux x64 릴레이 서버 |
 
 `SHA256SUMS`에서 받은 파일의 해시를 확인한다. PowerShell에서는 `Get-FileHash 파일이름 -Algorithm SHA256`, Linux에서는 `sha256sum --check SHA256SUMS --ignore-missing`을 사용한다. `release-manifest.json`은 해당 빌드의 소스 커밋과 패키지 정보를 담는다.
 
@@ -68,7 +68,7 @@ relay_control_requests_per_second=32
 
 ## Windows 클라이언트
 
-`LanLink-Setup-0.2.1-windows-x64.exe`를 실행하고 릴레이 주소, 포트와 인증 토큰 파일을 입력한다. 관리자 권한이 필요하다. 기본 프로그램 위치는 `C:\Program Files\LanLink`, 데이터 위치는 `C:\ProgramData\LanLink`다. 필요한 DLL과 서명된 공식 Wintun을 포함하며, LanLink 자체 실행 파일과 설치 프로그램은 서명되지 않았다.
+`LanLink-Setup-0.2.2-windows-x64.exe`를 실행하고 릴레이 주소, 포트와 인증 토큰 파일을 입력한다. 관리자 권한이 필요하다. 기본 프로그램 위치는 `C:\Program Files\LanLink`, 데이터 위치는 `C:\ProgramData\LanLink`다. 필요한 DLL과 서명된 공식 Wintun을 포함하며, LanLink 자체 실행 파일과 설치 프로그램은 서명되지 않았다.
 
 설치가 끝나면 시작 메뉴에서 LanLink를 연다. 네트워크를 만들고 ID를 공유하거나, 전달받은 ID로 가입 요청을 보낸다. 소유자가 승인하면 가상 IP가 표시된다. 게임이나 애플리케이션에서는 상대 기기의 가상 IP를 사용한다. 창을 닫아도 Windows 서비스가 연결을 유지한다.
 

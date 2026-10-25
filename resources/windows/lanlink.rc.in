@@ -1,0 +1,33 @@
+#include <windows.h>
+#include "@PROJECT_SOURCE_DIR@/resources/windows/lanlink_resources.h"
+
+IDI_LANLINK ICON "@PROJECT_SOURCE_DIR@/assets/branding/lanlink.ico"
+IDB_LANLINK_LOGO RCDATA "@PROJECT_SOURCE_DIR@/assets/branding/lanlink.png"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Koreapanda4444\0"
+            VALUE "FileDescription", "@LANLINK_FILE_DESCRIPTION@\0"
+            VALUE "FileVersion", "@PROJECT_VERSION@\0"
+            VALUE "InternalName", "@LANLINK_FILE_NAME@\0"
+            VALUE "OriginalFilename", "@LANLINK_FILE_NAME@.exe\0"
+            VALUE "ProductName", "LanLink\0"
+            VALUE "ProductVersion", "@PROJECT_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

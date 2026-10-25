@@ -117,7 +117,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
           if (-not (Test-Path $iscc)) { throw 'The runner must provide Inno Setup 6.' }
           $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=0.2.1 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
+          & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=0.2.2 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
           if ($LASTEXITCODE -ne 0) { throw 'EXE installer compilation failed.' }
       - name: Test Windows EXE installer
         if: runner.os == 'Windows'
@@ -237,7 +237,7 @@ jobs:
       - name: Test the same Linux relay package
         run: python3 tests/relay_package_tests.py relay-package/*.tar.gz
   verify-release:
-    name: Verify 0.2.1 release packages
+    name: Verify 0.2.2 release packages
     needs: [build, relay-linux, relay-compatibility]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -257,19 +257,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           overwrite: true
-          name: LanLink-0.2.1-release
+          name: LanLink-0.2.2-release
           path: release-assets/*
           if-no-files-found: error
   release:
-    name: Publish LanLink 0.2.1
+    name: Publish LanLink 0.2.2
     needs: verify-release
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      startsWith(github.event.head_commit.message, 'release: package LanLink 0.2.1')
+      startsWith(github.event.head_commit.message, 'release: package LanLink 0.2.2')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: lanlink-release-0.2.1
+      group: lanlink-release-0.2.2
       cancel-in-progress: false
     permissions:
       contents: write
@@ -278,7 +278,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
-          name: LanLink-0.2.1-release
+          name: LanLink-0.2.2-release
           path: release-assets
       - name: Publish verified release
         env:

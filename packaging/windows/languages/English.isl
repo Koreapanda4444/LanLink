@@ -1,0 +1,44 @@
+[Messages]
+WelcomeLabel1=Welcome to LanLink
+WelcomeLabel2=Bring your PCs together on one private network.%n%nKeep your relay address and authentication token file ready. This wizard will set up the app, background service and virtual network adapter.%n%nYour identity and connection settings are preserved when you upgrade.
+FinishedHeadingLabel=LanLink is installed
+FinishedLabelNoIcons=Open LanLink to create a network or join one using its network ID.%n%nThe background service keeps your connection running when you close the app.
+ReadyLabel1=Review your LanLink settings before installing.
+
+[CustomMessages]
+OpenLanLink=Open LanLink
+ProgramTitle=App location
+ProgramSubtitle=Choose where to install LanLink
+ProgramDescription=The app and its connection settings are kept separately, so upgrades can preserve your identity.
+ProgramDirectory=App folder:
+RelayTitle=Relay connection
+RelaySubtitle=Connect your PCs through your relay
+RelayDescription=Enter the server address supplied by your administrator. When upgrading, leave the address empty to keep your current connection.
+RelayHost=Relay hostname or IP address:
+RelayPort=Port:
+TokenTitle=Authentication
+TokenSubtitle=Select your authentication token file
+TokenDescription=Use the token file supplied by your relay administrator. It is stored with restricted access. Leave this empty when upgrading to keep your current token.
+TokenFile=Authentication token file:
+AllFiles=All files
+DataTitle=Connection data
+DataSubtitle=Keep your identity and settings
+DataDescription=Your device identity, token and connection settings live here. When upgrading, keep the original folder.
+DataDirectory=Connection data folder:
+PortError=Enter a port between 1 and 65535.
+HostError=Enter a hostname or IP address without spaces, quotes or a URL scheme.
+HostRequired=A relay address is required for the first installation.
+TokenRequired=Select an authentication token file for the first installation.
+TokenMissing=The selected token file does not exist.
+KeepRelay=Keep the current relay connection
+KeepToken=Keep the current authentication token
+SummaryApp=App folder
+SummaryData=Connection data folder
+SummaryRelay=Relay connection
+SummaryToken=Authentication
+SummaryComponents=Included in this installation
+Components=Desktop app, background service, virtual network adapter and network rules
+ConfigureStatus=Setting up your LanLink connection...
+ConfigureDetails=Installing the service and applying your settings. This may take a moment.
+CannotRun=The LanLink installation could not start.
+InstallFailed=LanLink installation failed. Recovery of the previous installation was attempted. See the log for details:

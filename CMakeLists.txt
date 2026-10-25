@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(LanLink VERSION 0.2.1 LANGUAGES CXX)
+project(LanLink VERSION 0.2.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,9 +29,9 @@ endif()
 
 function(lanlink_enable_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/utf-8>")
     else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>")
     endif()
 endfunction()
 
@@ -206,6 +206,7 @@ if(WIN32)
     lanlink_enable_warnings(lanlink_ui_cli)
 endif()
 
+include(cmake/WindowsResources.cmake)
 include(cmake/BuildMetadata.cmake)
 include(CTest)
 include(cmake/ClientPackage.cmake)
