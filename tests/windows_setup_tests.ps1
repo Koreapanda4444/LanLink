@@ -25,11 +25,14 @@ function Invoke-Setup([string[]] $Arguments, [bool] $Success = $true) {
     } finally { $process.Dispose() }
 }
 try {
-    Invoke-Setup @("/DataDir=$state", '/NoStart=1') $false
+    Invoke-Setup @('/LANG=ko', "/DataDir=$state", '/NoStart=1') $false
+    $rejectedLog = Get-Content (Join-Path $root 'setup.log') -Raw
+    if (-not $rejectedLog.Contains('LanLink setup language: ko') -or
+        -not $rejectedLog.Contains('인증 토큰 파일')) { throw 'Korean setup did not localize its validation error.' }
     if ((Test-Path $program) -or (Test-Path $state) -or (Get-Service LanLink -ErrorAction SilentlyContinue)) {
         throw 'Rejected setup left a partial installation.'
     }
-    Invoke-Setup @("/DataDir=$state", '/RelayHost=127.0.0.1', '/RelayPort=4433', "/TokenFile=$token", '/NoStart=1')
+    Invoke-Setup @('/LANG=ko', "/DataDir=$state", '/RelayHost=127.0.0.1', '/RelayPort=4433', "/TokenFile=$token", '/NoStart=1')
     $service = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
     if ($service.State -ne 'Stopped' -or $service.StartMode -ne 'Auto') { throw 'EXE setup did not register an automatic service.' }
     $build = Get-Content (Join-Path $program 'build-info.json') -Raw | ConvertFrom-Json
@@ -77,7 +80,10 @@ public static class LanLinkIconResources {
     $configHash = (Get-FileHash (Join-Path $state 'client.conf')).Hash
     $tokenHash = (Get-FileHash (Join-Path $state 'auth.token')).Hash
     $identityHash = (Get-FileHash (Join-Path $state 'device.identity')).Hash
-    Invoke-Setup @('/NoStart=1')
+    Invoke-Setup @('/LANG=en', '/NoStart=1')
+    if (-not (Get-Content (Join-Path $root 'setup.log') -Raw).Contains('LanLink setup language: en')) {
+        throw 'The English language override was not applied during the upgrade.'
+    }
     if ((Get-FileHash (Join-Path $state 'client.conf')).Hash -ne $configHash -or
         (Get-FileHash (Join-Path $state 'auth.token')).Hash -ne $tokenHash -or
         (Get-FileHash (Join-Path $state 'device.identity')).Hash -ne $identityHash) { throw 'EXE upgrade changed persistent settings or credentials.' }

@@ -27,6 +27,8 @@ MinVersion=10.0
 WizardStyle=modern
 WizardSizePercent=125,125
 WizardResizable=no
+ShowLanguageDialog=yes
+LanguageDetectionMethod=uilanguage
 SetupIconFile=..\..\assets\branding\lanlink.ico
 WizardImageFile=..\..\assets\branding\installer-sidebar.bmp
 WizardSmallImageFile=..\..\assets\branding\installer-header.bmp
@@ -41,13 +43,15 @@ VersionInfoCopyright=Source commit: {#SourceCommit}
 CloseApplications=no
 RestartApplications=no
 
+[Languages]
+Name: "en"; MessagesFile: "compiler:Default.isl,languages\English.isl"
+Name: "ko"; MessagesFile: "languages\KoreanDefault.isl,languages\Korean.isl"
+
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{tmp}\LanLink"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Run]
 Filename: "{code:ProgramDirectory}\bin\lanlink-ui.exe"; Description: "{cm:OpenLanLink}"; Flags: postinstall nowait skipifsilent runasoriginaluser
-
-#include "languages\English.isl"
 
 [Code]
 var
@@ -100,6 +104,7 @@ procedure InitializeWizard;
 var
   DataDirectory: String;
 begin
+  Log('LanLink setup language: ' + ActiveLanguage);
   StyleWizard;
   ProgramPage := CreateInputDirPage(wpWelcome, CustomMessage('ProgramTitle'),
     CustomMessage('ProgramSubtitle'), CustomMessage('ProgramDescription'), False, '');
