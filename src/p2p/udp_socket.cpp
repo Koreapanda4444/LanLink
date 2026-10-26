@@ -53,7 +53,9 @@ bool UdpSocket::send(Endpoint destination,std::span<const std::byte> bytes) cons
 std::optional<Datagram> UdpSocket::receive(std::chrono::milliseconds timeout) const {
     timeout=std::clamp(timeout,std::chrono::milliseconds{0},std::chrono::milliseconds{2000});
     fd_set set; FD_ZERO(&set); FD_SET(impl_->socket,&set);
-    timeval duration{static_cast<long>(timeout.count()/1000),static_cast<long>((timeout.count()%1000)*1000)};
+    timeval duration{};
+    duration.tv_sec=static_cast<decltype(duration.tv_sec)>(timeout.count()/1000);
+    duration.tv_usec=static_cast<decltype(duration.tv_usec)>((timeout.count()%1000)*1000);
 #ifdef _WIN32
     const int nfds=0;
 #else
