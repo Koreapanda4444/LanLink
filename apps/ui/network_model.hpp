@@ -2,6 +2,7 @@
 
 #include "lanlink/protocol/local_control.hpp"
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/path_diagnostics.hpp"
 
 #include <condition_variable>
 #include <cstddef>
@@ -23,6 +24,7 @@ struct NetworkSnapshot {
     std::optional<protocol::LocalDiagnostics> diagnostics;
     std::uint64_t diagnostics_generation = 0;
     std::optional<protocol::NetworkPeerState> peers;
+    std::optional<protocol::PathDiagnostics> paths;
     protocol::LocalActivity activity;
 };
 
@@ -44,6 +46,7 @@ private:
     std::condition_variable wake_;
     std::deque<protocol::LocalMessage> pending_;
     NetworkSnapshot state_;
+    bool paths_supported_=true;
     bool stopping_ = false;
     std::thread worker_;
 };

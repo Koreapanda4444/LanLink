@@ -33,7 +33,7 @@ int main() {
         network.owner_device_id[0] = std::byte{2};
         network.name = "test-room";
         network.member_count = 1;
-        std::atomic<bool> relay_unavailable{false};
+        std::atomic<bool> relay_unavailable{false},paths_available{true};
         lanlink::transport::LocalPipeServer server([&](
             const protocol::LocalMessage& request) {
             if (request.command == protocol::LocalCommand::list) {
@@ -51,6 +51,13 @@ int main() {
                 metrics.rtt_us = 1200;
                 return protocol::LocalMessage{request.command, true, false,
                     protocol::encode_local_diagnostics(metrics)};
+            }
+            if(request.command==protocol::LocalCommand::path_diagnostics) {
+                if(!paths_available)throw std::runtime_error("unsupported local command");
+                protocol::PathDiagnostics metrics;protocol::PathStatus path;path.kind=protocol::PathKind::direct_quic;
+                path.lifecycle=protocol::PathLifecycle::authenticated;path.reason=protocol::PathReason::direct_ready;path.rtt_us=900;
+                metrics.peers.push_back({network.network_id,{std::byte{3}},0x0a4d0002,path});
+                return protocol::LocalMessage{request.command,true,false,protocol::encode_path_diagnostics(metrics)};
             }
             if (request.command == protocol::LocalCommand::create) {
                 const auto name = protocol::decode_network_create_request(request.payload).name;
@@ -93,6 +100,10 @@ int main() {
                    state.diagnostics->sent_bytes == 4096 &&
                    state.diagnostics->rtt_us == 1200;
         });
+        model.submit(protocol::LocalCommand::path_diagnostics);
+        wait_until("peer path diagnostics",[&]{const auto state=model.snapshot();return !state.busy && state.paths && state.paths->peers.size()==1 && state.paths->peers[0].path.kind==protocol::PathKind::direct_quic && state.paths->peers[0].path.rtt_us==900;});
+        paths_available=false;model.submit(protocol::LocalCommand::path_diagnostics);
+        wait_until("legacy service fallback",[&]{const auto state=model.snapshot();return !state.busy && !state.paths && state.service_online && state.error.empty() && !state.networks.empty();});
         model.submit(protocol::LocalCommand::activity);
         model.submit(protocol::LocalCommand::peers, protocol::encode_network_selection_request({network.network_id}));
         wait_until("desktop peers and requests", [&] {

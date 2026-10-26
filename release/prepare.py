@@ -10,7 +10,7 @@ import tarfile
 import zipfile
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 BASELINE = "a1cae005c39be7b18ba319fced856b68d7276271"
 ARCHIVES = {
     "windows": f"LanLink-{VERSION}-windows-x64.zip",

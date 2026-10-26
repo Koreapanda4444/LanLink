@@ -4,23 +4,23 @@
 
 | 번호 | 목표 | 상태 |
 |---|---|---|
-| 01 | `refactor(core): separate virtual network, transport and session layers` — 서비스의 패킷·세션·경로 책임 분리, 기존 테스트 결과 동일 | 구현·로컬 검증, CI 확인 중 |
-| 02 | `refactor(transport): introduce path-independent connection interfaces` — Relay/P2P 양 경로를 수용하는 공통 송수신 및 lifecycle 인터페이스 | 구현·로컬 검증, CI 확인 중 |
-| 03 | `refactor(service): decouple virtual adapter from relay session` — Wintun-패킷 엔진 연결에서 Relay 직접 의존 제거, 기존 패킷 왕복 유지 | 구현·로컬 검증, CI 확인 중 |
-| 04 | `feat(protocol): add capability negotiation and protocol versioning` — 구버전 Relay/클라이언트 폴백·지원 기능 불일치 테스트 | 구현·로컬 검증, CI 확인 중 |
-| 05 | `feat(diagnostics): extend path telemetry and structured errors` — 상태/RTT/패킷/재전송/경로 선택 사유/오류코드 수집, 민감정보 제외 | 구현·로컬 검증, CI 확인 중 |
-| 06 | `chore(build): establish cross-platform build and CI foundation` — 기존 Windows/Linux CI 무손상, 이후 macOS 빌드 진입점 마련 | 구현·로컬 검증, CI 확인 중 |
-| 07 | `feat(p2p): add authenticated candidate exchange` — 네트워크 멤버에게만 후보 전달, 다른 네트워크 정보 비노출 | 대기 |
-| 08 | `feat(p2p): implement local address candidate gathering` — 다중 NIC/가상 NIC/loopback 예외 처리, 주소 우선순위 | 대기 |
-| 09 | `feat(p2p): implement STUN endpoint discovery` — 공인 후보 조회, 실패/타임아웃/응답 유효성 검증 | 대기 |
-| 10 | `feat(p2p): implement UDP NAT hole punching` — 서로 다른 NAT 환경 모의 테스트, 제한된 재시도 | 대기 |
-| 11 | `feat(p2p): add ICE-style connectivity checks` — 후보 쌍 검사/우선순위/역할 충돌/연결 상태 기계 테스트 | 대기 |
-| 12 | `feat(p2p): establish authenticated direct QUIC sessions` — peer 인증·암호화 확인, Relay를 거치지 않는 데이터 흐름 검증 | 대기 |
-| 13 | `feat(p2p): bind membership and key epochs to peer sessions` — 추방/키 변경/세션 재생 공격 차단 테스트 | 대기 |
-| 14 | `feat(p2p): implement relay fallback and route recovery` — 직접 실패 시 기존 Relay/TLS-TCP까지 자동 복구 | 대기 |
-| 15 | `feat(p2p): add path quality sampling and selection` — RTT·손실·상태 기반 선정, 경로 선택 로그·진단 표시 | 대기 |
-| 16 | `feat(p2p): implement migration and path revalidation` — IP 변경·NIC 전환·일시 단절 후 세션 복구 및 중복 패킷 처리 | 대기 |
-| 17 | `feat(ui): expose direct and relayed peer connection status` — 사용자에게 현재 경로·상태·폴백 사유 노출 | 대기 |
+| 01 | `refactor(core): separate virtual network, transport and session layers` — 서비스의 패킷·세션·경로 책임 분리, 기존 테스트 결과 동일 | 구현 |
+| 02 | `refactor(transport): introduce path-independent connection interfaces` — Relay/P2P 양 경로를 수용하는 공통 송수신 및 lifecycle 인터페이스 | 구현 |
+| 03 | `refactor(service): decouple virtual adapter from relay session` — Wintun-패킷 엔진 연결에서 Relay 직접 의존 제거, 기존 패킷 왕복 유지 | 구현 |
+| 04 | `feat(protocol): add capability negotiation and protocol versioning` — 구버전 Relay/클라이언트 폴백·지원 기능 불일치 테스트 | 구현 |
+| 05 | `feat(diagnostics): extend path telemetry and structured errors` — 상태/RTT/패킷/재전송/경로 선택 사유/오류코드 수집, 민감정보 제외 | 구현 |
+| 06 | `chore(build): establish cross-platform build and CI foundation` — 기존 Windows/Linux CI 무손상, 이후 macOS 빌드 진입점 마련 | 구현 |
+| 07 | `feat(p2p): add authenticated candidate exchange` — 네트워크 멤버에게만 후보 전달, 다른 네트워크 정보 비노출 | 구현 |
+| 08 | `feat(p2p): implement local address candidate gathering` — 다중 NIC/가상 NIC/loopback 예외 처리, 주소 우선순위 | 구현 |
+| 09 | `feat(p2p): implement STUN endpoint discovery` — 공인 후보 조회, 실패/타임아웃/응답 유효성 검증 | 구현 |
+| 10 | `feat(p2p): implement UDP NAT hole punching` — 서로 다른 NAT 환경 모의 테스트, 제한된 재시도 | 구현 |
+| 11 | `feat(p2p): add ICE-style connectivity checks` — 후보 쌍 검사/우선순위/역할 충돌/연결 상태 기계 테스트 | 구현 |
+| 12 | `feat(p2p): establish authenticated direct QUIC sessions` — peer 인증·암호화 확인, Relay를 거치지 않는 데이터 흐름 검증 | 구현 |
+| 13 | `feat(p2p): bind membership and key epochs to peer sessions` — 추방/키 변경/세션 재생 공격 차단 테스트 | 구현 |
+| 14 | `feat(p2p): implement relay fallback and route recovery` — 직접 실패 시 기존 Relay/TLS-TCP까지 자동 복구 | 구현 |
+| 15 | `feat(p2p): add path quality sampling and selection` — RTT·손실·상태 기반 선정, 경로 선택 로그·진단 표시 | 구현 |
+| 16 | `feat(p2p): implement migration and path revalidation` — IP 변경·NIC 전환·일시 단절 후 세션 복구 및 중복 패킷 처리 | 구현 |
+| 17 | `feat(ui): expose direct and relayed peer connection status` — 사용자에게 현재 경로·상태·폴백 사유 노출 | 구현 |
 | 18 | `fix(network): audit and harden existing IPv4 broadcast fanout` — 기존 fanout 구현 재사용, 실제 전달·서브넷·유출 차단 검증 | 대기 |
 | 19 | `feat(network): extend scoped multicast forwarding` — 그룹 범위·참여/탈퇴·TTL·rate-limit 검증 | 대기 |
 | 20 | `feat(discovery): stabilize LAN service discovery over virtual networks` — 범위 한정한 검색 트래픽 라우팅, 중복/폭주 억제 | 대기 |
@@ -64,3 +64,5 @@
 | 58 | `security(audit): verify protocol, auth, keys and permissions` — 위협 모델·악용 방지·의존성 점검·보안 회귀 테스트 | 대기 |
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
+
+01~17의 자동 검증 대상과 실제 환경 제한은 [v0.4 검증 기록](verification-v0.4.md)에 정리한다. 18~60은 이번 개발 범위에 포함하지 않는다.

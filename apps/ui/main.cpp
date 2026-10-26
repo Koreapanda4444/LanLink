@@ -338,6 +338,7 @@ private:
         if (now >= next_diagnostics_) {
             attempt([&] {
                 networks_.submit(protocol::LocalCommand::diagnostics);
+                networks_.submit(protocol::LocalCommand::path_diagnostics);
                 networks_.submit(protocol::LocalCommand::activity);
                 if (selected_) networks_.submit(protocol::LocalCommand::peers,
                     protocol::encode_network_selection_request({*selected_}));
@@ -470,10 +471,11 @@ private:
                     if (ImGui::SmallButton("Copy IP")) ImGui::SetClipboardText(own.c_str());
                     ImGui::TextDisabled("Use a device's virtual IP to connect to its game or application.");
                     ImGui::SeparatorText("Devices");
-                    if (ImGui::BeginTable("devices", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+                    if (ImGui::BeginTable("devices", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
                         ImGui::TableSetupColumn("Virtual IP", ImGuiTableColumnFlags_WidthFixed, 135);
                         ImGui::TableSetupColumn("Device");
-                        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 90);
+                        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 80);
+                        ImGui::TableSetupColumn("Path", ImGuiTableColumnFlags_WidthFixed, 110);
                         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80);
                         ImGui::TableHeadersRow();
                         const auto row = [&](const protocol::NetworkDeviceId& device_id, std::uint32_t address, bool online, bool own_device) {
@@ -487,6 +489,20 @@ private:
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", device_text.c_str());
                             ImGui::TableNextColumn();
                             ImGui::TextColored(online ? ImVec4(0.35f, 0.87f, 0.65f, 1) : ImVec4(0.6f, 0.64f, 0.70f, 1), "%s", online ? "Online" : "Offline");
+                            ImGui::TableNextColumn();
+                            const protocol::PeerPathStatus* path=nullptr;
+                            if(state.paths)for(const auto& peer:state.paths->peers)
+                                if(peer.network_id==selected->network_id && peer.device_id==device_id){path=&peer;break;}
+                            const auto kind=path?path->path.kind:state.diagnostics && state.diagnostics->tcp_fallback?protocol::PathKind::relay_tls:protocol::PathKind::relay_quic;
+                            const char* label=own_device?"Local":!online?"Offline":kind==protocol::PathKind::direct_quic?"Direct":kind==protocol::PathKind::relay_tls?"Relay (TCP)":kind==protocol::PathKind::relay_quic?"Relay":"Connecting";
+                            ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.35f,.87f,.65f,1):ImVec4(.65f,.75f,.9f,1),"%s",label);
+                            if(path && ImGui::IsItemHovered()) {
+                                ImGui::BeginTooltip();ImGui::TextUnformatted(protocol::path_reason_name(path->path.reason).data());
+                                if(path->path.rtt_us)ImGui::Text("RTT: %.1f ms",*path->path.rtt_us/1000.0);
+                                ImGui::Text("Packets: %llu sent / %llu received",static_cast<unsigned long long>(path->path.sent_packets),static_cast<unsigned long long>(path->path.received_packets));
+                                if(path->path.lost_packets)ImGui::Text("Lost transport packets: %llu",static_cast<unsigned long long>(*path->path.lost_packets));
+                                ImGui::EndTooltip();
+                            }
                             ImGui::TableNextColumn();
                             ImGui::BeginDisabled(!owner || own_device || !connected || state.busy);
                             if (ImGui::SmallButton("Remove")) {
@@ -538,10 +554,18 @@ private:
             if (ImGui::CollapsingHeader("Connection details", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (state.diagnostics) {
                     const auto& d = *state.diagnostics;
-                    ImGui::Text("Transport: %s   /   Reconnects: %u", d.tcp_fallback ? "TLS over TCP" : "QUIC over UDP", d.reconnects);
+                    ImGui::Text("Relay transport: %s   /   Reconnects: %u", d.tcp_fallback ? "TLS over TCP" : "QUIC over UDP", d.reconnects);
                     if (d.rtt_us) ImGui::Text("Relay latency: %.1f ms", *d.rtt_us / 1000.0);
                     ImGui::Text("Upload %.1f KiB/s   /   Download %.1f KiB/s", send_rate_ / 1024.0, receive_rate_ / 1024.0);
                     ImGui::TextDisabled("Sent %s   /   Received %s", format_bytes(d.sent_bytes).c_str(), format_bytes(d.received_bytes).c_str());
+                    if(state.paths) {
+                        unsigned direct=0,relayed=0;for(const auto& peer:state.paths->peers) {
+                            direct+=peer.path.kind==protocol::PathKind::direct_quic;
+                            relayed+=peer.path.kind==protocol::PathKind::relay_quic || peer.path.kind==protocol::PathKind::relay_tls;
+                        }
+                        ImGui::Text("Peer paths: %u Direct / %u Relay",direct,relayed);
+                        if(state.paths->truncated)ImGui::TextDisabled("Showing a limited number of peer paths.");
+                    }
                     if (!d.last_error.empty()) ImGui::TextWrapped("Last connection error: %s", d.last_error.c_str());
                 } else ImGui::TextWrapped("The Windows service is unavailable. Start the service or run the LanLink installer to configure this device.");
             }

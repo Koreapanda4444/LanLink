@@ -198,6 +198,14 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 if (!request.payload.empty()) throw std::invalid_argument("path diagnostics does not accept a payload");
                 protocol::PathDiagnostics metrics;
                 metrics.relay = path.status();
+                metrics.peers=path.peer_status();
+                for(const auto& state:client.cached_peer_states())for(const auto& peer:state.peers) {
+                    if(std::any_of(metrics.peers.begin(),metrics.peers.end(),[&](const auto& p){return p.network_id==state.network_id && p.device_id==peer.device_id;}))continue;
+                    if(metrics.peers.size()>=protocol::max_diagnostic_peers){metrics.truncated=true;continue;}
+                    auto status=metrics.relay;
+                    if(!peer.signed_key){status.kind=protocol::PathKind::none;status.lifecycle=protocol::PathLifecycle::stopped;status.reason=protocol::PathReason::stopped;}
+                    metrics.peers.push_back({state.network_id,peer.device_id,peer.ipv4_address,status});
+                }
                 metrics.relay.dropped_packets += network.rejected_packets();
                 if (network.pump_error()) metrics.relay.error = lanlink::core::ErrorCode::adapter_failed;
                 payload = protocol::encode_path_diagnostics(metrics);
