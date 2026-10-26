@@ -38,9 +38,7 @@ std::vector<std::byte> certificate() {
     if(i2d_PKCS12(bundle.get(),&destination)!=size)throw std::runtime_error("peer certificate export size failed");
     return bytes;
 }
-std::vector<std::byte> transcript(const PeerBinding& binding,const auth::Nonce& sender,const auth::Nonce& receiver){
-    protocol::BinaryWriter w;w.put<std::uint32_t>(0x4c4c4431);w.append(encode_binding(binding));w.append(sender);w.append(receiver);return std::move(w).finish();
-}
+
 }
 struct DirectQuic::Impl {
     struct Connection {
@@ -56,7 +54,7 @@ struct DirectQuic::Impl {
     const auth::DeviceIdentity& identity;DirectQuicOptions options;transport::PacketPath::ReceiveHandler receive;
     const QUIC_API_TABLE* api=nullptr;HQUIC registration=nullptr,server_config=nullptr,client_config=nullptr,listener=nullptr;
     mutable std::recursive_mutex mutex;std::vector<std::unique_ptr<Connection>> connections;
-    bool started=false,stopping=false;std::uint16_t bound_port=0;
+    bool started=false,stopping=false,lease_valid=false;std::uint16_t bound_port=0;
     std::uint64_t sent=0,received=0,dropped=0,sent_bytes=0,received_bytes=0;
     Impl(const auth::DeviceIdentity& i,DirectQuicOptions o,transport::PacketPath::ReceiveHandler r):identity(i),options(std::move(o)),receive(std::move(r)) {
         const auto& b=options.binding;
@@ -67,6 +65,7 @@ struct DirectQuic::Impl {
     ~Impl(){stop();}
     void start() {
         if(started) return;
+        if(!lease_valid || stopping)throw std::runtime_error("direct path has no current membership lease");
         try {
             checked(MsQuicOpen2(&api),"peer MsQuicOpen");
             QUIC_REGISTRATION_CONFIG reg{"lanlink-direct",QUIC_EXECUTION_PROFILE_LOW_LATENCY};checked(api->RegistrationOpen(&reg,&registration),"peer registration");
@@ -143,16 +142,17 @@ struct DirectQuic::Impl {
     void proof(Connection& c) {
         if(c.proof || !c.peer_nonce)return;
         c.proof=true;
-        const auto signature=identity.sign(transcript(options.binding,c.nonce,*c.peer_nonce));
+        const auto signature=sign_peer_binding(identity,options.binding,c.nonce,*c.peer_nonce);
         if(!output(c,protocol::encode_frame({protocol::MessageType::client_auth,0,{signature.begin(),signature.end()}}),false,true))throw std::runtime_error("peer proof backpressure");
     }
     void data(Connection& c,std::span<const std::byte> bytes) {
-        if(!c.authorized || stopping){++dropped;return;}
+        if(!c.authorized || stopping || !lease_valid){++dropped;return;}
         const auto p=protocol::decode_encrypted_network_packet(bytes);
         if(p.network_id!=options.binding.network_id || p.key_epoch!=options.binding.key_epoch || p.destination_ipv4!=options.local_ipv4){++dropped;return;}
         ++received;received_bytes+=bytes.size();if(receive)receive({options.binding.peer_device,p});
     }
     void frame(Connection& c,const protocol::Frame& f) {
+        if(!lease_valid || stopping)throw std::runtime_error("direct membership revoked");
         if(f.request_id)throw std::runtime_error("invalid direct request id");
         if(f.type==protocol::MessageType::network_packet_send){data(c,f.payload);return;}
         if(!c.rate.allow())throw std::runtime_error("direct control rate exceeded");
@@ -162,8 +162,7 @@ struct DirectQuic::Impl {
             c.peer_nonce=r.array<32>();r.finish();hello(c);proof(c);
         } else if(f.type==protocol::MessageType::client_auth) {
             protocol::BinaryReader r(f.payload);const auto signature=r.array<64>();r.finish();
-            if(c.authorized || !c.peer_nonce || !c.proof || !auth::verify_signature(options.peer_key.identity_public_key,
-                transcript(options.binding.reversed(),*c.peer_nonce,c.nonce),signature))throw std::runtime_error("direct peer authentication failed");
+            if(c.authorized || !c.peer_nonce || !c.proof || !verify_peer_binding(options.peer_key,options.binding.reversed(),*c.peer_nonce,c.nonce,signature))throw std::runtime_error("direct peer authentication failed");
             c.authorized=true;
         } else throw std::runtime_error("unexpected direct control frame");
     }
@@ -214,11 +213,18 @@ struct DirectQuic::Impl {
 };
 DirectQuic::DirectQuic(const auth::DeviceIdentity& i,DirectQuicOptions o,transport::PacketPath::ReceiveHandler r):impl_(std::make_unique<Impl>(i,std::move(o),std::move(r))){}
 DirectQuic::~DirectQuic()=default;
+void DirectQuic::synchronize(const session::NetworkSnapshot& snapshot) {
+    auto& o=*impl_;bool revoke=false;
+    {std::lock_guard lock(o.mutex);o.lease_valid=peer_binding_authorized(o.options.binding,o.options.peer_key,
+        o.options.local_ipv4,o.options.peer_ipv4,snapshot);revoke=!o.lease_valid;
+     if(revoke)for(auto& c:o.connections)c->authorized=false;}
+    if(revoke)o.stop();
+}
 void DirectQuic::start(){impl_->start();}void DirectQuic::connect(Endpoint e){impl_->connect(e);}void DirectQuic::stop()noexcept{impl_->stop();}
 std::uint16_t DirectQuic::port()const{std::lock_guard lock(impl_->mutex);return impl_->bound_port;}
-bool DirectQuic::authenticated()const{std::lock_guard lock(impl_->mutex);return !impl_->stopping && impl_->selected();}
+bool DirectQuic::authenticated()const{std::lock_guard lock(impl_->mutex);return !impl_->stopping && impl_->lease_valid && impl_->selected();}
 transport::PacketSendResult DirectQuic::send(const protocol::EncryptedNetworkPacket& p){
-    auto& o=*impl_;std::lock_guard lock(o.mutex);auto* c=o.selected();if(!c || o.stopping)return transport::PacketSendResult::unavailable;
+    auto& o=*impl_;std::lock_guard lock(o.mutex);auto* c=o.selected();if(!c || o.stopping || !o.lease_valid)return transport::PacketSendResult::unavailable;
     if(p.network_id!=o.options.binding.network_id || p.key_epoch!=o.options.binding.key_epoch || p.destination_ipv4!=o.options.peer_ipv4)return transport::PacketSendResult::invalid_packet;
     auto bytes=protocol::encode_encrypted_network_packet(p);const bool datagram=c->datagram_size && bytes.size()<=c->datagram_size;
     const auto size=bytes.size();if(!datagram)bytes=protocol::encode_frame({protocol::MessageType::network_packet_send,0,std::move(bytes)});

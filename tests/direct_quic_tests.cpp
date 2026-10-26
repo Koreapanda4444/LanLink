@@ -29,6 +29,26 @@ int main(){const auto root=std::filesystem::temp_directory_path()/("lanlink-dire
     std::mutex mutex;std::vector<std::vector<std::byte>> left,right;unsigned replay_drops=0;
     p2p::DirectQuic first(a,{binding,bk,0x0a400001,0x0a400002,port_a},[&](const auto& d){std::lock_guard lock(mutex);left.push_back(ca.decrypt(d.packet,d.sender_device_id));});
     p2p::DirectQuic second(b,{binding.reversed(),ak,0x0a400002,0x0a400001,port_b},[&](const auto& d){std::lock_guard lock(mutex);try{right.push_back(cb.decrypt(d.packet,d.sender_device_id));}catch(const std::exception&){++replay_drops;}});
+    session::NetworkSnapshot own{{{a.device_id(),ak}},{{{binding.network_id,1,0x0a400000,24,0x0a400001,
+        {{b.device_id(),0x0a400002,bk}},a.device_id(),1},{1,network_key}}}};
+    session::NetworkSnapshot remote{{{b.device_id(),bk}},{{{binding.network_id,1,0x0a400000,24,0x0a400002,
+        {{a.device_id(),0x0a400001,ak}},a.device_id(),1},{1,network_key}}}};
+    require(p2p::peer_binding_authorized(binding,bk,0x0a400001,0x0a400002,own),"valid peer lease rejected");
+    for(unsigned change=0;change<5;++change){auto invalid=own;
+        if(change==0)invalid.networks.clear();if(change==1)++invalid.networks[0].key.epoch;
+        if(change==2)invalid.networks[0].peers.peers.clear();
+        if(change==3)invalid.identity->signed_key=key(a);
+        if(change==4)invalid.networks[0].peers.peers[0].signed_key=key(b);
+        require(!p2p::peer_binding_authorized(binding,bk,0x0a400001,0x0a400002,invalid),"revoked/stale lease accepted");}
+    const auto nonce_a=auth::random_nonce(),nonce_b=auth::random_nonce();
+    const auto proof=p2p::sign_peer_binding(a,binding,nonce_a,nonce_b);
+    require(p2p::verify_peer_binding(ak,binding,nonce_a,nonce_b,proof),"valid peer proof rejected");
+    require(!p2p::verify_peer_binding(ak,binding,nonce_a,auth::random_nonce(),proof),"proof replayed across connections");
+    auto stale=binding;++stale.key_epoch;
+    require(!p2p::verify_peer_binding(ak,stale,nonce_a,nonce_b,proof),"proof replayed across epochs");
+    stale=binding;++stale.peer_generation;
+    require(!p2p::verify_peer_binding(ak,stale,nonce_a,nonce_b,proof),"proof replayed across generations");
+    first.synchronize(own);second.synchronize(remote);
     first.start();second.start();first.connect({0x7f000001,second.port()});second.connect({0x7f000001,first.port()});
     wait([&]{return first.authenticated() && second.authenticated();},"direct mutual device proof failed");
     const auto small=ipv4(40),large=ipv4(4000),reverse=ipv4(40,true);const auto packet=ca.encrypt(small);
@@ -40,6 +60,10 @@ int main(){const auto root=std::filesystem::temp_directory_path()/("lanlink-dire
     require(first.send(packet)==transport::PacketSendResult::accepted,"duplicate fixture send failed");
     wait([&]{std::lock_guard lock(mutex);return replay_drops==1;},"direct packet replay was not rejected");
     const auto stats=first.status();require(stats.kind==transport::PathKind::direct_quic && stats.rtt_us && stats.sent_packets==3 && stats.received_packets==1,"direct telemetry is not measured");
+    auto revoked=own;revoked.networks[0].peers.peers.clear();first.synchronize(revoked);
+    require(!first.authenticated() && first.send(packet)==transport::PacketSendResult::unavailable,"revocation left direct send enabled");
+    ++remote.networks[0].key.epoch;second.synchronize(remote);
+    require(!second.authenticated(),"key rotation retained a stale direct session");
     second.stop();wait([&]{return !first.authenticated();},"closed direct path retained authorization");first.stop();
     // An untrusted identity cannot use a valid network binding to impersonate an approved peer.
     auto wrong=bk;wrong.signature[0]^=std::byte{1};bool rejected=false;

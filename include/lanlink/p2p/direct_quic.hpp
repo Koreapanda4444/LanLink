@@ -1,5 +1,5 @@
 #pragma once
-#include "lanlink/p2p/punch.hpp"
+#include "lanlink/p2p/peer_authorization.hpp"
 #include "lanlink/transport/packet_path.hpp"
 namespace lanlink::p2p {
 struct DirectQuicOptions {
@@ -13,6 +13,7 @@ public:
     DirectQuic(const auth::DeviceIdentity& identity,DirectQuicOptions options,transport::PacketPath::ReceiveHandler receive);
     ~DirectQuic();
     DirectQuic(const DirectQuic&)=delete;DirectQuic& operator=(const DirectQuic&)=delete;
+    void synchronize(const session::NetworkSnapshot& snapshot);
     void start();
     void connect(Endpoint endpoint);
     void stop() noexcept;
