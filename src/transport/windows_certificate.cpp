@@ -47,6 +47,15 @@ public:
         throw std::runtime_error("Windows relay certificate and private key must be imported into the CurrentUser or LocalMachine My certificate store");
     }
 
+    void load_pkcs12(std::span<const std::byte> bytes) {
+        if(bytes.empty() || bytes.size()>1024*1024)throw std::invalid_argument("invalid in-memory peer certificate");
+        CRYPT_DATA_BLOB blob{static_cast<DWORD>(bytes.size()),reinterpret_cast<BYTE*>(const_cast<std::byte*>(bytes.data()))};
+        store_=PFXImportCertStore(&blob,L"",PKCS12_NO_PERSIST_KEY|PKCS12_ALWAYS_CNG_KSP);
+        if(!store_)throw std::runtime_error("cannot import in-memory peer certificate");
+        certificate_=CertEnumCertificatesInStore(store_,nullptr);
+        if(!certificate_)throw std::runtime_error("peer certificate store is empty");
+    }
+
     HCERTSTORE store_ = nullptr;
     PCCERT_CONTEXT certificate_ = nullptr;
 };
@@ -56,6 +65,9 @@ SchannelCertificate::SchannelCertificate(const std::filesystem::path& certificat
     : impl_(std::make_unique<Impl>()) {
     if (private_key.empty()) throw std::invalid_argument("relay private key path is required");
     impl_->load(certificate);
+}
+SchannelCertificate::SchannelCertificate(std::span<const std::byte> pkcs12):impl_(std::make_unique<Impl>()) {
+    impl_->load_pkcs12(pkcs12);
 }
 SchannelCertificate::~SchannelCertificate() = default;
 void* SchannelCertificate::context() const noexcept { return const_cast<CERT_CONTEXT*>(impl_->certificate_); }

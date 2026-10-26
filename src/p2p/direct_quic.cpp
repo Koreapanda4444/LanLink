@@ -4,6 +4,9 @@
 #include "lanlink/protocol/stream_decoder.hpp"
 #include "lanlink/transport/resource_limits.hpp"
 #include <msquic.h>
+#ifdef _WIN32
+#include "../transport/windows_certificate.hpp"
+#endif
 #include <openssl/evp.h>
 #include <openssl/pkcs12.h>
 #include <openssl/x509v3.h>
@@ -53,6 +56,9 @@ struct DirectQuic::Impl {
     };
     const auth::DeviceIdentity& identity;DirectQuicOptions options;transport::PacketPath::ReceiveHandler receive;
     const QUIC_API_TABLE* api=nullptr;HQUIC registration=nullptr,server_config=nullptr,client_config=nullptr,listener=nullptr;
+#ifdef _WIN32
+    std::unique_ptr<transport::SchannelCertificate> windows_certificate;
+#endif
     mutable std::recursive_mutex mutex;std::vector<std::unique_ptr<Connection>> connections;
     bool started=false,stopping=false,lease_valid=false;std::uint16_t bound_port=0;
     std::uint64_t sent=0,received=0,dropped=0,sent_bytes=0,received_bytes=0;
@@ -77,8 +83,15 @@ struct DirectQuic::Impl {
             auto protocol=alpn();checked(api->ConfigurationOpen(registration,&protocol,1,&settings,sizeof(settings),nullptr,&server_config),"peer server configuration");
             checked(api->ConfigurationOpen(registration,&protocol,1,&settings,sizeof(settings),nullptr,&client_config),"peer client configuration");
             auto pfx=certificate();QUIC_CERTIFICATE_PKCS12 bundle{reinterpret_cast<std::uint8_t*>(pfx.data()),static_cast<std::uint32_t>(pfx.size()),""};
-            QUIC_CREDENTIAL_CONFIG credentials{};credentials.Type=QUIC_CREDENTIAL_TYPE_CERTIFICATE_PKCS12;credentials.CertificatePkcs12=&bundle;
+            QUIC_CREDENTIAL_CONFIG credentials{};
+#ifdef _WIN32
+            windows_certificate=std::make_unique<transport::SchannelCertificate>(pfx);
+            credentials.Type=QUIC_CREDENTIAL_TYPE_CERTIFICATE_CONTEXT;credentials.CertificateContext=windows_certificate->context();
+#else
+            credentials.Type=QUIC_CREDENTIAL_TYPE_CERTIFICATE_PKCS12;credentials.CertificatePkcs12=&bundle;
+#endif
             checked(api->ConfigurationLoadCredential(server_config,&credentials),"peer server credentials");
+            OPENSSL_cleanse(pfx.data(),pfx.size());
             credentials={};credentials.Type=QUIC_CREDENTIAL_TYPE_NONE;
             // Ephemeral TLS is followed by mandatory device signatures and packet E2E authentication.
             credentials.Flags=static_cast<QUIC_CREDENTIAL_FLAGS>(QUIC_CREDENTIAL_FLAG_CLIENT|QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION);
