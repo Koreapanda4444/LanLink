@@ -4,6 +4,7 @@
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/transport/resource_limits.hpp"
+#include "lanlink/session/network_state.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -79,20 +80,6 @@ struct NetworkPeerStateReply {
     std::optional<protocol::NetworkPeerState> state;
 
     bool operator==(const NetworkPeerStateReply&) const = default;
-};
-
-struct NetworkKeySnapshot {
-    std::uint64_t epoch;
-    auth::NetworkKey key;
-
-    bool operator==(const NetworkKeySnapshot&) const = default;
-};
-
-struct PacketIdentitySnapshot {
-    auth::DeviceId device_id{};
-    auth::SignedDeviceKey signed_key;
-
-    bool operator==(const PacketIdentitySnapshot&) const = default;
 };
 
 class QuicRelayServer {

@@ -9,6 +9,7 @@
 #include "lanlink/core/logger.hpp"
 #include "lanlink/transport/local_pipe.hpp"
 #include "lanlink/transport/packet_bridge.hpp"
+#include "lanlink/transport/quic.hpp"
 #include "lanlink/transport/tls.hpp"
 #include "lanlink/transport/wintun_adapter.hpp"
 

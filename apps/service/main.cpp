@@ -7,7 +7,7 @@
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/transport/local_pipe.hpp"
 #include "lanlink/transport/packet_bridge.hpp"
-#include "lanlink/transport/quic.hpp"
+#include "lanlink/session/relay_session.hpp"
 #include "lanlink/transport/wintun_adapter.hpp"
 
 #include <atomic>
@@ -64,7 +64,8 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
 
     std::mutex requests_mutex;
     std::vector<lanlink::protocol::NetworkEvent> requests;
-    lanlink::transport::QuicRelayClient client(std::move(options), logger);
+    lanlink::session::RelaySession session(std::move(options), logger);
+    auto& client = session.client();
     client.set_network_event_handler([&](const lanlink::protocol::NetworkEvent& event) {
         namespace protocol = lanlink::protocol;
         std::lock_guard lock(requests_mutex);
@@ -114,18 +115,8 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
             report_packet_error("outgoing virtual packet dropped", error);
         }
     });
-    std::atomic_bool worker_finished = false;
-    std::exception_ptr worker_error;
-    std::jthread worker;
     try {
-        worker = std::jthread([&](const std::stop_token token) {
-            try {
-                client.run(token);
-            } catch (...) {
-                worker_error = std::current_exception();
-            }
-            worker_finished.store(true);
-        });
+        session.start();
     } catch (...) {
         adapter->stop();
         client.set_encrypted_packet_handler({});
@@ -255,9 +246,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
         adapter->stop();
         bridge->clear();
         client.set_encrypted_packet_handler({});
-        worker.request_stop();
-        client.stop();
-        worker.join();
+        session.stop();
         throw;
     }
 
@@ -266,37 +255,28 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
         adapter->stop();
         bridge->clear();
         client.set_encrypted_packet_handler({});
-        worker.request_stop();
-        client.stop();
-        worker.join();
+        session.stop();
     };
     try {
         ready();
         while (console_stop_requested == 0 &&
-               !lanlink::service::stop_requested() && !worker_finished.load()) {
+               !lanlink::service::stop_requested() && !session.finished()) {
             try {
-                const auto identity = client.cached_packet_identity();
-                std::vector<lanlink::transport::ActiveNetworkPacketState> active;
+                const auto snapshot = session.snapshot();
                 std::map<lanlink::protocol::NetworkId,
                          lanlink::transport::WintunNetworkAddress> desired;
-                if (identity) {
-                    for (const auto& state : client.cached_peer_states()) {
-                        const auto key = client.cached_network_key(state.network_id);
-                        if (!key || key->epoch != state.key_epoch) {
-                            continue;
-                        }
-                        active.push_back({state, *key});
-                        desired.emplace(state.network_id,
-                            lanlink::transport::WintunNetworkAddress{
-                                state.network_id, state.own_address,
-                                state.subnet_address, state.prefix_length});
-                    }
+                for (const auto& network : snapshot.networks) {
+                    const auto& state = network.peers;
+                    desired.emplace(state.network_id,
+                        lanlink::transport::WintunNetworkAddress{
+                            state.network_id, state.own_address,
+                            state.subnet_address, state.prefix_length});
                 }
                 for (const auto& [id, address] : desired) {
                     adapter->configure(address);
                     installed.insert_or_assign(id, address);
                 }
-                bridge->synchronize(identity, active);
+                bridge->synchronize(snapshot.identity, snapshot.networks);
                 for (auto it = installed.begin(); it != installed.end();) {
                     if (!desired.contains(it->first)) {
                         adapter->remove(it->first);
@@ -321,9 +301,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
 
     shutdown();
 
-    if (worker_error) {
-        std::rethrow_exception(worker_error);
-    }
+    session.rethrow_error();
     if (adapter_error) {
         std::rethrow_exception(adapter_error);
     }

@@ -131,8 +131,12 @@ target_link_libraries(lanlink_relay_domain
 
 lanlink_enable_warnings(lanlink_relay_domain)
 
+add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp)
+target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol)
+lanlink_enable_warnings(lanlink_packet_engine)
+
 add_library(lanlink_transport STATIC
-    src/transport/packet_bridge.cpp
     src/transport/quic.cpp
     src/transport/reconnect.cpp
     src/transport/resource_limits.cpp
@@ -147,6 +151,7 @@ target_include_directories(lanlink_transport
 target_link_libraries(lanlink_transport
     PUBLIC
         lanlink_core
+        lanlink_packet_engine
     PRIVATE
         lanlink_auth
         lanlink_protocol
@@ -163,6 +168,11 @@ if(WIN32)
 endif()
 
 lanlink_enable_warnings(lanlink_transport)
+
+add_library(lanlink_session STATIC src/session/relay_session.cpp)
+target_include_directories(lanlink_session PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(lanlink_session PUBLIC lanlink_transport)
+lanlink_enable_warnings(lanlink_session)
 
 add_executable(lanlink_relay
     apps/relay/main.cpp
@@ -187,7 +197,7 @@ if(WIN32)
         apps/service/windows_service.cpp
     )
 
-    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_transport lanlink_local_ipc advapi32 shell32 ole32 uuid)
+    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_session lanlink_local_ipc advapi32 shell32 ole32 uuid)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 

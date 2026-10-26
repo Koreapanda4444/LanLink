@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lanlink/auth/packet_crypto.hpp"
-#include "lanlink/transport/quic.hpp"
+#include "lanlink/session/network_state.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -13,11 +13,6 @@
 #include <vector>
 
 namespace lanlink::transport {
-
-struct ActiveNetworkPacketState {
-    protocol::NetworkPeerState peers;
-    NetworkKeySnapshot key;
-};
 
 class VirtualPacketBridge {
 public:

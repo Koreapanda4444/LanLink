@@ -1,6 +1,7 @@
 #include "lanlink/auth/identity.hpp"
 #include "lanlink/core/logger.hpp"
 #include "lanlink/transport/packet_bridge.hpp"
+#include "lanlink/transport/quic.hpp"
 
 #include <algorithm>
 #include <chrono>
