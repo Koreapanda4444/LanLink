@@ -1195,6 +1195,7 @@ public:
         {
             std::lock_guard lock(diagnostics_mutex_);
             last_error_.clear();
+            last_error_code_ = core::ErrorCode::none;
         }
         clear_peer_states();
         std::stop_callback stop_callback(stop_token, [this] { stop(); });
@@ -1291,9 +1292,13 @@ public:
         result.connected = connected_.load();
         result.authenticated = authenticated_.load();
         result.reconnects = reconnect_count_.load();
+        result.sent_packets = data_sent_.load();
+        result.received_packets = data_received_.load();
+        result.dropped_packets = data_dropped_.load();
         {
             std::lock_guard lock(diagnostics_mutex_);
             result.last_error = last_error_;
+            result.error = last_error_code_;
         }
         std::shared_ptr<AttemptState> attempt;
         {
@@ -1315,6 +1320,9 @@ public:
                 if (stats.Rtt != 0) result.rtt_us = stats.Rtt;
                 result.sent_bytes = stats.SendTotalBytes;
                 result.received_bytes = stats.RecvTotalBytes;
+                result.lost_packets = stats.SendSuspectedLostPackets > stats.SendSpuriousLostPackets
+                    ? stats.SendSuspectedLostPackets - stats.SendSpuriousLostPackets : 0;
+                result.retransmittable_packets = stats.SendRetransmittablePackets;
             }
         }
         return result;
@@ -1478,8 +1486,11 @@ public:
             : QUIC_SUCCEEDED(send_frame(api_, attempt->control_stream,
                   {protocol::MessageType::network_packet_send, 0, std::move(payload)}, attempt->sends));
         if (!success) {
+            data_dropped_.fetch_add(1);
+            record_error("encrypted packet send queue full");
             throw std::runtime_error("encrypted packet send failed");
         }
+        data_sent_.fetch_add(1);
     }
 
     void set_encrypted_packet_handler(
@@ -1492,9 +1503,10 @@ private:
     struct AttemptState;
 
     void record_error(std::string message) {
-        if (message.size() > 512) message.resize(512);
+        const auto code = core::classify_error(message);
         std::lock_guard lock(diagnostics_mutex_);
-        last_error_ = std::move(message);
+        last_error_code_ = code;
+        last_error_ = core::error_summary(code);
     }
 
     static void verify_peer_keys(const protocol::NetworkPeerState& state) {
@@ -2513,6 +2525,7 @@ private:
         }
 
         if (!context->handshake.handle_result(frame)) {
+            record_error("relay authentication rejected");
             log_noexcept(logger_, core::LogLevel::warning, "relay authentication rejected");
             if (context->state->tcp) {
                 context->state->tcp->stop();
@@ -2592,6 +2605,7 @@ private:
                         return peer.device_id == delivery.sender_device_id &&
                                peer.signed_key.has_value();
                     })) {
+                data_dropped_.fetch_add(1);
                 return;
             }
         }
@@ -2600,10 +2614,12 @@ private:
             auto ticket = event_budget_.reserve(
                 sizeof(protocol::ForwardedNetworkPacket) + delivery.packet.ciphertext.size(), false);
             if (!ticket) {
+                data_dropped_.fetch_add(1);
                 return;
             }
             event_queue_.push_back({std::move(delivery), std::move(*ticket)});
         }
+        data_received_.fetch_add(1);
         event_queue_wake_.notify_one();
     }
 
@@ -2766,6 +2782,8 @@ private:
     std::atomic<std::uint32_t> reconnect_count_ = 0;
     mutable std::mutex diagnostics_mutex_;
     std::string last_error_;
+    core::ErrorCode last_error_code_ = core::ErrorCode::none;
+    std::atomic<std::uint64_t> data_sent_ = 0, data_received_ = 0, data_dropped_ = 0;
     mutable std::mutex session_mutex_;
     std::optional<auth::SessionId> session_id_;
     mutable std::mutex active_mutex_;

@@ -338,6 +338,10 @@ void test_network_management(const std::filesystem::path& directory) {
     member.send_encrypted_packet(reverse);
     wait_until([&] { return reverse_received.load(); },
                "member-to-owner QUIC datagram must reach the correct peer");
+    const auto packet_metrics = owner.diagnostics();
+    expect(packet_metrics.sent_packets >= 1 && packet_metrics.received_packets >= 1 &&
+               packet_metrics.retransmittable_packets.has_value(),
+           "QUIC packet diagnostics did not contain observed counters");
     auto wrong_epoch_packet = encrypted;
     ++wrong_epoch_packet.key_epoch;
     expect_error([&] { owner.send_encrypted_packet(wrong_epoch_packet); },

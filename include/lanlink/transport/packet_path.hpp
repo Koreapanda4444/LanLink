@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/packet_messages.hpp"
+#include "lanlink/protocol/path_diagnostics.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -8,17 +9,11 @@
 
 namespace lanlink::transport {
 
-enum class PathKind : std::uint8_t { none, relay_quic, relay_tls, direct_quic };
-enum class PathLifecycle : std::uint8_t { stopped, connecting, authenticated, failed };
+using protocol::PathKind;
+using protocol::PathLifecycle;
+using protocol::PathReason;
+using protocol::PathStatus;
 enum class PacketSendResult : std::uint8_t { accepted, unavailable, backpressure, invalid_packet };
-
-struct PathStatus {
-    PathKind kind = PathKind::none;
-    PathLifecycle lifecycle = PathLifecycle::stopped;
-    std::optional<std::uint32_t> rtt_us;
-    std::uint64_t sent_bytes = 0;
-    std::uint64_t received_bytes = 0;
-};
 
 class PacketPath {
 public:

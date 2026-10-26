@@ -14,11 +14,13 @@ struct VirtualNetwork::State {
     std::shared_ptr<transport::VirtualPacketBridge> bridge;
     core::Logger& logger;
     std::atomic<std::int64_t> last_warning_ms = 0;
+    std::atomic<std::uint64_t> rejected_packets = 0;
 
     State(std::shared_ptr<VirtualAdapter> value, core::Logger& log)
         : adapter(std::move(value)), logger(log) {}
 
     void warn(const char* operation) {
+        rejected_packets.fetch_add(1);
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         auto previous = last_warning_ms.load();
@@ -104,5 +106,6 @@ void VirtualNetwork::stop() noexcept {
 }
 
 std::exception_ptr VirtualNetwork::pump_error() const noexcept { return state_->adapter->pump_error(); }
+std::uint64_t VirtualNetwork::rejected_packets() const noexcept { return state_->rejected_packets.load(); }
 
 }

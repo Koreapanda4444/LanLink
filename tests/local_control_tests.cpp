@@ -64,6 +64,31 @@ int main() {
         metrics[3] = std::byte{1};
         rejects([&] { static_cast<void>(decode_local_diagnostics(metrics)); });
         LocalActivity activity;
+        PathDiagnostics paths;
+        paths.relay.kind = PathKind::relay_tls;
+        paths.relay.lifecycle = PathLifecycle::authenticated;
+        paths.relay.reason = PathReason::udp_blocked;
+        paths.relay.error = lanlink::core::ErrorCode::timeout;
+        paths.relay.rtt_us = 0;
+        paths.relay.sent_packets = 27;
+        paths.relay.received_packets = 19;
+        paths.relay.lost_packets = 0;
+        paths.peers.push_back({{}, {}, 0x0a400001U, paths.relay});
+        paths.truncated = true;
+        const auto encoded_paths = encode_path_diagnostics(paths);
+        require(decode_path_diagnostics(encoded_paths) == paths);
+        require(!decode_path_diagnostics(encoded_paths).relay.retransmitted_packets);
+        for (std::size_t count = 0; count < encoded_paths.size(); ++count)
+            rejects([&] { static_cast<void>(decode_path_diagnostics(std::span(encoded_paths).first(count))); });
+        auto invalid_paths = encoded_paths;
+        invalid_paths[4] = std::byte{2};
+        rejects([&] { static_cast<void>(decode_path_diagnostics(invalid_paths)); });
+        invalid_paths = encoded_paths; invalid_paths[8] = std::byte{255};
+        rejects([&] { static_cast<void>(decode_path_diagnostics(invalid_paths)); });
+        const auto sensitive = lanlink::core::classify_error("auth token=private-value identity=/secret/file");
+        require(lanlink::core::error_summary(sensitive) == "Peer authentication failed");
+        require(decode_local_message(encode_local_message({LocalCommand::path_diagnostics, false, false, {}})).command ==
+                LocalCommand::path_diagnostics);
         activity.device_id[0] = std::byte{1};
         NetworkEvent event;
         event.kind = NetworkEventKind::join_requested;

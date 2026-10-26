@@ -36,6 +36,7 @@ function(lanlink_enable_warnings target)
 endfunction()
 
 add_library(lanlink_core STATIC
+    src/core/error.cpp
     src/core/config.cpp
     src/core/component.cpp
     src/core/logger.cpp
@@ -56,6 +57,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/path_diagnostics.cpp
     src/protocol/capabilities.cpp
     src/protocol/codec.cpp
     src/protocol/local_control.cpp
@@ -262,7 +264,7 @@ if(BUILD_TESTING)
     add_executable(lanlink_local_control_tests
         tests/local_control_tests.cpp
     )
-    target_link_libraries(lanlink_local_control_tests PRIVATE lanlink_protocol)
+    target_link_libraries(lanlink_local_control_tests PRIVATE lanlink_protocol lanlink_core)
     lanlink_enable_warnings(lanlink_local_control_tests)
     add_test(NAME lanlink-local-control COMMAND lanlink_local_control_tests)
 

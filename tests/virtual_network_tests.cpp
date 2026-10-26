@@ -96,6 +96,7 @@ void scenario(const std::filesystem::path& directory) {
             "independent adapters did not exchange an encrypted IPv4 packet");
     incoming.receiver({owner.device_id(), outgoing.sent[0]});
     require(b->received.size() == 1, "duplicate path delivery bypassed replay protection");
+    require(second.rejected_packets() == 1, "rejected packet telemetry did not count the duplicate");
     first.synchronize(own_state); second.synchronize(peer_state); a->handler(plain);
     require(outgoing.sent.back().sequence == 2 && b->received.size() == 2,
             "snapshot refresh reset the cipher session");

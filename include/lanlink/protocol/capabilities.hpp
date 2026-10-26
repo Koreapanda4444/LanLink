@@ -12,7 +12,8 @@ inline constexpr std::uint32_t capability_request_id = 0xffffffffU;
 enum class Capability : std::uint64_t {
     negotiation = 1, structured_diagnostics = 2, peer_candidates = 4, direct_quic = 8,
 };
-inline constexpr std::uint64_t supported_capabilities = static_cast<std::uint64_t>(Capability::negotiation);
+inline constexpr std::uint64_t supported_capabilities = static_cast<std::uint64_t>(Capability::negotiation) |
+    static_cast<std::uint64_t>(Capability::structured_diagnostics);
 
 struct CapabilityOffer {
     std::uint16_t minimum_version = protocol_version;

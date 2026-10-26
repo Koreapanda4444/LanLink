@@ -73,6 +73,7 @@ lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     if (action == L"kick") return LocalCommand::kick;
     if (action == L"stop") return LocalCommand::stop;
     if (action == L"diagnostics") return LocalCommand::diagnostics;
+    if (action == L"paths") return LocalCommand::path_diagnostics;
     throw std::invalid_argument("unknown local control command");
 }
 
@@ -88,6 +89,7 @@ int wmain(const int argc, wchar_t* argv[]) {
         case protocol::LocalCommand::status:
         case protocol::LocalCommand::stop:
         case protocol::LocalCommand::diagnostics:
+        case protocol::LocalCommand::path_diagnostics:
             if (argc != 1 && argc != 2) {
                 throw std::invalid_argument("status, stop and diagnostics take no arguments");
             }
@@ -142,6 +144,20 @@ int wmain(const int argc, wchar_t* argv[]) {
         } else if (command == protocol::LocalCommand::stop) {
             if (!response.payload.empty()) throw std::runtime_error("invalid stop response");
             std::cout << "service stopping\n";
+        } else if (command == protocol::LocalCommand::path_diagnostics) {
+            const auto metrics = protocol::decode_path_diagnostics(response.payload);
+            const auto& path = metrics.relay;
+            std::cout << "path: " << protocol::path_kind_name(path.kind)
+                      << "\nreason: " << protocol::path_reason_name(path.reason)
+                      << "\nerror code: " << static_cast<unsigned>(path.error)
+                      << "\nerror: " << lanlink::core::error_summary(path.error)
+                      << "\nsent packets: " << path.sent_packets
+                      << "\nreceived packets: " << path.received_packets
+                      << "\ndropped packets: " << path.dropped_packets
+                      << "\nretransmitted packets: ";
+            if (path.retransmitted_packets) std::cout << *path.retransmitted_packets;
+            else std::cout << "unavailable";
+            std::cout << '\n';
         } else if (command == protocol::LocalCommand::diagnostics) {
             const auto metrics = protocol::decode_local_diagnostics(response.payload);
             std::cout << "connected: " << metrics.connected

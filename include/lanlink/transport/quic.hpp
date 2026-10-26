@@ -6,6 +6,7 @@
 #include "lanlink/transport/resource_limits.hpp"
 #include "lanlink/session/network_state.hpp"
 #include "lanlink/protocol/capabilities.hpp"
+#include "lanlink/core/error.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -60,6 +61,9 @@ struct QuicClientOptions {
 };
 
 struct ClientDiagnostics {
+    core::ErrorCode error = core::ErrorCode::none;
+    std::uint64_t sent_packets = 0, received_packets = 0, dropped_packets = 0;
+    std::optional<std::uint64_t> lost_packets, retransmittable_packets;
     bool connected = false;
     bool authenticated = false;
     bool tcp_fallback = false;

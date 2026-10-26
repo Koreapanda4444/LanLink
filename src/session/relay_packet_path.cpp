@@ -31,10 +31,18 @@ transport::PacketSendResult RelayPacketPath::send(const protocol::EncryptedNetwo
 
 transport::PathStatus RelayPacketPath::status() const {
     const auto d = session_.client().diagnostics();
-    return {d.tcp_fallback ? transport::PathKind::relay_tls : transport::PathKind::relay_quic,
-            d.authenticated ? transport::PathLifecycle::authenticated :
-                session_.finished() ? transport::PathLifecycle::stopped : transport::PathLifecycle::connecting,
-            d.rtt_us, d.sent_bytes, d.received_bytes};
+    transport::PathStatus result;
+    result.kind = !d.authenticated ? transport::PathKind::none : d.tcp_fallback
+        ? transport::PathKind::relay_tls : transport::PathKind::relay_quic;
+    result.lifecycle = d.authenticated ? transport::PathLifecycle::authenticated :
+        session_.finished() ? transport::PathLifecycle::stopped : transport::PathLifecycle::connecting;
+    result.rtt_us = d.rtt_us; result.sent_bytes = d.sent_bytes; result.received_bytes = d.received_bytes;
+    result.reason = !d.authenticated ? transport::PathReason::awaiting_relay : d.tcp_fallback
+        ? transport::PathReason::udp_blocked : transport::PathReason::relayed;
+    result.error = d.error; result.sent_packets = d.sent_packets; result.received_packets = d.received_packets;
+    result.dropped_packets = d.dropped_packets; result.lost_packets = d.lost_packets;
+    result.retransmittable_packets = d.retransmittable_packets; result.reconnects = d.reconnects;
+    return result;
 }
 
 }

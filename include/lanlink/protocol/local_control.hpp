@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/path_diagnostics.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +28,7 @@ enum class LocalCommand : std::uint8_t {
     diagnostics = 10,
     peers = 11,
     activity = 12,
+    path_diagnostics = 13,
 };
 
 struct LocalActivity {

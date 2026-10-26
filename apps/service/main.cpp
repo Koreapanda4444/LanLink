@@ -188,6 +188,15 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 }
                 lanlink::service::request_stop();
                 break;
+            case protocol::LocalCommand::path_diagnostics: {
+                if (!request.payload.empty()) throw std::invalid_argument("path diagnostics does not accept a payload");
+                protocol::PathDiagnostics metrics;
+                metrics.relay = path.status();
+                metrics.relay.dropped_packets += network.rejected_packets();
+                if (network.pump_error()) metrics.relay.error = lanlink::core::ErrorCode::adapter_failed;
+                payload = protocol::encode_path_diagnostics(metrics);
+                break;
+            }
             case protocol::LocalCommand::diagnostics: {
                 if (!request.payload.empty()) {
                     throw std::invalid_argument("diagnostics does not accept a payload");
