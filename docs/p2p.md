@@ -17,3 +17,7 @@ Direct ALPN은 `lanlink-peer/1`이다. 임시 TLS 인증서는 메모리 PKCS#12
 Direct 인증 전·후보 실패·전송 backpressure·연결 종료 시 유니캐스트는 기존 Relay QUIC 또는 TLS/TCP로 보낸다. broadcast/multicast는 기존 Relay fanout을 유지한다. 경로가 바뀌어도 동일한 패킷 암호·sequence/replay 창을 사용한다. 멤버 자격·epoch·양쪽 세션 공개키는 Direct의 매 송수신에서 현재 Relay 스냅샷과 대조한다.
 
 `lanlink-network-client`는 실제 Relay와 두 서비스 경로 선택기를 띄워 후보 교환·Direct 무중계 전송·Relay 복귀·경로 간 중복 거부·UDP Relay 차단 시 TLS/TCP 전송·가상 IPv4 유지를 검증한다. NIC 주소 주입으로 환경을 고정한 네이티브 UDP/QUIC 테스트이며, 실물 공유기 시험으로 표시하지 않는다.
+
+## 경로 품질
+
+Direct QUIC의 실제 RTT와 전송된 QUIC 패킷/보정된 손실 카운터 차분을 200ms마다 샘플링한다. 가상 IPv4 패킷 수를 QUIC 손실률의 분모로 쓰지 않는다. RTT·손실 이동평균, 연속 3회 샘플, 2초 hold time으로 짧은 변동에 따른 왕복 전환을 제한한다. 연결 종료·전송 실패는 즉시 Relay로 보낸다. Relay RTT는 서버까지의 값이므로 피어 왕복 RTT라고 표시하지 않으며, 지나치게 느린 Direct를 거르는 보수적인 기준에만 사용한다. 선택 사유와 전환은 로컬 진단/고정 문구 로그에 남긴다.

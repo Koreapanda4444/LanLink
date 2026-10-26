@@ -253,4 +253,15 @@ transport::PathStatus DirectQuic::status()const{
     if(c){QUIC_STATISTICS_V2 stats{};std::uint32_t size=sizeof(stats);if(QUIC_SUCCEEDED(o.api->GetParam(c->handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))){s.rtt_us=stats.Rtt;s.lost_packets=stats.SendSuspectedLostPackets>=stats.SendSpuriousLostPackets?stats.SendSuspectedLostPackets-stats.SendSpuriousLostPackets:0;s.retransmittable_packets=stats.SendRetransmittablePackets;}}
     return s;
 }
+QualitySample DirectQuic::quality()const {
+    auto& o=*impl_;std::lock_guard lock(o.mutex);auto* c=o.selected();QualitySample sample;
+    if(!c || o.stopping || !o.lease_valid)return sample;
+    sample.authenticated=true;QUIC_STATISTICS_V2 stats{};std::uint32_t size=sizeof(stats);
+    if(QUIC_SUCCEEDED(o.api->GetParam(c->handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))) {
+        sample.rtt_us=stats.Rtt;sample.transport_sent_packets=stats.SendTotalPackets;
+        sample.lost_packets=stats.SendSuspectedLostPackets>=stats.SendSpuriousLostPackets?stats.SendSuspectedLostPackets-stats.SendSpuriousLostPackets:0;
+    }
+    return sample;
+}
+
 }

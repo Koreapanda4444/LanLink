@@ -26,6 +26,7 @@ struct PeerPacketPath::Impl {
         std::vector<p2p::Candidate> local,remote;std::unique_ptr<p2p::UdpSocket> socket;
         std::unique_ptr<p2p::PunchSession> punch;std::unique_ptr<p2p::ConnectivityChecks> checks;
         std::atomic<std::shared_ptr<p2p::DirectQuic>> direct;
+        p2p::PathSelector selector;Clock::time_point sampled{};std::atomic_bool use_direct=false,send_failed=false;
         std::atomic<protocol::PathReason> reason=protocol::PathReason::revalidating;
         Clock::time_point created=Clock::now(),expires{};bool published=false;
     };
@@ -110,7 +111,17 @@ struct PeerPacketPath::Impl {
             p->punch.reset();p->checks.reset();p->reason=protocol::PathReason::revalidating;
         }
         for(const auto& p:entries()) {
-            if(auto d=p->direct.load()){d->synchronize(snapshot);p->reason=d->authenticated()?protocol::PathReason::direct_ready:protocol::PathReason::direct_unreachable;continue;}
+            if(auto d=p->direct.load()) {
+                d->synchronize(snapshot);
+                if(now>=p->sampled) {
+                    auto sample=d->quality();if(p->send_failed.exchange(false))sample.authenticated=false;
+                    const auto chosen=p->selector.sample(sample,relay.status().rtt_us,now);
+                    const auto old=p->use_direct.exchange(chosen.direct);p->reason=chosen.reason;
+                    if(old!=chosen.direct)logger.info(chosen.direct?"peer path selected: direct":"peer path selected: relay");
+                    p->sampled=now+std::chrono::milliseconds{200};
+                }
+                continue;
+            }
             if(!p->socket || p->local.empty())continue;
             if(!p->published && now>=next_offer) {
                 p2p::CandidateExchange x;x.network_id=p->binding.network_id;x.sender=p->binding.local_device;x.recipient=p->binding.peer_device;
@@ -154,9 +165,9 @@ transport::PacketSendResult PeerPacketPath::send(const protocol::EncryptedNetwor
     const auto snapshot=impl_->session.snapshot();
     for(const auto& p:impl_->entries())if(p->binding.network_id==packet.network_id && p->peer_ip==packet.destination_ipv4) {
         p2p::PeerBinding binding;{std::lock_guard lock(p->context_mutex);binding=p->binding;}
-        if(auto direct=p->direct.load();impl_->enabled.load() && direct && p2p::peer_binding_authorized(binding,p->key,p->local_ip,p->peer_ip,snapshot)) {
+        if(auto direct=p->direct.load();impl_->enabled.load() && p->use_direct.load() && direct && p2p::peer_binding_authorized(binding,p->key,p->local_ip,p->peer_ip,snapshot)) {
             const auto sent=direct->send(packet);if(sent==transport::PacketSendResult::accepted)return sent;
-            p->reason=protocol::PathReason::direct_unreachable;
+            p->use_direct=false;p->send_failed=true;p->reason=protocol::PathReason::direct_unreachable;
         }
         break;
     }
@@ -166,7 +177,7 @@ transport::PathStatus PeerPacketPath::status()const{return impl_->relay.status()
 std::vector<protocol::PeerPathStatus> PeerPacketPath::peer_status()const {
     std::vector<protocol::PeerPathStatus> result;const auto relay=impl_->relay.status();
     for(const auto& p:impl_->entries()) {
-        auto status=relay;if(auto direct=p->direct.load();direct && direct->authenticated())status=direct->status();
+        auto status=relay;if(auto direct=p->direct.load();direct && p->use_direct.load() && direct->authenticated())status=direct->status();
         else if(relay.kind!=transport::PathKind::relay_tls)status.reason=p->reason.load();
         result.push_back({p->binding.network_id,p->binding.peer_device,p->peer_ip,status});
     }

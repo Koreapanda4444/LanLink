@@ -1,5 +1,6 @@
 #pragma once
 #include "lanlink/p2p/peer_authorization.hpp"
+#include "lanlink/p2p/path_quality.hpp"
 #include "lanlink/transport/packet_path.hpp"
 namespace lanlink::p2p {
 struct DirectQuicOptions {
@@ -21,6 +22,7 @@ public:
     [[nodiscard]] bool authenticated() const;
     [[nodiscard]] transport::PacketSendResult send(const protocol::EncryptedNetworkPacket& packet);
     [[nodiscard]] transport::PathStatus status() const;
+    [[nodiscard]] QualitySample quality() const;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };
