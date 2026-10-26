@@ -57,7 +57,7 @@ void NetworkModel::process() {
         {
             std::unique_lock lock(mutex_);
             wake_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
-            if (stopping_ || (command==protocol::LocalCommand::path_diagnostics && !paths_supported_)) return;
+            if (stopping_) return;
             request = std::move(pending_.front());
             pending_.pop_front();
         }
