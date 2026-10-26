@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/network/virtual_adapter.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -12,35 +13,28 @@
 
 namespace lanlink::transport {
 
-struct WintunNetworkAddress {
-    protocol::NetworkId network_id{};
-    std::uint32_t address = 0;
-    std::uint32_t subnet = 0;
-    std::uint8_t prefix_length = 24;
+using WintunNetworkAddress = network::VirtualNetworkAddress;
 
-    bool operator==(const WintunNetworkAddress&) const = default;
-};
-
-class WintunAdapter {
+class WintunAdapter final : public network::VirtualAdapter {
 public:
     using PacketHandler = std::function<void(std::span<const std::byte>)>;
 
     explicit WintunAdapter(std::wstring name = L"LanLink",
                            std::uint32_t mtu = 1400,
                            std::uint32_t ring_capacity = 4U * 1024U * 1024U);
-    ~WintunAdapter();
+    ~WintunAdapter() override;
 
     WintunAdapter(const WintunAdapter&) = delete;
     WintunAdapter& operator=(const WintunAdapter&) = delete;
     WintunAdapter(WintunAdapter&&) = delete;
     WintunAdapter& operator=(WintunAdapter&&) = delete;
 
-    void configure(const WintunNetworkAddress& address);
-    void remove(const protocol::NetworkId& network_id) noexcept;
-    void start(PacketHandler handler);
-    void inject(std::span<const std::byte> packet);
-    void stop() noexcept;
-    [[nodiscard]] std::exception_ptr pump_error() const noexcept;
+    void configure(const WintunNetworkAddress& address) override;
+    void remove(const protocol::NetworkId& network_id) noexcept override;
+    void start(PacketHandler handler) override;
+    void inject(std::span<const std::byte> packet) override;
+    void stop() noexcept override;
+    [[nodiscard]] std::exception_ptr pump_error() const noexcept override;
 
 private:
     class Impl;

@@ -131,9 +131,9 @@ target_link_libraries(lanlink_relay_domain
 
 lanlink_enable_warnings(lanlink_relay_domain)
 
-add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp)
+add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp src/network/virtual_network.cpp)
 target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol)
+target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core)
 lanlink_enable_warnings(lanlink_packet_engine)
 
 add_library(lanlink_transport STATIC
@@ -226,6 +226,10 @@ if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME lanlink-release-assets
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_assets_tests.py)
+    add_executable(lanlink_virtual_network_tests tests/virtual_network_tests.cpp)
+    target_link_libraries(lanlink_virtual_network_tests PRIVATE lanlink_packet_engine)
+    lanlink_enable_warnings(lanlink_virtual_network_tests)
+    add_test(NAME lanlink-virtual-network COMMAND lanlink_virtual_network_tests)
     if(WIN32 AND LANLINK_PACKAGE_WINDOWS_CLIENT)
         add_executable(lanlink_windows_network_tests tests/windows_network_tests.cpp)
         target_link_libraries(lanlink_windows_network_tests PRIVATE lanlink_transport lanlink_local_ipc lanlink_auth iphlpapi)

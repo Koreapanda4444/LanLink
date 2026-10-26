@@ -6,7 +6,7 @@
 #include "lanlink/protocol/local_control.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/transport/local_pipe.hpp"
-#include "lanlink/transport/packet_bridge.hpp"
+#include "lanlink/network/virtual_network.hpp"
 #include "lanlink/session/relay_session.hpp"
 #include "lanlink/session/relay_packet_path.hpp"
 #include "lanlink/transport/wintun_adapter.hpp"
@@ -79,15 +79,6 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
             requests.push_back(event);
         }
     });
-    auto adapter = std::make_shared<lanlink::transport::WintunAdapter>();
-    auto bridge = std::make_shared<lanlink::transport::VirtualPacketBridge>(
-        [&](const lanlink::protocol::EncryptedNetworkPacket& packet) {
-            if (path.send(packet) != lanlink::transport::PacketSendResult::accepted)
-                throw std::runtime_error("packet path could not accept the encrypted packet");
-        },
-        [adapter](const std::span<const std::byte> packet) {
-            adapter->inject(packet);
-        });
     auto last_packet_warning_ms = std::make_shared<std::atomic<std::int64_t>>(0);
     const auto report_packet_error = [last_packet_warning_ms, &logger](
         const char* operation, const std::exception& error) {
@@ -99,35 +90,10 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
             logger.warning(std::string{operation} + ": " + error.what());
         }
     };
-    path.set_receive_handler(
-        [weak = std::weak_ptr{bridge}, report_packet_error](
-            const lanlink::protocol::ForwardedNetworkPacket& delivery) {
-            if (const auto current = weak.lock()) {
-                try {
-                    current->inbound(delivery);
-                } catch (const std::exception& error) {
-                    report_packet_error("incoming virtual packet dropped", error);
-                }
-            }
-        });
-    adapter->start([bridge, report_packet_error](
-                       const std::span<const std::byte> packet) {
-        try {
-            bridge->outbound(packet);
-        } catch (const std::exception& error) {
-            report_packet_error("outgoing virtual packet dropped", error);
-        }
-    });
-    try {
-        path.start();
-    } catch (...) {
-        adapter->stop();
-        path.set_receive_handler({});
-        throw;
-    }
+    auto adapter = std::make_shared<lanlink::transport::WintunAdapter>();
+    lanlink::network::VirtualNetwork network(adapter, path, logger);
+    network.start();
 
-    std::map<lanlink::protocol::NetworkId,
-             lanlink::transport::WintunNetworkAddress> installed;
     std::exception_ptr adapter_error;
 
     std::unique_ptr<lanlink::transport::LocalPipeServer> pipe;
@@ -246,49 +212,21 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                                           std::move(payload)};
         });
     } catch (...) {
-        adapter->stop();
-        bridge->clear();
-        path.set_receive_handler({});
-        path.stop();
+        network.stop();
         throw;
     }
 
     const auto shutdown = [&] {
         pipe->stop();
-        adapter->stop();
-        bridge->clear();
-        path.set_receive_handler({});
-        path.stop();
+        network.stop();
     };
     try {
         ready();
         while (console_stop_requested == 0 &&
                !lanlink::service::stop_requested() && !session.finished()) {
             try {
-                const auto snapshot = session.snapshot();
-                std::map<lanlink::protocol::NetworkId,
-                         lanlink::transport::WintunNetworkAddress> desired;
-                for (const auto& network : snapshot.networks) {
-                    const auto& state = network.peers;
-                    desired.emplace(state.network_id,
-                        lanlink::transport::WintunNetworkAddress{
-                            state.network_id, state.own_address,
-                            state.subnet_address, state.prefix_length});
-                }
-                for (const auto& [id, address] : desired) {
-                    adapter->configure(address);
-                    installed.insert_or_assign(id, address);
-                }
-                bridge->synchronize(snapshot.identity, snapshot.networks);
-                for (auto it = installed.begin(); it != installed.end();) {
-                    if (!desired.contains(it->first)) {
-                        adapter->remove(it->first);
-                        it = installed.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-                if (const auto error = adapter->pump_error()) {
+                network.synchronize(session.snapshot());
+                if (const auto error = network.pump_error()) {
                     adapter_error = error;
                     break;
                 }
