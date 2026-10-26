@@ -64,6 +64,7 @@ private:
     struct CapabilitySession {
         auth::SessionId session{};
         protocol::NegotiatedCapabilities negotiated;
+        std::map<std::pair<protocol::NetworkId, auth::DeviceId>, std::uint64_t> generations;
     };
     mutable std::mutex capabilities_mutex_;
     std::map<auth::DeviceId, CapabilitySession> capabilities_;

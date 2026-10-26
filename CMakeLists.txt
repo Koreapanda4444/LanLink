@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/p2p/candidates.cpp
     src/protocol/path_diagnostics.cpp
     src/protocol/capabilities.cpp
     src/protocol/codec.cpp

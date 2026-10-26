@@ -928,3 +928,16 @@ std::vector<RoutedPeerStateChange> NetworkService::peer_states_for_device(
 }
 
 }
+
+namespace lanlink::relay {
+bool NetworkService::authorize_peer_exchange(const auth::DeviceId& actor, const p2p::CandidateExchange& x) {
+    std::lock_guard lock(mutex_);
+    if (actor != x.sender || actor == x.recipient ||
+        !store_.find_virtual_ipv4_lease(x.network_id, actor) ||
+        !store_.find_virtual_ipv4_lease(x.network_id, x.recipient) || key_epoch_for(x.network_id) != x.key_epoch) return false;
+    const auto a=active_keys_.find(actor), b=active_keys_.find(x.recipient);
+    return a!=active_keys_.end() && b!=active_keys_.end() &&
+        a->second.signed_key.encryption_public_key==x.sender_session &&
+        b->second.signed_key.encryption_public_key==x.recipient_session;
+}
+}

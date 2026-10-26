@@ -3,6 +3,7 @@
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/storage/relay_store.hpp"
+#include "lanlink/p2p/candidates.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -130,6 +131,8 @@ public:
     [[nodiscard]] std::vector<RoutedEncryptedPacket> route_encrypted_packet(
         const auth::DeviceId& actor,
         const protocol::EncryptedNetworkPacket& packet);
+
+    [[nodiscard]] bool authorize_peer_exchange(const auth::DeviceId& actor, const p2p::CandidateExchange& exchange);
 
 private:
     [[nodiscard]] std::uint64_t revision_for(const storage::NetworkId& network_id) const;

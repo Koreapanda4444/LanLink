@@ -34,6 +34,7 @@ namespace protocol = lanlink::protocol;
 namespace relay = lanlink::relay;
 namespace storage = lanlink::storage;
 namespace transport = lanlink::transport;
+namespace p2p = lanlink::p2p;
 
 void expect(const bool condition, const std::string& description) {
     if (!condition) {
@@ -266,6 +267,18 @@ void test_network_management(const std::filesystem::path& directory) {
         return a && b && a->epoch == 2 && b->epoch == 2 && a->key == b->key;
     }, "approved member receives the owner generated network key");
     const auto shared_before_kick = *owner.cached_network_key(id);
+    p2p::CandidateExchange candidates;
+    candidates.network_id=id; candidates.sender=owner_identity.device_id(); candidates.recipient=member_identity.device_id();
+    candidates.sender_session=owner.cached_packet_identity()->signed_key.encryption_public_key;
+    candidates.recipient_session=member.cached_packet_identity()->signed_key.encryption_public_key;
+    candidates.key_epoch=shared_before_kick.epoch; candidates.generation=1;
+    candidates.candidates.push_back({{0x7f000001U,45000},p2p::CandidateKind::host,100});
+    expect(owner.publish_peer_candidates(candidates), "negotiated candidate send failed");
+    std::vector<p2p::CandidateExchange> delivered_candidates;
+    wait_until([&]{delivered_candidates=member.take_peer_candidates(); return !delivered_candidates.empty();},
+               "authenticated candidate exchange did not traverse the real relay control channel");
+    expect(delivered_candidates.size()==1 && delivered_candidates.front()==candidates, "candidate data changed in transit");
+
 
     wait_until([&] {
         return owner.max_datagram_size() > 128 &&

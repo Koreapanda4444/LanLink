@@ -69,15 +69,15 @@ void test_routing(const std::filesystem::path& directory) {
         return generated.at(generated_index++);
     });
     relay::NetworkControlChannel channel(service);
-    static_cast<void>(service.publish_device_key(
+    static_cast<void>(channel.note_authenticated(
         owner.device_id(), owner_server.session_id(),
-        owner_server.signed_device_key(), 1));
-    static_cast<void>(service.publish_device_key(
+        owner_server.signed_device_key()));
+    static_cast<void>(channel.note_authenticated(
         member.device_id(), member_server.session_id(),
-        member_server.signed_device_key(), 1));
-    static_cast<void>(service.publish_device_key(
+        member_server.signed_device_key()));
+    static_cast<void>(channel.note_authenticated(
         outsider.device_id(), outsider_server.session_id(),
-        outsider_server.signed_device_key(), 1));
+        outsider_server.signed_device_key()));
     expect(service.create_network(owner.device_id(), {"First"}, 2).result.code ==
                protocol::NetworkResultCode::success &&
            service.create_network(owner.device_id(), {"Second"}, 3).result.code ==
@@ -92,6 +92,31 @@ void test_routing(const std::filesystem::path& directory) {
            service.join_network(outsider.device_id(), {second}, 7).result.code ==
                protocol::NetworkResultCode::success,
            "each network grants a separate virtual IPv4 lease");
+
+    for (const auto& actor : {owner.device_id(),member.device_id(),outsider.device_id()})
+        static_cast<void>(channel.handle_authenticated(actor,{protocol::MessageType::network_list_request,
+            protocol::capability_request_id,protocol::encode_capability_offer({})}));
+    lanlink::p2p::CandidateExchange x;
+    x.network_id=first; x.sender=owner.device_id(); x.recipient=member.device_id();
+    x.sender_session=owner_server.signed_device_key().encryption_public_key;
+    x.recipient_session=member_server.signed_device_key().encryption_public_key;
+    x.key_epoch=2; x.generation=1;
+    x.candidates.push_back({{0xc0a80102U,45001},lanlink::p2p::CandidateKind::host,100});
+    auto exchange=[&](const auto& value,const auto& actor){return channel.handle_authenticated(actor,
+        {protocol::MessageType::peer_candidates_send,0,lanlink::p2p::encode_candidates(value)});};
+    auto cross=x; cross.recipient=outsider.device_id(); cross.recipient_session=outsider_server.signed_device_key().encryption_public_key;
+    expect(exchange(cross,owner.device_id()).events.empty(),"candidate leaked across network boundary");
+    expect(exchange(x,outsider.device_id()).events.empty(),"candidate sender was spoofed");
+    auto stale=x; ++stale.key_epoch;
+    expect(exchange(stale,owner.device_id()).events.empty(),"stale key epoch candidate accepted");
+    auto old_session=x; old_session.sender_session[0]^=std::byte{1};
+    expect(exchange(old_session,owner.device_id()).events.empty(),"wrong session candidate accepted");
+    const auto forwarded=exchange(x,owner.device_id());
+    expect(forwarded.events.size()==1 && forwarded.events[0].recipient_device_id==member.device_id() &&
+        lanlink::p2p::decode_candidates(forwarded.events[0].frame.payload)==x,"valid candidate did not reach approved member");
+    expect(exchange(x,owner.device_id()).events.empty(),"replayed candidate generation was accepted");
+    const auto wire=lanlink::p2p::encode_candidates(x);
+    for (std::size_t n=0;n<wire.size();++n) expect_error([&]{static_cast<void>(lanlink::p2p::decode_candidates(std::span(wire).first(n)));},"truncated candidate accepted");
     const auto owner_ip = store.find_virtual_ipv4_lease(first, owner.device_id())->address;
     const auto member_ip = store.find_virtual_ipv4_lease(first, member.device_id())->address;
 
@@ -143,9 +168,9 @@ void test_routing(const std::filesystem::path& directory) {
                                                 member_server.session_id()));
     expect(service.route_encrypted_packet(owner.device_id(), packet).empty(),
            "disconnected destination is not forwarded packets");
-    static_cast<void>(service.publish_device_key(
+    static_cast<void>(channel.note_authenticated(
         member.device_id(), member_server.session_id(),
-        member_server.signed_device_key(), 8));
+        member_server.signed_device_key()));
     expect(!service.route_encrypted_packet(owner.device_id(), packet).empty(),
            "reconnected network member receives packets again");
     expect(service.kick_member(owner.device_id(), {first, member.device_id()}, 9)

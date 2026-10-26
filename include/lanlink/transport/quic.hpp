@@ -7,6 +7,7 @@
 #include "lanlink/session/network_state.hpp"
 #include "lanlink/protocol/capabilities.hpp"
 #include "lanlink/core/error.hpp"
+#include "lanlink/p2p/candidates.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -164,6 +165,8 @@ public:
     [[nodiscard]] std::optional<NetworkKeySnapshot> cached_network_key(
         const protocol::NetworkId& network_id) const;
     [[nodiscard]] std::optional<PacketIdentitySnapshot> cached_packet_identity() const;
+    [[nodiscard]] bool publish_peer_candidates(const p2p::CandidateExchange& exchange);
+    [[nodiscard]] std::vector<p2p::CandidateExchange> take_peer_candidates();
     void set_network_event_handler(std::function<void(const protocol::NetworkEvent&)> handler);
     void send_encrypted_packet(const protocol::EncryptedNetworkPacket& packet);
     void set_encrypted_packet_handler(

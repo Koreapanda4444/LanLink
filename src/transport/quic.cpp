@@ -1444,6 +1444,23 @@ public:
         return PacketIdentitySnapshot{identity_->device_id(), *own_signed_key_};
     }
 
+    bool publish_peer_candidates(const p2p::CandidateExchange& x) {
+        if (!capabilities().supports(protocol::Capability::peer_candidates)) return false;
+        auto payload=p2p::encode_candidates(x);
+        std::shared_ptr<AttemptState> attempt;
+        { std::lock_guard lock(active_mutex_); attempt=active_attempt_.lock(); }
+        if (!attempt) return false;
+        std::lock_guard lock(attempt->mutex);
+        if (!attempt->authenticated || stop_requested_.load()) return false;
+        protocol::Frame frame{protocol::MessageType::peer_candidates_send,0,std::move(payload)};
+        return attempt->tcp ? attempt->tcp->enqueue(frame) : attempt->control_stream &&
+            QUIC_SUCCEEDED(send_frame(api_,attempt->control_stream,frame,attempt->sends));
+    }
+    std::vector<p2p::CandidateExchange> take_peer_candidates() {
+        std::lock_guard lock(peer_state_mutex_);
+        auto result=std::move(candidate_inbox_); candidate_inbox_.clear(); return result;
+    }
+
     void set_network_event_handler(
         std::function<void(const protocol::NetworkEvent&)> handler) {
         std::lock_guard lock(event_handler_mutex_);
@@ -1522,6 +1539,7 @@ private:
         std::lock_guard lock(peer_state_mutex_);
         own_signed_key_.reset();
         negotiated_capabilities_ = {};
+        candidate_inbox_.clear();
         network_keys_.clear();
         peer_states_.clear();
         peer_revisions_.clear();
@@ -2624,6 +2642,23 @@ private:
     }
 
     void handle_control_frame(StreamContext* context, const protocol::Frame& frame) {
+        if (frame.type == protocol::MessageType::peer_candidates_ack) {
+            if (!frame.payload.empty()) throw std::runtime_error("invalid candidate acknowledgement");
+            return;
+        }
+        if (frame.type == protocol::MessageType::peer_candidates_forward) {
+            auto x=p2p::decode_candidates(frame.payload);
+            std::lock_guard lock(peer_state_mutex_);
+            const auto n=peer_states_.find(x.network_id);
+            if (frame.request_id || !negotiated_capabilities_.supports(protocol::Capability::peer_candidates) ||
+                !own_signed_key_ || x.recipient!=identity_->device_id() ||
+                x.recipient_session!=own_signed_key_->encryption_public_key || n==peer_states_.end() ||
+                x.key_epoch!=n->second.key_epoch) return;
+            const auto p=std::find_if(n->second.peers.begin(),n->second.peers.end(),[&](const auto& peer){return peer.device_id==x.sender;});
+            if (p==n->second.peers.end() || !p->signed_key || p->signed_key->encryption_public_key!=x.sender_session) return;
+            if (candidate_inbox_.size()<64) candidate_inbox_.push_back(std::move(x));
+            return;
+        }
         if (frame.request_id == protocol::capability_request_id) {
             protocol::NegotiatedCapabilities selected;
             if (frame.type == protocol::MessageType::network_list_result) {
@@ -2789,6 +2824,7 @@ private:
     mutable std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
     protocol::NegotiatedCapabilities negotiated_capabilities_;
+    std::vector<p2p::CandidateExchange> candidate_inbox_;
     std::atomic<std::uint32_t> next_request_id_ = 2;
     std::mutex event_handler_mutex_;
     mutable std::mutex peer_state_mutex_;
@@ -2967,4 +3003,9 @@ void QuicRelayClient::set_encrypted_packet_handler(
     impl_->set_encrypted_packet_handler(std::move(handler));
 }
 
+}
+
+namespace lanlink::transport {
+bool QuicRelayClient::publish_peer_candidates(const p2p::CandidateExchange& x) {return impl_->publish_peer_candidates(x);}
+std::vector<p2p::CandidateExchange> QuicRelayClient::take_peer_candidates() {return impl_->take_peer_candidates();}
 }

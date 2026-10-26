@@ -32,6 +32,7 @@ protocol::Frame error_response(const std::uint32_t request_id) {
 
 bool is_network_request(const protocol::MessageType type) noexcept {
     switch (type) {
+        case protocol::MessageType::peer_candidates_send:
         case protocol::MessageType::network_create_request:
         case protocol::MessageType::network_list_request:
         case protocol::MessageType::network_join_request:
@@ -173,7 +174,7 @@ std::vector<RoutedControlFrame> NetworkControlChannel::note_authenticated(
     const auth::SignedDeviceKey& signed_key) {
     {
         std::lock_guard lock(capabilities_mutex_);
-        capabilities_[actor] = {session_id, {}};
+        capabilities_[actor] = {session_id, {}, {}};
     }
     return encode_peer_changes(
         service_.publish_device_key(actor, session_id, signed_key, now_ms()));
@@ -207,7 +208,8 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
         throw std::invalid_argument("control request requires an authenticated device");
     }
     if (request.request_id == 0 &&
-        request.type != protocol::MessageType::network_key_publish_request) {
+        request.type != protocol::MessageType::network_key_publish_request &&
+        request.type != protocol::MessageType::peer_candidates_send) {
         throw std::invalid_argument("control request id must be non-zero");
     }
     if (request.type == protocol::MessageType::network_key_publish_request &&
@@ -219,6 +221,22 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
     }
 
     try {
+        if (request.type == protocol::MessageType::peer_candidates_send) {
+            const auto x = p2p::decode_candidates(request.payload);
+            if (!service_.authorize_peer_exchange(actor, x)) return {error_response(request.request_id), {}};
+            std::lock_guard lock(capabilities_mutex_);
+            const auto a=capabilities_.find(actor), b=capabilities_.find(x.recipient);
+            if (a==capabilities_.end() || b==capabilities_.end() ||
+                !a->second.negotiated.supports(protocol::Capability::peer_candidates) ||
+                !b->second.negotiated.supports(protocol::Capability::peer_candidates)) return {error_response(request.request_id), {}};
+            auto& generations=a->second.generations;
+            const auto key=std::pair{x.network_id,x.recipient};
+            if ((!generations.contains(key) && generations.size()>=128) ||
+                (generations.contains(key) && generations.at(key)>=x.generation)) return {error_response(request.request_id), {}};
+            generations[key]=x.generation;
+            return {{protocol::MessageType::peer_candidates_ack,request.request_id,{}},
+                {{x.recipient,{protocol::MessageType::peer_candidates_forward,0,request.payload}}}};
+        }
         if (request.type == protocol::MessageType::network_list_request &&
             protocol::is_capability_payload(request.payload)) {
             const auto negotiated = protocol::negotiate_capabilities({}, protocol::decode_capability_offer(request.payload));
