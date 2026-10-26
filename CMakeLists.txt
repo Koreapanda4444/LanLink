@@ -1,13 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(LanLink VERSION 0.2.2 LANGUAGES CXX)
+project(LanLink VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
-find_package(msquic CONFIG REQUIRED)
+option(LANLINK_FOUNDATION_ONLY "Build portable shared modules without network executables" OFF)
+if(NOT LANLINK_FOUNDATION_ONLY)
+    find_package(msquic CONFIG REQUIRED)
+endif()
 find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 find_package(SQLite3 REQUIRED)
 
@@ -19,12 +22,14 @@ else()
     message(FATAL_ERROR "The SQLite3 package did not export a supported CMake target")
 endif()
 
-if(TARGET msquic::msquic)
-    set(LANLINK_MSQUIC_TARGET msquic::msquic)
-elseif(TARGET msquic)
-    set(LANLINK_MSQUIC_TARGET msquic)
-else()
-    message(FATAL_ERROR "The msquic package did not export a supported CMake target")
+if(NOT LANLINK_FOUNDATION_ONLY)
+    if(TARGET msquic::msquic)
+        set(LANLINK_MSQUIC_TARGET msquic::msquic)
+    elseif(TARGET msquic)
+        set(LANLINK_MSQUIC_TARGET msquic)
+    else()
+        message(FATAL_ERROR "The msquic package did not export a supported CMake target")
+    endif()
 endif()
 
 function(lanlink_enable_warnings target)
@@ -138,6 +143,15 @@ add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp src/net
 target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core)
 lanlink_enable_warnings(lanlink_packet_engine)
+
+if(LANLINK_FOUNDATION_ONLY)
+    include(cmake/BuildMetadata.cmake)
+    include(CTest)
+    if(BUILD_TESTING)
+        include(cmake/FoundationTests.cmake)
+    endif()
+    return()
+endif()
 
 add_library(lanlink_transport STATIC
     src/transport/quic.cpp

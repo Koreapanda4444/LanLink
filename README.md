@@ -32,3 +32,7 @@ ctest --test-dir build --build-config Release --output-on-failure
 ```
 
 Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux 릴레이 패키지는 `VCPKG_ROOT`를 지정한 뒤 `bash deploy/linux/build-relay.sh`로 만든다. 직접 빌드하는 서버의 라이브러리·glibc 요구 사항은 해당 빌드 환경을 따른다.
+
+## v1.0 개발
+
+현재 소스는 v0.3.0 기반 정비 마일스톤을 개발 중이다. 공개 안정판 v0.2.2의 설정·장치 ID와 Relay 경로를 유지하며, 개발 아티팩트는 공개 Release와 구분한다. [빌드 구성](docs/building.md)과 [프로토콜 확장](docs/protocol-extensions.md)을 참고한다.

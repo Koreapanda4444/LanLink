@@ -42,12 +42,12 @@ def fixture_files(kind):
     if kind == "relay":
         result["bin/lanlink-relay"] = linux_binary()
         result["lib/libmsquic.so.2.4.8"] = linux_binary()
-    result["package-version.txt" if kind == "windows" else "relay-version.txt"] = b"0.2.2\n"
+    result["package-version.txt" if kind == "windows" else "relay-version.txt"] = (prepare.VERSION + "\n").encode()
     result["build-info.json"] = json.dumps({
-        "version": "0.2.2", "source_commit": COMMIT, "source_clean": True,
+        "version": prepare.VERSION, "source_commit": COMMIT, "source_clean": True,
         "protocol_version": 5, "system": "Windows" if kind == "windows" else "Linux",
         "distribution": "Windows" if kind == "windows" else "linux", "architecture": "x64",
-        "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": "0.2.2"},
+        "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": prepare.VERSION},
     }).encode()
     return result
 
@@ -112,7 +112,7 @@ class ReleaseAssetsTests(unittest.TestCase):
             prepare.inspect_installer(self.directory / prepare.INSTALLER, COMMIT)
 
     def test_package_metadata_mismatch(self):
-        for field, value in (("source_commit", "b" * 40), ("version", "0.3.0"),
+        for field, value in (("source_commit", "b" * 40), ("version", "99.0.0"),
                              ("source_clean", False), ("architecture", "arm64"),
                              ("protocol_version", 4), ("distribution", "ubuntu")):
             with self.subTest(field=field):
@@ -166,7 +166,7 @@ class ReleaseAssetsTests(unittest.TestCase):
     def test_optional_top_directory(self):
         for kind in prepare.ARCHIVES:
             path = write_package(self.directory, kind, root="LanLink-package")
-            self.assertEqual(prepare.inspect_package(path, kind, COMMIT)["build"]["version"], "0.2.2")
+            self.assertEqual(prepare.inspect_package(path, kind, COMMIT)["build"]["version"], prepare.VERSION)
 
     def test_checksum_list_cannot_drop_a_package(self):
         for kind in prepare.ARCHIVES:

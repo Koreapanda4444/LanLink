@@ -1,16 +1,29 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "lanlink",
-  "version-string": "0.2.2",
+  "version-string": "0.3.0",
   "builtin-baseline": "a1cae005c39be7b18ba319fced856b68d7276271",
   "dependencies": [
     {
       "name": "imgui",
-      "features": ["dx11-binding", "win32-binding"],
+      "features": [
+        "dx11-binding",
+        "win32-binding"
+      ],
       "platform": "windows"
     },
-    "msquic",
     "openssl",
     "sqlite3"
-  ]
+  ],
+  "default-features": [
+    "network-runtime"
+  ],
+  "features": {
+    "network-runtime": {
+      "description": "QUIC and TLS relay and client runtime",
+      "dependencies": [
+        "msquic"
+      ]
+    }
+  }
 }

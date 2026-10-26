@@ -1,0 +1,46 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "vcpkg-base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    },
+    {
+      "name": "windows-client",
+      "inherits": "vcpkg-base",
+      "generator": "Ninja Multi-Config",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows"}
+    },
+    {
+      "name": "linux-relay",
+      "inherits": "vcpkg-base",
+      "generator": "Ninja",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "LANLINK_PACKAGE_RELAY": "ON"}
+    },
+    {
+      "name": "macos-foundation",
+      "inherits": "vcpkg-base",
+      "generator": "Ninja",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin"},
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LANLINK_FOUNDATION_ONLY": "ON",
+        "VCPKG_MANIFEST_NO_DEFAULT_FEATURES": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "windows-client", "configurePreset": "windows-client", "configuration": "Release"},
+    {"name": "linux-relay", "configurePreset": "linux-relay"},
+    {"name": "macos-foundation", "configurePreset": "macos-foundation"}
+  ],
+  "testPresets": [
+    {"name": "windows-client", "configurePreset": "windows-client", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "linux-relay", "configurePreset": "linux-relay", "output": {"outputOnFailure": true}},
+    {"name": "macos-foundation", "configurePreset": "macos-foundation", "output": {"outputOnFailure": true}}
+  ]
+}
