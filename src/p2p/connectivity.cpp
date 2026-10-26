@@ -25,6 +25,10 @@ std::optional<CandidatePair> ConnectivityChecks::next(Clock::time_point now) {
     if(selected==pairs_.end()) {static_cast<void>(nominate(now));return std::nullopt;}
     selected->state=CheckState::in_progress;++selected->attempts;next_=now+std::chrono::milliseconds{100};return *selected;
 }
+void ConnectivityChecks::note_probe(Endpoint local,Endpoint remote) {
+    if(state_!=ConnectivityState::checking)return;
+    for(auto& p:pairs_)if(p.local.endpoint==local && p.remote.endpoint==remote && p.state!=CheckState::succeeded && p.state!=CheckState::failed){p.state=CheckState::in_progress;++p.attempts;}
+}
 void ConnectivityChecks::result(Endpoint local,Endpoint remote,bool success,std::optional<std::uint32_t> rtt) {
     if(state_!=ConnectivityState::checking)return;
     for(auto& p:pairs_)if(p.local.endpoint==local && p.remote.endpoint==remote && p.state==CheckState::in_progress) {

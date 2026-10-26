@@ -40,7 +40,7 @@ std::optional<ProbeDatagram> PunchSession::receive(const Datagram& d,Clock::time
         const auto kind=r.get<std::uint8_t>();if(decode_binding(r.bytes(168))!=binding_.reversed())return std::nullopt;
         const auto nonce=r.array<32>(),echo=r.array<32>();const auto signature=r.array<64>();r.finish();
         if((kind!=1 && kind!=2) || !auth::verify_signature(peer_key_.identity_public_key,std::span(d.bytes).first(d.bytes.size()-64),signature))return std::nullopt;
-        if(kind==2) {if(echo==nonce_)selected_=d.source;return std::nullopt;}
+        if(kind==2) {if(echo==nonce_){selected_=d.source;if(std::find(verified_.begin(),verified_.end(),d.source)==verified_.end())verified_.push_back(d.source);}return std::nullopt;}
         ++responses_;return ProbeDatagram{d.source,message(true,nonce)};
     }catch(const std::exception&){return std::nullopt;}
 }

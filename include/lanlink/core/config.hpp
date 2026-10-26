@@ -11,6 +11,9 @@
 namespace lanlink::core {
 
 struct RuntimeConfig {
+    bool p2p_enabled=true;
+    std::string p2p_stun_host;
+    std::uint16_t p2p_stun_port=3478;
     std::string relay_host = "127.0.0.1";
     std::uint16_t relay_port = 4433;
     std::string listen_host = "0.0.0.0";

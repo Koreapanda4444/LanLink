@@ -19,6 +19,7 @@ public:
     // Device IDs are the stable, authenticated tie breakers. Both agents derive the same winner.
     void resolve_role_conflict(IceRole peer_role);
     [[nodiscard]] std::optional<CandidatePair> next(Clock::time_point now=Clock::now());
+    void note_probe(Endpoint local,Endpoint remote);
     void result(Endpoint local,Endpoint remote,bool success,std::optional<std::uint32_t> rtt_us={});
     [[nodiscard]] std::optional<CandidatePair> nominate(Clock::time_point now=Clock::now());
     [[nodiscard]] ConnectivityState state() const noexcept{return state_;}

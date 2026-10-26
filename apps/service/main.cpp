@@ -8,7 +8,7 @@
 #include "lanlink/transport/local_pipe.hpp"
 #include "lanlink/network/virtual_network.hpp"
 #include "lanlink/session/relay_session.hpp"
-#include "lanlink/session/relay_packet_path.hpp"
+#include "lanlink/session/peer_packet_path.hpp"
 #include "lanlink/transport/wintun_adapter.hpp"
 
 #include <atomic>
@@ -67,7 +67,13 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     std::vector<lanlink::protocol::NetworkEvent> requests;
     lanlink::session::RelaySession session(std::move(options), logger);
     auto& client = session.client();
-    lanlink::session::RelayPacketPath path(session);
+    lanlink::session::PeerPathOptions peer_options;peer_options.enabled=config.p2p_enabled;
+    if(!config.p2p_stun_host.empty()) {
+        std::uint32_t ipv4=0;unsigned octet=0;
+        for(const char c:config.p2p_stun_host) {if(c=='.'){ipv4=(ipv4<<8)|octet;octet=0;}else octet=octet*10+static_cast<unsigned>(c-'0');}
+        ipv4=(ipv4<<8)|octet;peer_options.stun_servers.push_back({ipv4,config.p2p_stun_port});
+    }
+    lanlink::session::PeerPacketPath path(session,config.device_identity_file,logger,std::move(peer_options));
     client.set_network_event_handler([&](const lanlink::protocol::NetworkEvent& event) {
         namespace protocol = lanlink::protocol;
         std::lock_guard lock(requests_mutex);

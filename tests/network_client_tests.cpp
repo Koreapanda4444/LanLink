@@ -5,6 +5,8 @@
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/transport/tls.hpp"
+#include "lanlink/session/peer_packet_path.hpp"
+#include "lanlink/auth/packet_crypto.hpp"
 
 #include <algorithm>
 #include <array>
@@ -801,6 +803,51 @@ void test_tls_backpressure(const std::filesystem::path& directory) {
     expect(closed.load() == 2, "both TLS sessions must close after recovery");
 }
 
+void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
+    const auto port=static_cast<std::uint16_t>(35000+(std::chrono::steady_clock::now().time_since_epoch().count()%20000));
+    core::Logger logger(directory/(tls?"peer-tls.log":"peer-direct.log"),"peer-path",core::LogLevel::warning,1024*1024,2);
+    storage::RelayStore store(directory/(tls?"peer-tls.db":"peer-direct.db"));relay::NetworkService service(store);relay::NetworkControlChannel channel(service);
+    transport::QuicServerOptions server_options;server_options.listen_host="127.0.0.1";server_options.port=port;
+    server_options.certificate_file=directory/"cert.pem";server_options.private_key_file=directory/"key.pem";
+    server_options.auth_token_file=directory/"auth.token";server_options.enable_quic=!tls;
+    transport::QuicRelayServer server(server_options,logger,channel);server.start();
+    transport::QuicClientOptions client_options;client_options.port=port;client_options.relay_host="127.0.0.1";
+    client_options.identity_file=directory/(tls?"a-tls.identity":"a-direct.identity");client_options.auth_token_file=directory/"auth.token";
+    client_options.handshake_timeout=200ms;client_options.reconnect_initial_delay=100ms;client_options.reconnect_maximum_delay=250ms;
+    const auto a_file=client_options.identity_file;lanlink::session::RelaySession a_session(client_options,logger);
+    client_options.identity_file=directory/(tls?"b-tls.identity":"b-direct.identity");const auto b_file=client_options.identity_file;
+    lanlink::session::RelaySession b_session(client_options,logger);
+    lanlink::session::PeerPathOptions options;options.allow_loopback=true;
+    options.interfaces=[tls]{return tls?std::vector<p2p::InterfaceAddress>{}:std::vector<p2p::InterfaceAddress>{{"fixture",0x7f000001,1,true,true,false}};};
+    lanlink::session::PeerPacketPath a(a_session,a_file,logger,options),b(b_session,b_file,logger,options);
+    a.start();b.start();auto& ca=a_session.client();auto& cb=b_session.client();
+    wait_until([&]{return ca.authenticated() && cb.authenticated();},"peer path relay authentication failed");
+    const auto id=ca.create_network("Path integration").network_id;
+    const auto a_id=ca.cached_packet_identity()->device_id,b_id=cb.cached_packet_identity()->device_id;
+    expect(ca.invite_member(id,b_id).code==protocol::NetworkResultCode::success && cb.join_network(id).code==protocol::NetworkResultCode::success,"peer path membership failed");
+    wait_until([&]{return ca.cached_network_key(id) && cb.cached_network_key(id) && ca.cached_network_key(id)->epoch==cb.cached_network_key(id)->epoch;},"peer path keys did not synchronize");
+    const auto a_state=*ca.cached_peer_state(id),b_state=*cb.cached_peer_state(id);const auto key=*ca.cached_network_key(id);
+    lanlink::auth::NetworkPacketCipher encrypt(id,key.epoch,key.key,a_id,ca.cached_packet_identity()->signed_key,a_state.own_address),
+        decrypt(id,key.epoch,key.key,b_id,cb.cached_packet_identity()->signed_key,b_state.own_address);
+    encrypt.update_peers(a_state);decrypt.update_peers(b_state);
+    std::vector<std::byte> plain(40);plain[0]=std::byte{0x45};plain[3]=std::byte{40};plain[8]=std::byte{64};plain[9]=std::byte{17};
+    for(unsigned i=0;i<4;++i){plain[12+i]=static_cast<std::byte>((a_state.own_address>>((3-i)*8))&255);plain[16+i]=static_cast<std::byte>((b_state.own_address>>((3-i)*8))&255);}
+    std::atomic<unsigned> delivered=0,replayed=0;b.set_receive_handler([&](const auto& d){try{expect(decrypt.decrypt(d.packet,d.sender_device_id)==plain,"routed plaintext changed");++delivered;}catch(const std::exception&){++replayed;}});
+    if(!tls)wait_until([&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;},"service packet path did not select authenticated Direct QUIC");
+    else expect(a.status().kind==transport::PathKind::relay_tls,"blocked UDP did not use Relay TLS/TCP");
+    const auto before=ca.diagnostics().sent_packets;const auto packet=encrypt.encrypt(plain);
+    expect(a.send(packet)==transport::PacketSendResult::accepted,"selected path rejected packet");
+    wait_until([&]{return delivered.load()==1;},"selected path did not deliver encrypted IPv4");
+    if(!tls){expect(ca.diagnostics().sent_packets==before,"Direct IPv4 passed through Relay");a.set_direct_enabled(false);
+        wait_until([&]{return a.peer_status().empty();},"Direct disable did not close peer sessions");
+        expect(a.send(packet)==transport::PacketSendResult::accepted,"Relay fallback send failed");
+        wait_until([&]{return replayed.load()==1;},"cross-path replay bypassed the shared cipher window");}
+    expect(a.send(encrypt.encrypt(plain))==transport::PacketSendResult::accepted,"fallback packet send failed");
+    wait_until([&]{return delivered.load()==2;},"Relay fallback did not preserve packet sequence/IP");
+    expect(ca.cached_peer_state(id)->own_address==a_state.own_address && cb.cached_peer_state(id)->own_address==b_state.own_address,"path selection changed virtual IPv4 leases");
+    a.stop();b.stop();server.stop();
+}
+
 }
 
 int main(const int argc, char* argv[]) {
@@ -813,6 +860,8 @@ int main(const int argc, char* argv[]) {
         test_peer_state_reconnect(argv[1]);
         test_tls_tcp_fallback(argv[1]);
         test_tls_backpressure(argv[1]);
+        test_peer_paths(argv[1],false);
+        test_peer_paths(argv[1],true);
         std::cout << "network management QUIC and TLS TCP integration passed\n";
         return 0;
     } catch (const std::exception& error) {

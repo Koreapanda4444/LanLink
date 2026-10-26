@@ -47,6 +47,11 @@ std::filesystem::path make_test_directory() {
 }
 
 void test_configuration() {
+    expect(lanlink::core::parse_config("").p2p_enabled,"legacy configuration enables native P2P defaults");
+    const auto peer=lanlink::core::parse_config("p2p_enabled=false\np2p_stun_host=192.168.1.2\np2p_stun_port=3479\n");
+    expect(!peer.p2p_enabled && peer.p2p_stun_host=="192.168.1.2" && peer.p2p_stun_port==3479,"P2P configuration");
+    for(const auto invalid:{"p2p_enabled=yes\n","p2p_stun_host=stun.example.com\n","p2p_stun_host=224.0.0.1\n","p2p_stun_port=0\n"})
+        expect_error([&]{static_cast<void>(lanlink::core::parse_config(invalid));},"invalid P2P configuration rejected");
     const auto config = lanlink::core::parse_config(
         "relay_host=relay.example.com\n"
         "relay_port=8443\n"

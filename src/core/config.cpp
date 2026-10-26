@@ -104,7 +104,15 @@ RuntimeConfig parse_config(const std::string_view content) {
                 fail(line_number, "duplicate key " + key);
             }
 
-            if (key == "relay_host") {
+            if(key=="p2p_enabled") {
+                if(value!="true" && value!="false")fail(line_number,"p2p_enabled must be true or false");
+                config.p2p_enabled=value=="true";
+            } else if(key=="p2p_stun_host")config.p2p_stun_host=value;
+            else if(key=="p2p_stun_port") {
+                const auto port=parse_unsigned(value,key_view,line_number);
+                if(!port || port>65535)fail(line_number,"invalid STUN port");
+                config.p2p_stun_port=static_cast<std::uint16_t>(port);
+            } else if (key == "relay_host") {
                 config.relay_host = value;
             } else if (key == "relay_port") {
                 const auto parsed = parse_unsigned(value, key_view, line_number);
@@ -241,6 +249,18 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
 }
 
 void validate_config(const RuntimeConfig& config) {
+    if(!config.p2p_stun_port)throw std::runtime_error("invalid STUN port");
+    if(!config.p2p_stun_host.empty()) {
+        const auto host=std::string_view(config.p2p_stun_host);std::size_t offset=0;
+        for(unsigned part=0;part<4;++part) {
+            const auto end=host.find('.',offset);const auto segment=host.substr(offset,end==host.npos?host.size()-offset:end-offset);
+            unsigned value=0;const auto [ptr,error]=std::from_chars(segment.data(),segment.data()+segment.size(),value);
+            if(segment.empty() || error!=std::errc{} || ptr!=segment.data()+segment.size() || value>255 ||
+                (part<3 && end==host.npos) || (part==3 && end!=host.npos) || (part==0 && (!value || value==127 || value>=224)))
+                throw std::runtime_error("p2p_stun_host must be a numeric unicast IPv4 address");
+            offset=end==host.npos?host.size():end+1;
+        }
+    }
     if (invalid_host(config.relay_host)) {
         throw std::runtime_error("relay_host is invalid");
     }

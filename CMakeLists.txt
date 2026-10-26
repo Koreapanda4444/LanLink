@@ -198,7 +198,7 @@ endif()
 
 lanlink_enable_warnings(lanlink_transport)
 
-add_library(lanlink_session STATIC src/session/relay_session.cpp src/session/relay_packet_path.cpp)
+add_library(lanlink_session STATIC src/session/relay_session.cpp src/session/relay_packet_path.cpp src/session/peer_packet_path.cpp)
 target_include_directories(lanlink_session PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_session PUBLIC lanlink_transport)
 lanlink_enable_warnings(lanlink_session)
@@ -448,6 +448,7 @@ if(BUILD_TESTING)
                     lanlink_auth
                     ${LANLINK_SQLITE_TARGET}
             )
+            target_link_libraries(lanlink_network_client_tests PRIVATE lanlink_session)
             lanlink_enable_warnings(lanlink_network_client_tests)
             add_test(
                 NAME lanlink-network-client

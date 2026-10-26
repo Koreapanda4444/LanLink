@@ -23,6 +23,7 @@ public:
     [[nodiscard]] std::optional<ProbeDatagram> receive(const Datagram& datagram,Clock::time_point now=Clock::now());
     [[nodiscard]] std::optional<Endpoint> selected() const noexcept{return selected_;}
     [[nodiscard]] bool finished(Clock::time_point now=Clock::now()) const noexcept;
+    [[nodiscard]] const std::vector<Endpoint>& verified() const noexcept{return verified_;}
     [[nodiscard]] unsigned sent_probes() const noexcept{return sent_;}
 private:
     std::vector<std::byte> message(bool reply,const auth::Nonce& echo) const;
@@ -30,6 +31,7 @@ private:
     std::vector<Candidate> remote_;auth::Nonce nonce_;
     Clock::time_point deadline_,next_;unsigned round_=0,sent_=0,responses_=0;
     std::optional<Endpoint> selected_;
+    std::vector<Endpoint> verified_;
 };
 [[nodiscard]] std::optional<Endpoint> run_punch(UdpSocket& socket,PunchSession& session);
 }
