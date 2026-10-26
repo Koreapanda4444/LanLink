@@ -152,6 +152,10 @@ void test_network_management(const std::filesystem::path& directory) {
 
     wait_until([&] { return owner.authenticated() && member.authenticated(); },
                "both clients must authenticate");
+    wait_until([&] { return !owner.capabilities().legacy && !member.capabilities().legacy; },
+               "capability negotiation did not complete over QUIC");
+    expect(owner.capabilities().supports(protocol::Capability::negotiation),
+           "new peers did not select their shared capability");
     expect(store.find_device(owner_identity.device_id()).has_value() &&
                store.find_device(member_identity.device_id()).has_value(),
            "relay must persist authenticated client identities");
@@ -598,6 +602,7 @@ void test_tls_tcp_fallback(const std::filesystem::path& directory) {
     auto member_options = owner_options;
     member_options.identity_file = directory / "tcp-member.identity";
     member_options.tcp_probe_interval = 20s;
+    member_options.enable_capability_negotiation = false;
     transport::QuicRelayClient owner(std::move(owner_options), owner_logger);
     transport::QuicRelayClient member(std::move(member_options), member_logger);
     std::exception_ptr owner_error;
@@ -612,6 +617,9 @@ void test_tls_tcp_fallback(const std::filesystem::path& directory) {
         return owner.authenticated() && member.authenticated() &&
                owner.using_tcp_fallback() && member.using_tcp_fallback();
     }, "UDP outage must authenticate both clients through TLS TCP");
+    wait_until([&] { return !owner.capabilities().legacy; }, "TLS capability negotiation did not complete");
+    expect(member.capabilities().legacy && channel.capabilities(member_identity.device_id()).legacy,
+           "legacy client was forced to negotiate extension capabilities");
     const auto id = owner.create_network("TLS fallback LAN").network_id;
     expect(member.join_network(id).code == protocol::NetworkResultCode::pending_approval,
            "TCP control requests must use the existing approval protocol");

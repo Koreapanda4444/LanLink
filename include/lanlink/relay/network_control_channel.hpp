@@ -1,10 +1,13 @@
 #pragma once
 
 #include "lanlink/protocol/message.hpp"
+#include "lanlink/protocol/capabilities.hpp"
 #include "lanlink/relay/network_service.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <vector>
@@ -51,12 +54,19 @@ public:
         const protocol::Frame& request);
     [[nodiscard]] std::vector<RoutedEncryptedPacket> route_encrypted_packet(
         const auth::DeviceId& actor, std::span<const std::byte> payload);
+    [[nodiscard]] protocol::NegotiatedCapabilities capabilities(const auth::DeviceId& actor) const;
 
 private:
     [[nodiscard]] std::int64_t now_ms() const;
 
     NetworkService& service_;
     TimeSource time_source_;
+    struct CapabilitySession {
+        auth::SessionId session{};
+        protocol::NegotiatedCapabilities negotiated;
+    };
+    mutable std::mutex capabilities_mutex_;
+    std::map<auth::DeviceId, CapabilitySession> capabilities_;
 };
 
 }

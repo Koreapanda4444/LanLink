@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -220,6 +221,10 @@ void ready(Node& owner, Node& member, const protocol::NetworkId& id) {
                a->peers.front().signed_key && b->peers.front().signed_key && ka && kb &&
                *ka == *kb && ka->epoch == a->key_epoch && kb->epoch == b->key_epoch;
     }, "approved clients did not receive matching keys and signed peer state");
+    if (std::getenv("LANLINK_EXPECT_LEGACY")) {
+        require(owner.client.capabilities().legacy && member.client.capabilities().legacy,
+                "legacy relay unexpectedly negotiated an extension");
+    }
     owner.synchronize();
     member.synchronize();
 }

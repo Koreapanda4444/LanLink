@@ -56,6 +56,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/capabilities.cpp
     src/protocol/codec.cpp
     src/protocol/local_control.cpp
     src/protocol/network_messages.cpp
@@ -230,6 +231,10 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_virtual_network_tests PRIVATE lanlink_packet_engine)
     lanlink_enable_warnings(lanlink_virtual_network_tests)
     add_test(NAME lanlink-virtual-network COMMAND lanlink_virtual_network_tests)
+    add_executable(lanlink_capability_tests tests/capability_tests.cpp)
+    target_link_libraries(lanlink_capability_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_capability_tests)
+    add_test(NAME lanlink-capabilities COMMAND lanlink_capability_tests)
     if(WIN32 AND LANLINK_PACKAGE_WINDOWS_CLIENT)
         add_executable(lanlink_windows_network_tests tests/windows_network_tests.cpp)
         target_link_libraries(lanlink_windows_network_tests PRIVATE lanlink_transport lanlink_local_ipc lanlink_auth iphlpapi)

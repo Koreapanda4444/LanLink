@@ -1320,6 +1320,11 @@ public:
         return result;
     }
 
+    [[nodiscard]] protocol::NegotiatedCapabilities capabilities() const {
+        std::lock_guard lock(peer_state_mutex_);
+        return negotiated_capabilities_;
+    }
+
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name, const std::chrono::milliseconds timeout) {
         return request_operation(protocol::NetworkOperation::create,
@@ -1504,6 +1509,7 @@ private:
     void clear_peer_states() noexcept {
         std::lock_guard lock(peer_state_mutex_);
         own_signed_key_.reset();
+        negotiated_capabilities_ = {};
         network_keys_.clear();
         peer_states_.clear();
         peer_revisions_.clear();
@@ -1785,7 +1791,7 @@ private:
         std::uint32_t request_id;
         do {
             request_id = next_request_id_.fetch_add(1);
-        } while (request_id == 0 || state->pending.contains(request_id));
+        } while (request_id == 0 || request_id == protocol::capability_request_id || state->pending.contains(request_id));
 
         auto pending = std::make_shared<PendingControl>();
         pending->operation = operation;
@@ -2557,6 +2563,12 @@ private:
             }
         }
 
+        if (options_.enable_capability_negotiation &&
+            !send_client_frame(context->state, {protocol::MessageType::network_list_request,
+                protocol::capability_request_id, protocol::encode_capability_offer({})})) {
+            throw std::runtime_error("capability negotiation could not be sent");
+        }
+
         log_noexcept(logger_,
                      core::LogLevel::info,
                      "relay authentication completed for device " +
@@ -2596,6 +2608,22 @@ private:
     }
 
     void handle_control_frame(StreamContext* context, const protocol::Frame& frame) {
+        if (frame.request_id == protocol::capability_request_id) {
+            protocol::NegotiatedCapabilities selected;
+            if (frame.type == protocol::MessageType::network_list_result) {
+                selected = protocol::decode_capability_selection(frame.payload);
+                if (selected.wire_version != protocol::protocol_version ||
+                    (selected.features & ~protocol::supported_capabilities) != 0)
+                    throw std::runtime_error("relay selected unsupported capabilities");
+            } else if (frame.type != protocol::MessageType::error &&
+                       frame.type != protocol::MessageType::network_operation_result) {
+                throw std::runtime_error("unexpected capability negotiation response");
+            }
+            std::lock_guard lock(peer_state_mutex_);
+            negotiated_capabilities_ = selected;
+            return;
+        }
+
         if (frame.type == protocol::MessageType::network_packet_forward) {
             if (frame.request_id != 0) {
                 throw std::runtime_error("forwarded packet has a request id");
@@ -2742,6 +2770,7 @@ private:
     std::optional<auth::SessionId> session_id_;
     mutable std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
+    protocol::NegotiatedCapabilities negotiated_capabilities_;
     std::atomic<std::uint32_t> next_request_id_ = 2;
     std::mutex event_handler_mutex_;
     mutable std::mutex peer_state_mutex_;
@@ -2831,6 +2860,10 @@ std::uint64_t QuicRelayClient::received_datagram_count() const noexcept {
 
 bool QuicRelayClient::using_tcp_fallback() const noexcept {
     return impl_->using_tcp_fallback();
+}
+
+protocol::NegotiatedCapabilities QuicRelayClient::capabilities() const {
+    return impl_->capabilities();
 }
 
 ClientDiagnostics QuicRelayClient::diagnostics() const {

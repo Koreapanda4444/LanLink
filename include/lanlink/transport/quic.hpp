@@ -5,6 +5,7 @@
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/transport/resource_limits.hpp"
 #include "lanlink/session/network_state.hpp"
+#include "lanlink/protocol/capabilities.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -44,6 +45,7 @@ struct QuicServerOptions {
 };
 
 struct QuicClientOptions {
+    bool enable_capability_negotiation = true;
     std::string relay_host = "127.0.0.1";
     std::uint16_t port = 4433;
     std::filesystem::path identity_file;
@@ -124,6 +126,7 @@ public:
     [[nodiscard]] std::uint64_t received_datagram_count() const noexcept;
     [[nodiscard]] bool using_tcp_fallback() const noexcept;
     [[nodiscard]] ClientDiagnostics diagnostics() const;
+    [[nodiscard]] protocol::NegotiatedCapabilities capabilities() const;
 
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name,

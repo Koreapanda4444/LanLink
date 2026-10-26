@@ -163,19 +163,36 @@ NetworkControlChannel::NetworkControlChannel(NetworkService& service, TimeSource
 
 void NetworkControlChannel::note_authenticated(const auth::DeviceId& actor) {
     service_.record_authenticated_device(actor, now_ms());
+    std::lock_guard lock(capabilities_mutex_);
+    capabilities_[actor] = {};
 }
 
 std::vector<RoutedControlFrame> NetworkControlChannel::note_authenticated(
     const auth::DeviceId& actor,
     const auth::SessionId& session_id,
     const auth::SignedDeviceKey& signed_key) {
+    {
+        std::lock_guard lock(capabilities_mutex_);
+        capabilities_[actor] = {session_id, {}};
+    }
     return encode_peer_changes(
         service_.publish_device_key(actor, session_id, signed_key, now_ms()));
 }
 
 std::vector<RoutedControlFrame> NetworkControlChannel::note_disconnected(
     const auth::DeviceId& actor, const auth::SessionId& session_id) {
+    {
+        std::lock_guard lock(capabilities_mutex_);
+        const auto it = capabilities_.find(actor);
+        if (it != capabilities_.end() && it->second.session == session_id) capabilities_.erase(it);
+    }
     return encode_peer_changes(service_.remove_device_key(actor, session_id));
+}
+
+protocol::NegotiatedCapabilities NetworkControlChannel::capabilities(const auth::DeviceId& actor) const {
+    std::lock_guard lock(capabilities_mutex_);
+    const auto it = capabilities_.find(actor);
+    return it == capabilities_.end() ? protocol::NegotiatedCapabilities{} : it->second.negotiated;
 }
 
 std::vector<RoutedControlFrame> NetworkControlChannel::initial_peer_states(
@@ -202,6 +219,16 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
     }
 
     try {
+        if (request.type == protocol::MessageType::network_list_request &&
+            protocol::is_capability_payload(request.payload)) {
+            const auto negotiated = protocol::negotiate_capabilities({}, protocol::decode_capability_offer(request.payload));
+            std::lock_guard lock(capabilities_mutex_);
+            const auto it = capabilities_.find(actor);
+            if (it == capabilities_.end()) return {error_response(request.request_id), {}};
+            it->second.negotiated = negotiated;
+            return {{protocol::MessageType::network_list_result, request.request_id,
+                     protocol::encode_capability_selection(negotiated)}, {}};
+        }
         switch (request.type) {
             case protocol::MessageType::network_create_request:
                 return operation_response(
