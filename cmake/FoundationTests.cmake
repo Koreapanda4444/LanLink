@@ -25,3 +25,5 @@ lanlink_foundation_test(virtual_ipv4 lanlink_relay_domain ${LANLINK_SQLITE_TARGE
 lanlink_foundation_test(network_service lanlink_relay_domain)
 lanlink_foundation_test(network_control_channel lanlink_relay_domain lanlink_auth ${LANLINK_SQLITE_TARGET})
 lanlink_foundation_test(packet_routing lanlink_relay_domain)
+
+lanlink_foundation_test(p2p_candidates lanlink_p2p)
