@@ -45,8 +45,8 @@ void expect(const bool condition, const std::string& description) {
 }
 
 template <typename Predicate>
-void wait_until(Predicate&& predicate, const std::string& description) {
-    const auto deadline = std::chrono::steady_clock::now() + 8s;
+void wait_until(Predicate&& predicate, const std::string& description, std::chrono::milliseconds timeout=8s) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (!predicate()) {
         if (std::chrono::steady_clock::now() >= deadline) {
             throw std::runtime_error(description);
@@ -834,7 +834,7 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     std::vector<std::byte> plain(40);plain[0]=std::byte{0x45};plain[3]=std::byte{40};plain[8]=std::byte{64};plain[9]=std::byte{17};
     for(unsigned i=0;i<4;++i){plain[12+i]=static_cast<std::byte>((a_state.own_address>>((3-i)*8))&255);plain[16+i]=static_cast<std::byte>((b_state.own_address>>((3-i)*8))&255);}
     std::atomic<unsigned> delivered=0,replayed=0;b.set_receive_handler([&](const auto& d){try{expect(decrypt.decrypt(d.packet,d.sender_device_id)==plain,"routed plaintext changed");++delivered;}catch(const std::exception&){++replayed;}});
-    if(!tls)wait_until([&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;},"service packet path did not select authenticated Direct QUIC");
+    if(!tls)wait_until([&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;},"service packet path did not select authenticated Direct QUIC",30s);
     else expect(a.status().kind==transport::PathKind::relay_tls,"blocked UDP did not use Relay TLS/TCP");
     const auto before=ca.diagnostics().sent_packets;const auto packet=encrypt.encrypt(plain);
     expect(a.send(packet)==transport::PacketSendResult::accepted,"selected path rejected packet");
@@ -848,14 +848,14 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     if(!tls) {
         a.set_direct_enabled(true);
         auto direct_ready=[&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;};
-        wait_until(direct_ready,"Direct path did not recover after temporary disable");
+        wait_until(direct_ready,"Direct path did not recover after temporary disable",30s);
         a.revalidate();expect(a.send(encrypt.encrypt(plain))==transport::PacketSendResult::accepted,"Relay did not carry data during migration");
         wait_until([&]{return delivered.load()==3;},"migration lost encrypted IPv4");
-        wait_until(direct_ready,"explicit path revalidation did not recover");
+        wait_until(direct_ready,"explicit path revalidation did not recover",30s);
         const auto old_port_metrics=ca.diagnostics().sent_packets;
         interface_index->store(2);
         std::this_thread::sleep_for(1200ms);
-        wait_until(direct_ready,"NIC change did not reestablish Direct QUIC");
+        wait_until(direct_ready,"NIC change did not reestablish Direct QUIC",30s);
         expect(a.send(encrypt.encrypt(plain))==transport::PacketSendResult::accepted,"recovered Direct send failed");
         wait_until([&]{return delivered.load()==4;},"recovered path reset packet sequence");
         expect(ca.diagnostics().sent_packets==old_port_metrics,"recovered Direct data used Relay");

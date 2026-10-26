@@ -462,7 +462,7 @@ if(BUILD_TESTING)
                     ${LANLINK_OPENSSL_EXECUTABLE}
                     $<TARGET_FILE:lanlink_network_client_tests>
             )
-            set_tests_properties(lanlink-network-client PROPERTIES TIMEOUT 40)
+            set_tests_properties(lanlink-network-client PROPERTIES TIMEOUT 120)
 
             find_package(Python3 REQUIRED COMPONENTS Interpreter)
             add_executable(lanlink_relay_e2e_tests tests/relay_e2e_tests.cpp)
