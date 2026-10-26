@@ -115,6 +115,17 @@ void test_routing(const std::filesystem::path& directory) {
     expect(forwarded.events.size()==1 && forwarded.events[0].recipient_device_id==member.device_id() &&
         lanlink::p2p::decode_candidates(forwarded.events[0].frame.payload)==x,"valid candidate did not reach approved member");
     expect(exchange(x,owner.device_id()).events.empty(),"replayed candidate generation was accepted");
+    auto response=x;std::swap(response.sender,response.recipient);std::swap(response.sender_session,response.recipient_session);
+    response.generation=2;response.response_to_generation=x.generation;
+    const auto answered=exchange(response,member.device_id());
+    expect(answered.events.size()==1 && lanlink::p2p::decode_candidates(answered.events[0].frame.payload).response_to_generation==1,
+        "candidate answer lost its request generation");
+    auto legacy_offer=protocol::CapabilityOffer{};legacy_offer.features&=~static_cast<std::uint64_t>(protocol::Capability::candidate_generations);
+    static_cast<void>(channel.handle_authenticated(member.device_id(),{protocol::MessageType::network_list_request,
+        protocol::capability_request_id,protocol::encode_capability_offer(legacy_offer)}));
+    auto unsupported=x;unsupported.generation=3;
+    expect(exchange(unsupported,owner.device_id()).events.empty(),"new candidate schema was sent to an older peer");
+
     const auto wire=lanlink::p2p::encode_candidates(x);
     for (std::size_t n=0;n<wire.size();++n) expect_error([&]{static_cast<void>(lanlink::p2p::decode_candidates(std::span(wire).first(n)));},"truncated candidate accepted");
     const auto owner_ip = store.find_virtual_ipv4_lease(first, owner.device_id())->address;

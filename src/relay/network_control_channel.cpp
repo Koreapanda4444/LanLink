@@ -228,7 +228,9 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
             const auto a=capabilities_.find(actor), b=capabilities_.find(x.recipient);
             if (a==capabilities_.end() || b==capabilities_.end() ||
                 !a->second.negotiated.supports(protocol::Capability::peer_candidates) ||
-                !b->second.negotiated.supports(protocol::Capability::peer_candidates)) return {error_response(request.request_id), {}};
+                !b->second.negotiated.supports(protocol::Capability::peer_candidates) ||
+                !a->second.negotiated.supports(protocol::Capability::candidate_generations) ||
+                !b->second.negotiated.supports(protocol::Capability::candidate_generations)) return {error_response(request.request_id), {}};
             auto& generations=a->second.generations;
             const auto key=std::pair{x.network_id,x.recipient};
             if ((!generations.contains(key) && generations.size()>=128) ||

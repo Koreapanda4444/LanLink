@@ -21,6 +21,7 @@ struct CandidateExchange {
     auth::DeviceId sender{}, recipient{};
     std::array<std::byte, 32> sender_session{}, recipient_session{};
     std::uint64_t key_epoch = 0, generation = 0;
+    std::uint64_t response_to_generation = 0;
     std::uint32_t lifetime_ms = 30'000;
     std::vector<Candidate> candidates;
     bool operator==(const CandidateExchange&) const = default;

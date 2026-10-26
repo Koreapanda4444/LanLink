@@ -3,6 +3,8 @@
 #include "lanlink/p2p/direct_quic.hpp"
 #include "lanlink/p2p/connectivity.hpp"
 #include "lanlink/p2p/stun.hpp"
+#include "lanlink/p2p/revalidation.hpp"
+#include <tuple>
 #include "lanlink/core/logger.hpp"
 #include <algorithm>
 #include <atomic>
@@ -20,20 +22,29 @@ struct PeerPacketPath::Impl {
             ReceiveHandler copy;{std::lock_guard lock(mutex);if(active)copy=handler;}if(copy)copy(p);
         }
     };
+    struct DirectSlot {
+        std::shared_ptr<p2p::DirectQuic> value;
+        [[nodiscard]] std::shared_ptr<p2p::DirectQuic> load()const{return std::atomic_load(&value);}
+        void store(std::shared_ptr<p2p::DirectQuic> next){std::atomic_store(&value,std::move(next));}
+        [[nodiscard]] std::shared_ptr<p2p::DirectQuic> exchange(std::shared_ptr<p2p::DirectQuic> next){return std::atomic_exchange(&value,std::move(next));}
+    };
     struct Peer {
         mutable std::mutex context_mutex;
         p2p::PeerBinding binding;auth::SignedDeviceKey key;std::uint32_t local_ip=0,peer_ip=0;
         std::vector<p2p::Candidate> local,remote;std::unique_ptr<p2p::UdpSocket> socket;
         std::unique_ptr<p2p::PunchSession> punch;std::unique_ptr<p2p::ConnectivityChecks> checks;
-        std::atomic<std::shared_ptr<p2p::DirectQuic>> direct;
+        DirectSlot direct;
         p2p::PathSelector selector;Clock::time_point sampled{};std::atomic_bool use_direct=false,send_failed=false;
         std::atomic<protocol::PathReason> reason=protocol::PathReason::revalidating;
-        Clock::time_point created=Clock::now(),expires{};bool published=false;
+        Clock::time_point created=Clock::now(),expires{},attempt_started{};bool published=false,waiting_for_answer=true,was_authenticated=false;
+        p2p::RevalidationBackoff retry;std::uint64_t response_to_generation=0;
     };
     RelaySession& session;RelayPacketPath relay;auth::DeviceIdentity identity;core::Logger& logger;PeerPathOptions options;
     std::shared_ptr<Receiver> receiver=std::make_shared<Receiver>();
     mutable std::mutex mutex;std::map<Key,std::shared_ptr<Peer>> peers;std::jthread worker;
     std::atomic_bool enabled=true;
+    std::atomic<std::uint64_t> requested=0,completed=0;
+    std::vector<p2p::InterfaceAddress> previous_interfaces;bool have_interfaces=false;Clock::time_point next_scan{};
     Clock::time_point next_error{};
     std::uint64_t generation=0;Clock::time_point next_offer{};
     Impl(RelaySession& s,const std::filesystem::path& file,core::Logger& l,PeerPathOptions o):session(s),relay(s),identity(auth::DeviceIdentity::load_or_create(file)),logger(l),options(std::move(o)) {
@@ -44,7 +55,7 @@ struct PeerPacketPath::Impl {
         relay.set_receive_handler([weak](const auto& p){if(auto r=weak.lock())r->deliver(p);});
     }
     std::vector<std::shared_ptr<Peer>> entries() const {std::lock_guard lock(mutex);std::vector<std::shared_ptr<Peer>> out;for(const auto& [k,p]:peers)out.push_back(p);return out;}
-    void close(const std::shared_ptr<Peer>& p) {if(auto direct=p->direct.exchange(nullptr))direct->stop();p->punch.reset();p->checks.reset();p->socket.reset();}
+    void close(const std::shared_ptr<Peer>& p) {p->use_direct=false;if(auto direct=p->direct.exchange(nullptr))direct->stop();p->punch.reset();p->checks.reset();p->socket.reset();}
     void start() {
         {std::lock_guard lock(receiver->mutex);receiver->active=true;}
         relay.start();
@@ -64,8 +75,16 @@ struct PeerPacketPath::Impl {
         if(!snapshot.identity || !member.signed_key)return;
         auto p=std::make_shared<Peer>();auto& b=p->binding;b.network_id=n.peers.network_id;b.key_epoch=n.key.epoch;
         b.local_device=identity.device_id();b.peer_device=member.device_id;b.local_session=snapshot.identity->signed_key.encryption_public_key;
-        b.peer_session=member.signed_key->encryption_public_key;b.local_generation=++generation;
+        b.peer_session=member.signed_key->encryption_public_key;
         p->key=*member.signed_key;p->local_ip=n.peers.own_address;p->peer_ip=member.ipv4_address;
+        prepare(p,snapshot);
+        std::lock_guard lock(mutex);peers[{b.network_id,b.peer_device}]=std::move(p);
+    }
+    void prepare(const std::shared_ptr<Peer>& p,const NetworkSnapshot& snapshot) {
+        close(p);
+        {std::lock_guard lock(p->context_mutex);p->binding.local_generation=++generation;p->binding.peer_generation=0;}
+        p->response_to_generation=0;p->remote.clear();p->local.clear();p->published=false;p->waiting_for_answer=true;p->was_authenticated=false;
+        p->selector={};p->created=Clock::now();p->sampled={};p->reason=protocol::PathReason::revalidating;p->retry.started();
         p->socket=std::make_unique<p2p::UdpSocket>();
         std::vector<p2p::ExcludedSubnet> excluded;for(const auto& network:snapshot.networks)excluded.push_back({network.peers.subnet_address,network.peers.prefix_length});
         p->local=p2p::gather_local_candidates(options.interfaces(),p->socket->local_endpoint().port,excluded,options.allow_loopback);
@@ -76,7 +95,6 @@ struct PeerPacketPath::Impl {
                 std::none_of(p->local.begin(),p->local.end(),[&](auto c){return c.endpoint==candidate->endpoint;}) && p->local.size()<p2p::max_candidates)p->local.push_back(*candidate);
         }
         if(p->local.empty()){p->socket.reset();p->reason=protocol::PathReason::direct_unreachable;}
-        std::lock_guard lock(mutex);peers[{b.network_id,b.peer_device}]=std::move(p);
     }
     void update() {
         const auto now=Clock::now();const auto snapshot=session.snapshot();
@@ -93,7 +111,17 @@ struct PeerPacketPath::Impl {
         if(!enabled.load()) {
             auto old=entries();{std::lock_guard lock(mutex);peers.clear();}for(auto& p:old)close(p);return;
         }
-        if(!snapshot.identity || !session.client().capabilities().supports(protocol::Capability::direct_quic))return;
+        if(!snapshot.identity || !session.client().capabilities().supports(protocol::Capability::direct_quic) || !session.client().capabilities().supports(protocol::Capability::candidate_generations))return;
+        const auto request=requested.load();bool changed=request!=completed.load();
+        if(now>=next_scan) {
+            auto interfaces=options.interfaces();
+            std::sort(interfaces.begin(),interfaces.end(),[](const auto& a,const auto& b){return std::tie(a.name,a.ipv4,a.index,a.up,a.loopback,a.tunnel)<std::tie(b.name,b.ipv4,b.index,b.up,b.loopback,b.tunnel);});
+            changed|=have_interfaces && interfaces!=previous_interfaces;
+            previous_interfaces=std::move(interfaces);have_interfaces=true;next_scan=now+std::chrono::seconds{1};
+        }
+        if(changed)for(const auto& p:entries())prepare(p,snapshot);
+        completed.store(request);
+        for(const auto& p:entries())if(p->retry.due(now))prepare(p,snapshot);
         unsigned created=0;
         for(const auto& n:snapshot.networks)for(const auto& member:n.peers.peers) {
             if(!member.signed_key)continue;
@@ -104,15 +132,28 @@ struct PeerPacketPath::Impl {
             std::shared_ptr<Peer> p;{std::lock_guard lock(mutex);const auto found=peers.find({x.network_id,x.sender});if(found!=peers.end())p=found->second;}
             if(!p || x.generation<=p->binding.peer_generation || x.sender_session!=p->binding.peer_session ||
                 x.recipient_session!=p->binding.local_session || x.key_epoch!=p->binding.key_epoch || p->local.empty())continue;
-            if(auto direct=p->direct.exchange(nullptr))direct->stop();
-            if(!p->socket)p->socket=std::make_unique<p2p::UdpSocket>(p2p::Endpoint{0,p->local.front().endpoint.port});
+            if(!x.response_to_generation) {
+                if(p->waiting_for_answer && p->binding.local_device<p->binding.peer_device) {
+                    if(p->published){std::lock_guard lock(p->context_mutex);p->binding.local_generation=++generation;p->published=false;}
+                    continue;
+                }
+                prepare(p,snapshot);p->response_to_generation=x.generation;p->waiting_for_answer=false;
+            } else {
+                if(!p->waiting_for_answer || x.response_to_generation!=p->binding.local_generation)continue;
+                p->waiting_for_answer=false;p->retry.started();
+            }
             {std::lock_guard lock(p->context_mutex);p->binding.peer_generation=x.generation;}
             p->remote=std::move(x.candidates);p->expires=now+std::chrono::milliseconds{x.lifetime_ms};
             p->punch.reset();p->checks.reset();p->reason=protocol::PathReason::revalidating;
         }
         for(const auto& p:entries()) {
+            if(p->retry.pending())continue;
             if(auto d=p->direct.load()) {
                 d->synchronize(snapshot);
+                const auto authenticated=d->authenticated();
+                if(authenticated && !p->was_authenticated)p->retry.healthy();
+                if(!authenticated && (p->was_authenticated || now-p->attempt_started>=std::chrono::seconds{6}))p->retry.failed(now);
+                p->was_authenticated=authenticated;
                 if(now>=p->sampled) {
                     auto sample=d->quality();if(p->send_failed.exchange(false))sample.authenticated=false;
                     const auto chosen=p->selector.sample(sample,relay.status().rtt_us,now);
@@ -122,15 +163,15 @@ struct PeerPacketPath::Impl {
                 }
                 continue;
             }
-            if(!p->socket || p->local.empty())continue;
+            if(!p->socket || p->local.empty()){p->retry.failed(now);continue;}
             if(!p->published && now>=next_offer) {
                 p2p::CandidateExchange x;x.network_id=p->binding.network_id;x.sender=p->binding.local_device;x.recipient=p->binding.peer_device;
                 x.sender_session=p->binding.local_session;x.recipient_session=p->binding.peer_session;x.key_epoch=p->binding.key_epoch;
-                x.generation=p->binding.local_generation;x.candidates=p->local;
+                x.generation=p->binding.local_generation;x.response_to_generation=p->response_to_generation;x.candidates=p->local;
                 p->published=session.client().publish_peer_candidates(x);next_offer=now+std::chrono::milliseconds{250};
             }
-            if(!p->published || p->remote.empty())continue;
-            if(now>=p->expires){p->reason=protocol::PathReason::direct_unreachable;continue;}
+            if(!p->published || p->remote.empty()){if(now-p->created>=std::chrono::seconds{8})p->retry.failed(now);continue;}
+            if(now>=p->expires){p->reason=protocol::PathReason::direct_unreachable;p->retry.failed(now);continue;}
             if(!p->punch) {
                 p->punch=std::make_unique<p2p::PunchSession>(identity,p->key,p->binding,p->remote,now);
                 p->checks=std::make_unique<p2p::ConnectivityChecks>(p->binding.local_device,p->binding.peer_device,p->local,p->remote,now);
@@ -144,7 +185,7 @@ struct PeerPacketPath::Impl {
             }
             for(auto endpoint:p->punch->verified())for(const auto& local:p->local)p->checks->result(local.endpoint,endpoint,true);
             const auto nominated=p->checks->nominate(now);
-            if(!nominated) {if(p->checks->state()==p2p::ConnectivityState::failed)p->reason=protocol::PathReason::direct_unreachable;continue;}
+            if(!nominated) {if(p->checks->state()==p2p::ConnectivityState::failed){p->reason=protocol::PathReason::direct_unreachable;p->retry.failed(now);}continue;}
             const auto port=p->socket->local_endpoint().port;p->socket.reset();
             const std::weak_ptr<Receiver> weak=receiver;auto* const relay_session=&session;
             const auto binding=p->binding;const auto key=p->key;const auto local=p->local_ip,peer=p->peer_ip;
@@ -152,20 +193,21 @@ struct PeerPacketPath::Impl {
                 [weak,relay_session,binding,key,local,peer](const auto& packet){
                     if(p2p::peer_binding_authorized(binding,key,local,peer,relay_session->snapshot()))if(auto r=weak.lock())r->deliver(packet);
                 });
-            direct->synchronize(snapshot);direct->start();direct->connect(nominated->remote.endpoint);p->direct.store(std::move(direct));
+            direct->synchronize(snapshot);direct->start();direct->connect(nominated->remote.endpoint);p->attempt_started=now;p->direct.store(std::move(direct));
         }
     }
 };
 PeerPacketPath::PeerPacketPath(RelaySession& s,const std::filesystem::path& f,core::Logger& l,PeerPathOptions o):impl_(std::make_unique<Impl>(s,f,l,std::move(o))){}
 PeerPacketPath::~PeerPacketPath(){stop();}
 void PeerPacketPath::set_direct_enabled(bool enabled)noexcept{impl_->enabled.store(enabled);}
+void PeerPacketPath::revalidate()noexcept{impl_->requested.fetch_add(1);}
 void PeerPacketPath::start(){impl_->start();}void PeerPacketPath::stop()noexcept{impl_->stop();}
 void PeerPacketPath::set_receive_handler(ReceiveHandler h){std::lock_guard lock(impl_->receiver->mutex);impl_->receiver->handler=std::move(h);}
 transport::PacketSendResult PeerPacketPath::send(const protocol::EncryptedNetworkPacket& packet) {
     const auto snapshot=impl_->session.snapshot();
     for(const auto& p:impl_->entries())if(p->binding.network_id==packet.network_id && p->peer_ip==packet.destination_ipv4) {
         p2p::PeerBinding binding;{std::lock_guard lock(p->context_mutex);binding=p->binding;}
-        if(auto direct=p->direct.load();impl_->enabled.load() && p->use_direct.load() && direct && p2p::peer_binding_authorized(binding,p->key,p->local_ip,p->peer_ip,snapshot)) {
+        if(auto direct=p->direct.load();impl_->enabled.load() && impl_->requested.load()==impl_->completed.load() && p->use_direct.load() && direct && p2p::peer_binding_authorized(binding,p->key,p->local_ip,p->peer_ip,snapshot)) {
             const auto sent=direct->send(packet);if(sent==transport::PacketSendResult::accepted)return sent;
             p->use_direct=false;p->send_failed=true;p->reason=protocol::PathReason::direct_unreachable;
         }

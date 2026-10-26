@@ -8,6 +8,7 @@ struct InterfaceAddress {
     std::uint32_t ipv4 = 0;
     std::uint32_t index = 0;
     bool up = false, loopback = false, tunnel = false;
+    bool operator==(const InterfaceAddress&)const=default;
 };
 struct ExcludedSubnet { std::uint32_t address = 0; std::uint8_t prefix = 24; };
 [[nodiscard]] std::vector<InterfaceAddress> interface_addresses();

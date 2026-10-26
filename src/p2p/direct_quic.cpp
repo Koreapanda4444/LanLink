@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <condition_variable>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 
 namespace lanlink::p2p {
@@ -59,6 +60,7 @@ struct DirectQuic::Impl {
 #ifdef _WIN32
     std::unique_ptr<transport::SchannelCertificate> windows_certificate;
 #endif
+    mutable std::shared_mutex calls;
     mutable std::recursive_mutex mutex;std::vector<std::unique_ptr<Connection>> connections;
     bool started=false,stopping=false,lease_valid=false;std::uint16_t bound_port=0;
     std::uint64_t sent=0,received=0,dropped=0,sent_bytes=0,received_bytes=0;
@@ -127,6 +129,7 @@ struct DirectQuic::Impl {
         }catch(...){raw->closed=true;api->ConnectionShutdown(raw->handle,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,1);throw;}
     }
     void stop() noexcept {
+        std::unique_lock lifetime(calls);
         std::vector<Connection*> handles;
         {std::lock_guard lock(mutex);if(stopping)return;stopping=true;started=false;
          for(auto& c:connections){c->authorized=false;handles.push_back(c.get());}}
@@ -244,20 +247,24 @@ transport::PacketSendResult DirectQuic::send(const protocol::EncryptedNetworkPac
     if(!o.output(*c,std::move(bytes),datagram,false)){++o.dropped;return transport::PacketSendResult::backpressure;}
     ++o.sent;o.sent_bytes+=size;return transport::PacketSendResult::accepted;
 }
-transport::PathStatus DirectQuic::status()const{
-    auto& o=*impl_;std::lock_guard lock(o.mutex);transport::PathStatus s;
-    auto* c=o.selected();s.kind=c?transport::PathKind::direct_quic:transport::PathKind::none;
-    s.lifecycle=c?transport::PathLifecycle::authenticated:o.started?transport::PathLifecycle::connecting:transport::PathLifecycle::stopped;
-    s.reason=c?protocol::PathReason::direct_ready:protocol::PathReason::direct_unreachable;
-    s.sent_packets=o.sent;s.received_packets=o.received;s.dropped_packets=o.dropped;s.sent_bytes=o.sent_bytes;s.received_bytes=o.received_bytes;
-    if(c){QUIC_STATISTICS_V2 stats{};std::uint32_t size=sizeof(stats);if(QUIC_SUCCEEDED(o.api->GetParam(c->handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))){s.rtt_us=stats.Rtt;s.lost_packets=stats.SendSuspectedLostPackets>=stats.SendSpuriousLostPackets?stats.SendSuspectedLostPackets-stats.SendSpuriousLostPackets:0;s.retransmittable_packets=stats.SendRetransmittablePackets;}}
+transport::PathStatus DirectQuic::status()const {
+    auto& o=*impl_;std::shared_lock lifetime(o.calls);transport::PathStatus s;HQUIC handle=nullptr;
+    {
+        std::lock_guard lock(o.mutex);auto* c=o.selected();if(c)handle=c->handle;
+        s.kind=c?transport::PathKind::direct_quic:transport::PathKind::none;
+        s.lifecycle=c?transport::PathLifecycle::authenticated:o.started?transport::PathLifecycle::connecting:transport::PathLifecycle::stopped;
+        s.reason=c?protocol::PathReason::direct_ready:protocol::PathReason::direct_unreachable;
+        s.sent_packets=o.sent;s.received_packets=o.received;s.dropped_packets=o.dropped;s.sent_bytes=o.sent_bytes;s.received_bytes=o.received_bytes;
+    }
+    // GetParam may run on a QUIC worker. Its callbacks must be free to acquire the state mutex.
+    if(handle){QUIC_STATISTICS_V2 stats{};std::uint32_t size=sizeof(stats);if(QUIC_SUCCEEDED(o.api->GetParam(handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))){s.rtt_us=stats.Rtt;s.lost_packets=stats.SendSuspectedLostPackets>=stats.SendSpuriousLostPackets?stats.SendSuspectedLostPackets-stats.SendSpuriousLostPackets:0;s.retransmittable_packets=stats.SendRetransmittablePackets;}}
     return s;
 }
 QualitySample DirectQuic::quality()const {
-    auto& o=*impl_;std::lock_guard lock(o.mutex);auto* c=o.selected();QualitySample sample;
-    if(!c || o.stopping || !o.lease_valid)return sample;
+    auto& o=*impl_;std::shared_lock lifetime(o.calls);HQUIC handle=nullptr;QualitySample sample;
+    {std::lock_guard lock(o.mutex);auto* c=o.selected();if(!c || o.stopping || !o.lease_valid)return sample;handle=c->handle;}
     sample.authenticated=true;QUIC_STATISTICS_V2 stats{};std::uint32_t size=sizeof(stats);
-    if(QUIC_SUCCEEDED(o.api->GetParam(c->handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))) {
+    if(QUIC_SUCCEEDED(o.api->GetParam(handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))) {
         sample.rtt_us=stats.Rtt;sample.transport_sent_packets=stats.SendTotalPackets;
         sample.lost_packets=stats.SendSuspectedLostPackets>=stats.SendSpuriousLostPackets?stats.SendSuspectedLostPackets-stats.SendSpuriousLostPackets:0;
     }

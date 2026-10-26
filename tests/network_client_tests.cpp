@@ -818,7 +818,8 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     client_options.identity_file=directory/(tls?"b-tls.identity":"b-direct.identity");const auto b_file=client_options.identity_file;
     lanlink::session::RelaySession b_session(client_options,logger);
     lanlink::session::PeerPathOptions options;options.allow_loopback=true;
-    options.interfaces=[tls]{return tls?std::vector<p2p::InterfaceAddress>{}:std::vector<p2p::InterfaceAddress>{{"fixture",0x7f000001,1,true,true,false}};};
+    auto interface_index=std::make_shared<std::atomic<std::uint32_t>>(1);
+    options.interfaces=[tls,interface_index]{return tls?std::vector<p2p::InterfaceAddress>{}:std::vector<p2p::InterfaceAddress>{{"fixture",0x7f000001,interface_index->load(),true,true,false}};};
     lanlink::session::PeerPacketPath a(a_session,a_file,logger,options),b(b_session,b_file,logger,options);
     a.start();b.start();auto& ca=a_session.client();auto& cb=b_session.client();
     wait_until([&]{return ca.authenticated() && cb.authenticated();},"peer path relay authentication failed");
@@ -844,6 +845,21 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
         wait_until([&]{return replayed.load()==1;},"cross-path replay bypassed the shared cipher window");}
     expect(a.send(encrypt.encrypt(plain))==transport::PacketSendResult::accepted,"fallback packet send failed");
     wait_until([&]{return delivered.load()==2;},"Relay fallback did not preserve packet sequence/IP");
+    if(!tls) {
+        a.set_direct_enabled(true);
+        auto direct_ready=[&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;};
+        wait_until(direct_ready,"Direct path did not recover after temporary disable");
+        a.revalidate();expect(a.send(encrypt.encrypt(plain))==transport::PacketSendResult::accepted,"Relay did not carry data during migration");
+        wait_until([&]{return delivered.load()==3;},"migration lost encrypted IPv4");
+        wait_until(direct_ready,"explicit path revalidation did not recover");
+        const auto old_port_metrics=ca.diagnostics().sent_packets;
+        interface_index->store(2);
+        std::this_thread::sleep_for(1200ms);
+        wait_until(direct_ready,"NIC change did not reestablish Direct QUIC");
+        expect(a.send(encrypt.encrypt(plain))==transport::PacketSendResult::accepted,"recovered Direct send failed");
+        wait_until([&]{return delivered.load()==4;},"recovered path reset packet sequence");
+        expect(ca.diagnostics().sent_packets==old_port_metrics,"recovered Direct data used Relay");
+    }
     expect(ca.cached_peer_state(id)->own_address==a_state.own_address && cb.cached_peer_state(id)->own_address==b_state.own_address,"path selection changed virtual IPv4 leases");
     a.stop();b.stop();server.stop();
 }

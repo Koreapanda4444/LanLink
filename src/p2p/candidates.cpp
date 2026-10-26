@@ -25,18 +25,18 @@ void validate(const CandidateExchange& v) {
 }
 std::vector<std::byte> encode_candidates(const CandidateExchange& v) {
     validate(v); protocol::BinaryWriter w;
-    w.put<std::uint8_t>(1); w.append(v.network_id); w.append(v.sender); w.append(v.recipient);
+    w.put<std::uint8_t>(2); w.append(v.network_id); w.append(v.sender); w.append(v.recipient);
     w.append(v.sender_session); w.append(v.recipient_session);
-    w.put(v.key_epoch); w.put(v.generation); w.put(v.lifetime_ms);
+    w.put(v.key_epoch); w.put(v.generation); w.put(v.response_to_generation); w.put(v.lifetime_ms);
     w.put<std::uint8_t>(static_cast<std::uint8_t>(v.candidates.size()));
     for (auto c : v.candidates) {w.put(c.endpoint.ipv4); w.put(c.endpoint.port); w.put<std::uint8_t>(static_cast<std::uint8_t>(c.kind)); w.put(c.priority);}
     return std::move(w).finish();
 }
 CandidateExchange decode_candidates(std::span<const std::byte> b) {
-    protocol::BinaryReader r(b); if (r.get<std::uint8_t>() != 1) throw std::invalid_argument("unknown candidate schema");
+    protocol::BinaryReader r(b); if (r.get<std::uint8_t>() != 2) throw std::invalid_argument("unknown candidate schema");
     CandidateExchange v; v.network_id=r.array<16>(); v.sender=r.array<32>(); v.recipient=r.array<32>();
     v.sender_session=r.array<32>(); v.recipient_session=r.array<32>();
-    v.key_epoch=r.get<std::uint64_t>(); v.generation=r.get<std::uint64_t>(); v.lifetime_ms=r.get<std::uint32_t>();
+    v.key_epoch=r.get<std::uint64_t>(); v.generation=r.get<std::uint64_t>(); v.response_to_generation=r.get<std::uint64_t>(); v.lifetime_ms=r.get<std::uint32_t>();
     const auto count=r.get<std::uint8_t>(); if (count>max_candidates) throw std::invalid_argument("too many candidates");
     for (unsigned i=0;i<count;++i) {Candidate c; c.endpoint={r.get<std::uint32_t>(),r.get<std::uint16_t>()}; c.kind=static_cast<CandidateKind>(r.get<std::uint8_t>()); c.priority=r.get<std::uint32_t>(); v.candidates.push_back(c);}
     r.finish(); validate(v); return v;

@@ -13,6 +13,7 @@ public:
     PeerPacketPath(RelaySession& session,const std::filesystem::path& identity_file,core::Logger& logger,PeerPathOptions options={});
     ~PeerPacketPath() override;
     void set_direct_enabled(bool enabled) noexcept;
+    void revalidate() noexcept;
     void start() override;
     void stop() noexcept override;
     void set_receive_handler(ReceiveHandler handler) override;

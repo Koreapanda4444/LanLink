@@ -7,7 +7,7 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -52,16 +52,15 @@ bool UdpSocket::send(Endpoint destination,std::span<const std::byte> bytes) cons
 }
 std::optional<Datagram> UdpSocket::receive(std::chrono::milliseconds timeout) const {
     timeout=std::clamp(timeout,std::chrono::milliseconds{0},std::chrono::milliseconds{2000});
-    fd_set set; FD_ZERO(&set); FD_SET(impl_->socket,&set);
-    timeval duration{};
+#ifdef _WIN32
+    fd_set set;FD_ZERO(&set);FD_SET(impl_->socket,&set);timeval duration{};
     duration.tv_sec=static_cast<decltype(duration.tv_sec)>(timeout.count()/1000);
     duration.tv_usec=static_cast<decltype(duration.tv_usec)>((timeout.count()%1000)*1000);
-#ifdef _WIN32
-    const int nfds=0;
+    if(select(0,&set,nullptr,nullptr,&duration)<=0)return std::nullopt;
 #else
-    const int nfds=impl_->socket+1;
+    pollfd descriptor{impl_->socket,POLLIN,0};
+    if(poll(&descriptor,1,static_cast<int>(timeout.count()))<=0 || !(descriptor.revents&POLLIN))return std::nullopt;
 #endif
-    if(select(nfds,&set,nullptr,nullptr,&duration)<=0)return std::nullopt;
     std::array<std::byte,1201> bytes{};sockaddr_in source{};
 #ifdef _WIN32
     int size=sizeof(source);

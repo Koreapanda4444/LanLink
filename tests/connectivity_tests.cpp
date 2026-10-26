@@ -1,4 +1,5 @@
 #include "lanlink/p2p/connectivity.hpp"
+#include "lanlink/p2p/revalidation.hpp"
 #include <iostream>
 using namespace lanlink;
 int main(){try {
@@ -17,5 +18,13 @@ int main(){try {
     // A response for an unprobed endpoint cannot nominate a connection.
     p2p::ConnectivityChecks spoof(a,b,local,remote,now);spoof.result(local[0].endpoint,remote[0].endpoint,true,1);
     if(spoof.nominate(now))throw std::runtime_error("unrequested result nominated a candidate");
+    p2p::RevalidationBackoff retry;auto time=now;
+    for(unsigned attempt=0;attempt<10;++attempt) {
+        retry.failed(time);const auto due=retry.next();
+        if(retry.due(time) || !retry.due(due) || due-time<std::chrono::seconds{1} || due-time>std::chrono::seconds{30})throw std::runtime_error("retry delay is unbounded");
+        retry.started();time=due;
+    }
+    retry.healthy();retry.failed(time);
+    if(retry.next()-time!=std::chrono::seconds{1})throw std::runtime_error("healthy path did not reset failure backoff");
     std::cout<<"connectivity priority, nomination, roles and timeout passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
