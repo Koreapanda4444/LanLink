@@ -8,6 +8,7 @@
 #include "lanlink/transport/local_pipe.hpp"
 #include "lanlink/transport/packet_bridge.hpp"
 #include "lanlink/session/relay_session.hpp"
+#include "lanlink/session/relay_packet_path.hpp"
 #include "lanlink/transport/wintun_adapter.hpp"
 
 #include <atomic>
@@ -66,6 +67,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     std::vector<lanlink::protocol::NetworkEvent> requests;
     lanlink::session::RelaySession session(std::move(options), logger);
     auto& client = session.client();
+    lanlink::session::RelayPacketPath path(session);
     client.set_network_event_handler([&](const lanlink::protocol::NetworkEvent& event) {
         namespace protocol = lanlink::protocol;
         std::lock_guard lock(requests_mutex);
@@ -80,7 +82,8 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     auto adapter = std::make_shared<lanlink::transport::WintunAdapter>();
     auto bridge = std::make_shared<lanlink::transport::VirtualPacketBridge>(
         [&](const lanlink::protocol::EncryptedNetworkPacket& packet) {
-            client.send_encrypted_packet(packet);
+            if (path.send(packet) != lanlink::transport::PacketSendResult::accepted)
+                throw std::runtime_error("packet path could not accept the encrypted packet");
         },
         [adapter](const std::span<const std::byte> packet) {
             adapter->inject(packet);
@@ -96,7 +99,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
             logger.warning(std::string{operation} + ": " + error.what());
         }
     };
-    client.set_encrypted_packet_handler(
+    path.set_receive_handler(
         [weak = std::weak_ptr{bridge}, report_packet_error](
             const lanlink::protocol::ForwardedNetworkPacket& delivery) {
             if (const auto current = weak.lock()) {
@@ -116,10 +119,10 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
         }
     });
     try {
-        session.start();
+        path.start();
     } catch (...) {
         adapter->stop();
-        client.set_encrypted_packet_handler({});
+        path.set_receive_handler({});
         throw;
     }
 
@@ -245,8 +248,8 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     } catch (...) {
         adapter->stop();
         bridge->clear();
-        client.set_encrypted_packet_handler({});
-        session.stop();
+        path.set_receive_handler({});
+        path.stop();
         throw;
     }
 
@@ -254,8 +257,8 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
         pipe->stop();
         adapter->stop();
         bridge->clear();
-        client.set_encrypted_packet_handler({});
-        session.stop();
+        path.set_receive_handler({});
+        path.stop();
     };
     try {
         ready();

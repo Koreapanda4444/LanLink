@@ -169,7 +169,7 @@ endif()
 
 lanlink_enable_warnings(lanlink_transport)
 
-add_library(lanlink_session STATIC src/session/relay_session.cpp)
+add_library(lanlink_session STATIC src/session/relay_session.cpp src/session/relay_packet_path.cpp)
 target_include_directories(lanlink_session PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_session PUBLIC lanlink_transport)
 lanlink_enable_warnings(lanlink_session)
