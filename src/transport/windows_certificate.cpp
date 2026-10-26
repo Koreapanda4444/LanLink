@@ -4,6 +4,8 @@
 
 #include <windows.h>
 #include <wincrypt.h>
+#include <ncrypt.h>
+#include <vector>
 
 #include <array>
 #include <memory>
@@ -14,6 +16,20 @@ namespace lanlink::transport {
 class SchannelCertificate::Impl {
 public:
     ~Impl() {
+        if(temporary_key_ && certificate_) {
+            DWORD size=0;
+            if(CertGetCertificateContextProperty(certificate_,CERT_KEY_PROV_INFO_PROP_ID,nullptr,&size)) {
+                std::vector<std::byte> info(size);
+                if(CertGetCertificateContextProperty(certificate_,CERT_KEY_PROV_INFO_PROP_ID,info.data(),&size)) {
+                    const auto* provider=reinterpret_cast<const CRYPT_KEY_PROV_INFO*>(info.data());
+                    NCRYPT_PROV_HANDLE storage=0;NCRYPT_KEY_HANDLE key=0;
+                    if(NCryptOpenStorageProvider(&storage,provider->pwszProvName,0)==ERROR_SUCCESS) {
+                        if(NCryptOpenKey(storage,&key,provider->pwszContainerName,0,0)==ERROR_SUCCESS)NCryptDeleteKey(key,0);
+                        NCryptFreeObject(storage);
+                    }
+                }
+            }
+        }
         if (certificate_) CertFreeCertificateContext(certificate_);
         if (store_) CertCloseStore(store_, 0);
     }
@@ -50,12 +66,14 @@ public:
     void load_pkcs12(std::span<const std::byte> bytes) {
         if(bytes.empty() || bytes.size()>1024*1024)throw std::invalid_argument("invalid in-memory peer certificate");
         CRYPT_DATA_BLOB blob{static_cast<DWORD>(bytes.size()),reinterpret_cast<BYTE*>(const_cast<std::byte*>(bytes.data()))};
-        store_=PFXImportCertStore(&blob,L"",PKCS12_NO_PERSIST_KEY|PKCS12_ALWAYS_CNG_KSP);
+        store_=PFXImportCertStore(&blob,L"",CRYPT_USER_KEYSET|PKCS12_ALWAYS_CNG_KSP);
         if(!store_)throw std::runtime_error("cannot import in-memory peer certificate");
+        temporary_key_=true;
         certificate_=CertEnumCertificatesInStore(store_,nullptr);
         if(!certificate_)throw std::runtime_error("peer certificate store is empty");
     }
 
+    bool temporary_key_=false;
     HCERTSTORE store_ = nullptr;
     PCCERT_CONTEXT certificate_ = nullptr;
 };
