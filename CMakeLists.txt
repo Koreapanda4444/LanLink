@@ -163,6 +163,7 @@ if(LANLINK_FOUNDATION_ONLY)
 endif()
 
 add_library(lanlink_transport STATIC
+    src/p2p/direct_quic.cpp
     src/transport/quic.cpp
     src/transport/reconnect.cpp
     src/transport/resource_limits.cpp
@@ -177,6 +178,7 @@ target_include_directories(lanlink_transport
 target_link_libraries(lanlink_transport
     PUBLIC
         lanlink_core
+        lanlink_p2p
         lanlink_packet_engine
     PRIVATE
         lanlink_auth
@@ -309,6 +311,11 @@ if(BUILD_TESTING)
         set_tests_properties(lanlink-ui-network-model PROPERTIES
             RESOURCE_LOCK lanlink-service-pipe TIMEOUT 30)
     endif()
+
+    add_executable(lanlink_direct_quic_tests tests/direct_quic_tests.cpp)
+    target_link_libraries(lanlink_direct_quic_tests PRIVATE lanlink_transport)
+    add_test(NAME lanlink-direct-quic COMMAND lanlink_direct_quic_tests)
+    set_tests_properties(lanlink-direct-quic PROPERTIES TIMEOUT 30)
 
     add_executable(lanlink_connectivity_tests tests/connectivity_tests.cpp)
     target_link_libraries(lanlink_connectivity_tests PRIVATE lanlink_p2p)
