@@ -35,4 +35,4 @@ Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux 
 
 ## v1.0 개발
 
-현재 소스는 v0.3.0 기반 정비 마일스톤을 개발 중이다. 공개 안정판 v0.2.2의 설정·장치 ID와 Relay 경로를 유지하며, 개발 아티팩트는 공개 Release와 구분한다. [빌드 구성](docs/building.md)과 [프로토콜 확장](docs/protocol-extensions.md)을 참고한다.
+현재 소스는 v0.4.0 마일스톤(기획서 Commit 01~17)이다. 승인된 멤버 사이의 Direct QUIC, Relay 폴백, 경로 재탐색과 피어별 경로 표시를 포함한다. 공개 안정판 v0.2.2의 설정·장치 ID와 Relay 경로를 유지하며 개발 아티팩트는 공개 Release와 구분한다. [60개 커밋 로드맵](docs/v1-development.md), [P2P 설정](docs/p2p.md), [검증 범위](docs/verification-v0.4.md), [빌드 구성](docs/building.md)을 참고한다.

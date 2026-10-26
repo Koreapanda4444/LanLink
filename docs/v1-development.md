@@ -66,3 +66,27 @@
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
 01~17의 자동 검증 대상과 실제 환경 제한은 [v0.4 검증 기록](verification-v0.4.md)에 정리한다. 18~60은 이번 개발 범위에 포함하지 않는다.
+
+## 기능별 커밋 SHA
+
+아래는 기획 번호에 대응하는 기능 커밋이다. 플랫폼/CI 수정과 복구 시간 예산 검사는 별도 커밋으로 남겼다. 검증 결과는 해당 기능을 포함한 최종 SHA의 Actions 결과와 함께 확인한다.
+
+| 번호 | GitHub 커밋 |
+|---|---|
+| 01 | [af31548](https://github.com/Koreapanda4444/LanLink/commit/af315481a98c5a64cc25185660176b087dcfec64) |
+| 02 | [bad3a6c](https://github.com/Koreapanda4444/LanLink/commit/bad3a6cee2b4b0d570b535dc2656732c07b6cbe9) |
+| 03 | [9e1d934](https://github.com/Koreapanda4444/LanLink/commit/9e1d93413ed02e4de4796910f6f065aac48e967e) |
+| 04 | [7dc3e34](https://github.com/Koreapanda4444/LanLink/commit/7dc3e34056cb9344b76c68b366a197b998f42bf7) |
+| 05 | [9314a56](https://github.com/Koreapanda4444/LanLink/commit/9314a561db6ca54e0cbc0aae99fe53d063b8c21f) |
+| 06 | [63cbf6c](https://github.com/Koreapanda4444/LanLink/commit/63cbf6cf82b6ec1d8028e954a2be91120335f7c1) |
+| 07 | [9f5aedd](https://github.com/Koreapanda4444/LanLink/commit/9f5aeddc3346c92912a5db833ae0e29d49fc6045) |
+| 08 | [c9e419c](https://github.com/Koreapanda4444/LanLink/commit/c9e419c6eb49eed6ef0b1e3f4e372360573468e9) |
+| 09 | [b62d2e8](https://github.com/Koreapanda4444/LanLink/commit/b62d2e8d9deb96fcd8acd475d7ed4dca1e31b73e) |
+| 10 | [b1c7533](https://github.com/Koreapanda4444/LanLink/commit/b1c7533f74fd93e1ec166fd31a9f38f2129bfbc0) |
+| 11 | [1daaaae](https://github.com/Koreapanda4444/LanLink/commit/1daaaae010f773c2a7ac787935e426747463aff8) |
+| 12 | [f7bdca9](https://github.com/Koreapanda4444/LanLink/commit/f7bdca975c7a3c95f561b29efbba18812d59726e) |
+| 13 | [3581ec9](https://github.com/Koreapanda4444/LanLink/commit/3581ec9dd11f2dd87a48bc4d8f44306514015b5d) |
+| 14 | [911e8b1](https://github.com/Koreapanda4444/LanLink/commit/911e8b1906d301f8159781db3242edac24615429) |
+| 15 | [f9a3f39](https://github.com/Koreapanda4444/LanLink/commit/f9a3f3973763cf2590daab13347ce5396a19841c) |
+| 16 | [b6aacfd](https://github.com/Koreapanda4444/LanLink/commit/b6aacfd34a4905b367ceccce2c7d8ddd8795c4da) |
+| 17 | [bdf4af5](https://github.com/Koreapanda4444/LanLink/commit/bdf4af560b82f4c065e97009b697ce19be00d9a5) |
