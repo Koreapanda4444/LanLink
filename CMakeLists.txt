@@ -145,7 +145,7 @@ target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core)
 lanlink_enable_warnings(lanlink_packet_engine)
 
-add_library(lanlink_p2p STATIC src/p2p/local_candidates.cpp src/p2p/udp_socket.cpp src/p2p/stun.cpp)
+add_library(lanlink_p2p STATIC src/p2p/local_candidates.cpp src/p2p/udp_socket.cpp src/p2p/stun.cpp src/p2p/punch.cpp)
 target_include_directories(lanlink_p2p PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_p2p PUBLIC lanlink_auth lanlink_core PRIVATE OpenSSL::Crypto)
 if(WIN32)
@@ -309,6 +309,11 @@ if(BUILD_TESTING)
         set_tests_properties(lanlink-ui-network-model PROPERTIES
             RESOURCE_LOCK lanlink-service-pipe TIMEOUT 30)
     endif()
+
+    add_executable(lanlink_punch_tests tests/punch_tests.cpp)
+    target_link_libraries(lanlink_punch_tests PRIVATE lanlink_p2p)
+    add_test(NAME lanlink-punch COMMAND lanlink_punch_tests)
+    set_tests_properties(lanlink-punch PROPERTIES TIMEOUT 15)
 
     add_executable(lanlink_stun_tests tests/stun_tests.cpp)
     target_link_libraries(lanlink_stun_tests PRIVATE lanlink_p2p)
