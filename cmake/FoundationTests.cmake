@@ -27,3 +27,4 @@ lanlink_foundation_test(network_control_channel lanlink_relay_domain lanlink_aut
 lanlink_foundation_test(packet_routing lanlink_relay_domain)
 
 lanlink_foundation_test(p2p_candidates lanlink_p2p)
+lanlink_foundation_test(stun lanlink_p2p)
