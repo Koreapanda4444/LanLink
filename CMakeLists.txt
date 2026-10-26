@@ -149,6 +149,7 @@ add_library(lanlink_p2p STATIC src/p2p/local_candidates.cpp src/p2p/udp_socket.c
 target_include_directories(lanlink_p2p PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_p2p PUBLIC lanlink_auth lanlink_core PRIVATE OpenSSL::Crypto)
 if(WIN32)
+    target_compile_definitions(lanlink_p2p PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_link_libraries(lanlink_p2p PRIVATE iphlpapi ws2_32)
 endif()
 lanlink_enable_warnings(lanlink_p2p)
