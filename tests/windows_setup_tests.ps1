@@ -1,6 +1,9 @@
 param([Parameter(Mandatory)] [string] $Installer)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$manifest = Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'vcpkg.json') -Raw | ConvertFrom-Json
+$expectedVersion = $manifest.'version-string'
+if ($expectedVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'The manifest release version is invalid.' }
 if (Get-Service -Name LanLink -ErrorAction SilentlyContinue) { throw 'Setup tests require an isolated machine.' }
 $root = Join-Path $env:RUNNER_TEMP "lanlink-setup-$([Guid]::NewGuid().ToString('N'))"
 $program = Join-Path $root 'program 한글'
@@ -36,7 +39,7 @@ try {
     $service = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
     if ($service.State -ne 'Stopped' -or $service.StartMode -ne 'Auto') { throw 'EXE setup did not register an automatic service.' }
     $build = Get-Content (Join-Path $program 'build-info.json') -Raw | ConvertFrom-Json
-    if ($build.version -ne '0.4.0' -or $build.source_commit -ne $env:GITHUB_SHA) { throw 'EXE payload provenance differs from the CI commit.' }
+    if ($build.version -ne $expectedVersion -or $build.source_commit -ne $env:GITHUB_SHA) { throw 'EXE payload provenance differs from the CI commit.' }
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -50,7 +53,7 @@ public static class LanLinkIconResources {
         if ([LanLinkIconResources]::ExtractIconEx($executable, -1, [IntPtr]::Zero, [IntPtr]::Zero, 0) -lt 1) {
             throw "The installed $name has no embedded application icon."
         }
-        if ((Get-Item $executable).VersionInfo.FileVersion -ne '0.4.0') {
+        if ((Get-Item $executable).VersionInfo.FileVersion -ne $expectedVersion) {
             throw "The installed $name has incorrect Windows version resources."
         }
     }
