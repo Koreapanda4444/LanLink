@@ -110,6 +110,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/legacy-relay/extracted"
           tar -xzf "$RUNNER_TEMP/legacy-relay/LanLink-relay-0.2.2-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/legacy-relay/extracted"
           python3 tests/relay_e2e.py openssl "$RUNNER_TEMP/legacy-relay/extracted/bin/lanlink-relay" "$GITHUB_WORKSPACE/build/lanlink_relay_e2e_tests"
+      - name: Verify the Teeworlds 0.7.5 compatibility profile
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          game_source="$RUNNER_TEMP/teeworlds075"
+          git clone --depth 1 --branch 0.7.5 https://github.com/teeworlds/teeworlds.git "$game_source"
+          test "$(git -C "$game_source" rev-parse HEAD)" = 4fc25a17fef3e6c2bf4d52b0421e0d69ecaa1e79
+          git -C "$game_source" -c submodule.datasrc/maps.url=https://github.com/teeworlds/teeworlds-maps.git submodule update --init --depth 1 datasrc/maps
+          cmake -S "$game_source" -B "$RUNNER_TEMP/teeworlds075-build" -G Ninja -DCLIENT=OFF -DDOWNLOAD_DEPENDENCIES=OFF -DDOWNLOAD_GTEST=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev
+          cmake --build "$RUNNER_TEMP/teeworlds075-build" --target teeworlds_srv --parallel 2
+          python3 tests/game_profile_integration.py --server "$RUNNER_TEMP/teeworlds075-build/teeworlds_srv" --maps "$game_source/datasrc/maps" --probe build/lanlink-discovery-probe
       - name: Package Windows client
         if: runner.os == 'Windows'
         run: cpack --config build/CPackConfig.cmake -C Release -B artifacts

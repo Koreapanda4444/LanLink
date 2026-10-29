@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/game_profiles.cpp
     src/p2p/candidates.cpp
     src/protocol/path_diagnostics.cpp
     src/protocol/capabilities.cpp
@@ -211,6 +212,11 @@ target_link_libraries(lanlink_relay PRIVATE lanlink_core lanlink_transport)
 set_target_properties(lanlink_relay PROPERTIES OUTPUT_NAME "lanlink-relay")
 lanlink_enable_warnings(lanlink_relay)
 
+add_executable(lanlink_discovery_probe apps/ui/discovery_probe.cpp)
+target_link_libraries(lanlink_discovery_probe PRIVATE lanlink_p2p OpenSSL::Crypto)
+set_target_properties(lanlink_discovery_probe PROPERTIES OUTPUT_NAME "lanlink-discovery-probe")
+lanlink_enable_warnings(lanlink_discovery_probe)
+
 if(WIN32)
     find_package(imgui CONFIG REQUIRED)
 
@@ -252,6 +258,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_game_profile_tests tests/game_profile_tests.cpp)
+    target_link_libraries(lanlink_game_profile_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_game_profile_tests)
+    add_test(NAME lanlink-game-profile COMMAND lanlink_game_profile_tests)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME lanlink-release-assets
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_assets_tests.py)
