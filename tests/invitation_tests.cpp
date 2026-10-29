@@ -9,6 +9,7 @@ void require(bool b,const char* s){if(!b)throw std::runtime_error(s);}
 int main(){
     const auto path=std::filesystem::temp_directory_path()/auth::random_access_code();
     try {
+      {
         storage::RelayStore store(path);relay::NetworkService::Clock::time_point time{};
         relay::NetworkService service(store,{},[&]{return time;});
         const auto owner=auth::random_nonce(),first=auth::random_nonce(),second=auth::random_nonce();
@@ -36,6 +37,7 @@ int main(){
         for(auto bad:{"https://bad.example/", "lanlink://join/abc", "LL1.00000000000000000000000000000000.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}) {
             bool rejected=false;try{static_cast<void>(protocol::parse_join_target(bad));}catch(const std::exception&){rejected=true;}require(rejected,"malformed link rejected");
         }
+      }
         std::filesystem::remove(path);std::cout<<"invitation policy passed\n";return 0;
     }catch(const std::exception& e){std::filesystem::remove(path);std::cerr<<e.what()<<'\n';return 1;}
 }

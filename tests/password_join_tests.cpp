@@ -8,6 +8,7 @@ void require(bool ok,const char* s){if(!ok)throw std::runtime_error(s);}
 int main(){
     const auto path=std::filesystem::temp_directory_path()/auth::random_access_code();
     try {
+      {
         storage::RelayStore store(path); relay::NetworkService::Clock::time_point now{};
         relay::NetworkService service(store,{},[&]{return now;});
         const auto owner=auth::random_nonce(),member=auth::random_nonce(),pending=auth::random_nonce();
@@ -36,6 +37,7 @@ int main(){
         now+=std::chrono::minutes(1);
         require(service.access_request(attacker,r,61000).code==protocol::NetworkResultCode::permission_denied,"rate limit expires");
         require(store.network_password(network).has_value(),"salted verifier persisted");
+      }
         std::filesystem::remove(path);std::cout<<"password policy passed\n";return 0;
     } catch(const std::exception& e){std::filesystem::remove(path);std::cerr<<e.what()<<'\n';return 1;}
 }
