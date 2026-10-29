@@ -3,6 +3,7 @@
 #include "lanlink/protocol/game_profiles.hpp"
 #include "network_model.hpp"
 #include "lanlink/protocol/network_workflow.hpp"
+#include "lanlink/protocol/network_overview.hpp"
 #include "lanlink_resources.h"
 
 #include <d3d11.h>
@@ -364,6 +365,10 @@ private:
         }
         if(state.access_generation!=access_generation_ && state.access) {
             access_generation_=state.access_generation;
+            if(state.access->action<=protocol::AccessAction::device_revoke) {
+                account_=state.access;
+                if(!state.access->secret.empty())enrollment_code_=state.access->secret;
+            }
             if(state.access->action==protocol::AccessAction::invite_issue && state.access->code==protocol::NetworkResultCode::success) {
                 invitation_link_=state.access->secret;invitation_code_=state.access->text;invitation_network_=state.access->network_id;
             }
@@ -459,6 +464,34 @@ private:
                     next_diagnostics_ = {};
                 });
             }
+            if(ImGui::CollapsingHeader("Account (optional)")) {
+                ImGui::TextWrapped("Group your devices. A relay token works without an account.");
+                ImGui::BeginDisabled(!connected || state.busy);
+                if(ImGui::Button("Refresh account"))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_status;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##accountname","Account or device name",account_name_.data(),account_name_.size());
+                if(ImGui::Button("Create optional account"))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_create;r.text=account_name_.data();networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##enrollment","Enrollment code",enrollment_input_.data(),enrollment_input_.size(),ImGuiInputTextFlags_Password);
+                if(ImGui::Button("Enroll this device"))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::device_enroll;r.text=account_name_.data();r.secret=enrollment_input_.data();networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));std::fill(enrollment_input_.begin(),enrollment_input_.end(),0);});
+                if(account_ && account_->code==protocol::NetworkResultCode::success) {
+                    ImGui::TextWrapped("%s",account_->text.c_str());
+                    if(ImGui::Button("Generate enrollment code"))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::enrollment_issue;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
+                    if(!enrollment_code_.empty() && ImGui::Button("Copy enrollment code"))ImGui::SetClipboardText(enrollment_code_.c_str());
+                    if(!enrollment_code_.empty())ImGui::TextWrapped("Enrollment expires after five minutes and one use.");
+                    for(const auto& enrolled:account_->devices) {
+                        const auto enrolled_id=hex_id(enrolled.device_id);ImGui::PushID(enrolled_id.c_str());
+                        ImGui::TextWrapped("%s%s",enrolled.label.c_str(),enrolled.revoked ? " (revoked)" : "");
+                        if(!enrolled.revoked && enrolled.device_id!=state.activity.device_id && ImGui::SmallButton("Revoke device")) {
+                            protocol::AccessRequest r;r.action=protocol::AccessAction::device_revoke;r.device_id=enrolled.device_id;
+                            confirmation_=protocol::LocalCommand::user_access;confirmation_payload_=protocol::encode_access_request(r);
+                            confirmation_text_="Revoke this enrolled device and remove its network access?";confirm_dialog_=true;
+                        }
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndDisabled();
+            }
         }
         ImGui::EndChild();
         ImGui::SameLine();
@@ -503,9 +536,23 @@ private:
                     confirmation_text_="Revoke all unused invitation links for this network?";confirm_dialog_=true;
                 }
                 ImGui::EndDisabled();
-                if (state.peers && state.peers->network_id == selected->network_id) {
+                if (state.peers && state.peers->network_id == selected->network_id &&
+                    now-state.peers_updated_at<std::chrono::seconds(6)) {
                     const auto& peers = *state.peers;
                     const auto own = ipv4(peers.own_address);
+                    const auto* current_paths=state.paths && now-state.paths_updated_at<std::chrono::seconds(6) ? &*state.paths : nullptr;
+                    const auto overview=protocol::network_overview(peers,current_paths,connected);
+                    ImGui::Text("Members: %u online / %u total",overview.online,overview.total);
+                    ImGui::Text("Paths: %u Direct / %u Relay / %u connecting",overview.direct,overview.relayed,overview.connecting);
+                    const auto age=std::chrono::duration_cast<std::chrono::seconds>(now-state.peers_updated_at).count();
+                    ImGui::TextDisabled("Updated %lld seconds ago",static_cast<long long>(age));
+                    if(ImGui::Button("Copy network overview")) {
+                        std::string report="LanLink network: "+selected->name+"\nNetwork ID: "+id+"\nVirtual IP: "+own+
+                            "\nOnline: "+std::to_string(overview.online)+"/"+std::to_string(overview.total)+
+                            "\nDirect: "+std::to_string(overview.direct)+" Relay: "+std::to_string(overview.relayed)+
+                            "\nKey epoch: "+std::to_string(peers.key_epoch);
+                        ImGui::SetClipboardText(report.c_str());
+                    }
                     ImGui::Text("Your virtual IP: %s", own.c_str());
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Copy IP")) ImGui::SetClipboardText(own.c_str());
@@ -531,9 +578,9 @@ private:
                             ImGui::TextColored(online ? ImVec4(0.35f, 0.87f, 0.65f, 1) : ImVec4(0.6f, 0.64f, 0.70f, 1), "%s", online ? "Online" : "Offline");
                             ImGui::TableNextColumn();
                             const protocol::PeerPathStatus* path=nullptr;
-                            if(state.paths)for(const auto& peer:state.paths->peers)
+                            if(current_paths)for(const auto& peer:current_paths->peers)
                                 if(peer.network_id==selected->network_id && peer.device_id==device_id){path=&peer;break;}
-                            const auto kind=path?path->path.kind:state.diagnostics && state.diagnostics->tcp_fallback?protocol::PathKind::relay_tls:protocol::PathKind::relay_quic;
+                            const auto kind=path && path->path.lifecycle==protocol::PathLifecycle::authenticated ? path->path.kind : protocol::PathKind::none;
                             const char* label=own_device?"Local":!online?"Offline":kind==protocol::PathKind::direct_quic?"Direct":kind==protocol::PathKind::relay_tls?"Relay (TCP)":kind==protocol::PathKind::relay_quic?"Relay":"Connecting";
                             ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.35f,.87f,.65f,1):ImVec4(.65f,.75f,.9f,1),"%s",label);
                             if(path && ImGui::IsItemHovered()) {
@@ -554,7 +601,7 @@ private:
                             ImGui::EndDisabled(); ImGui::PopID();
                         };
                         row(state.activity.device_id, peers.own_address, connected, true);
-                        for (const auto& peer : peers.peers) row(peer.device_id, peer.ipv4_address, peer.signed_key.has_value(), false);
+                        for (const auto& peer : peers.peers) row(peer.device_id, peer.ipv4_address, connected && peer.signed_key.has_value(), false);
                         ImGui::EndTable();
                     }
                     if (owner) {
@@ -798,6 +845,10 @@ private:
     std::uint64_t operation_generation_=0,access_generation_=0;
     lanlink::protocol::NetworkId invitation_network_{};
     std::string invitation_link_,invitation_code_;
+    std::optional<lanlink::protocol::AccessResult> account_;
+    std::array<char,129> account_name_{};
+    std::array<char,41> enrollment_input_{};
+    std::string enrollment_code_;
     std::array<char, 65> device_id_{};
     std::string local_error_;
     bool create_dialog_ = false;

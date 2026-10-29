@@ -6,6 +6,7 @@
 #include "lanlink/protocol/path_diagnostics.hpp"
 
 #include <condition_variable>
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <mutex>
@@ -32,6 +33,7 @@ struct NetworkSnapshot {
     std::uint64_t access_generation = 0;
     std::optional<protocol::NetworkOperationResult> last_operation;
     std::uint64_t operation_generation = 0;
+    std::chrono::steady_clock::time_point peers_updated_at{},paths_updated_at{};
 };
 
 class NetworkModel {

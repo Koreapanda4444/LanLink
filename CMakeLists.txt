@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/network_overview.cpp
     src/protocol/network_workflow.cpp
     src/protocol/join_target.cpp
     src/protocol/user_access.cpp

@@ -1,5 +1,6 @@
 #include "lanlink/protocol/network_workflow.hpp"
 #include "lanlink/protocol/join_target.hpp"
+#include "lanlink/protocol/network_overview.hpp"
 #include <iostream>
 #include <stdexcept>
 using namespace lanlink::protocol;
@@ -14,5 +15,13 @@ int main(){try{
     require(decode_access_request(invite.payload).action==AccessAction::invite_redeem && decode_access_request(invite.payload).secret==secret,"clipboard link redeems scoped invitation");
     const auto password=join_network_command("01000000000000000000000000000000","secure password");
     require(decode_access_request(password.payload).action==AccessAction::password_join,"password join path");
+    NetworkPeerState peers;peers.network_id=id;
+    NetworkPeer online;online.device_id[0]=std::byte{2};online.signed_key=lanlink::auth::SignedDeviceKey{};
+    peers.peers.push_back(online);NetworkPeer offline;offline.device_id[0]=std::byte{3};peers.peers.push_back(offline);
+    PathDiagnostics paths;PathStatus direct;direct.kind=PathKind::direct_quic;direct.lifecycle=PathLifecycle::authenticated;
+    paths.peers.push_back({id,online.device_id,0,direct});paths.peers.push_back({id,offline.device_id,0,direct});
+    const auto overview=network_overview(peers,&paths,true);
+    require(overview.total==3 && overview.online==2 && overview.direct==1,"overview counts current authenticated peers only");
+    require(network_overview(peers,&paths,false).online==0,"disconnected overview has no live presence");
     std::cout<<"network workflows passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

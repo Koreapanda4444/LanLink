@@ -76,7 +76,7 @@ void NetworkModel::process() {
             } else if (request.command == protocol::LocalCommand::diagnostics) {
                 auto diagnostics = protocol::decode_local_diagnostics(response.payload);
                 std::lock_guard lock(mutex_);
-                if(!diagnostics.authenticated) { state_.paths.reset(); state_.games.reset(); }
+                if(!diagnostics.authenticated) { state_.peers.reset(); state_.paths.reset(); state_.games.reset(); }
                 state_.diagnostics = std::move(diagnostics);
                 ++state_.diagnostics_generation;
                 state_.service_online = true;
@@ -86,11 +86,11 @@ void NetworkModel::process() {
                 std::lock_guard lock(mutex_); state_.games = std::move(games);
             } else if (request.command == protocol::LocalCommand::path_diagnostics) {
                 auto paths=protocol::decode_path_diagnostics(response.payload);
-                std::lock_guard lock(mutex_);state_.paths=std::move(paths);
+                std::lock_guard lock(mutex_);state_.paths=std::move(paths);state_.paths_updated_at=std::chrono::steady_clock::now();
             } else if (request.command == protocol::LocalCommand::peers) {
                 auto peers = protocol::decode_network_peer_state(response.payload);
                 std::lock_guard lock(mutex_);
-                state_.peers = std::move(peers);
+                state_.peers = std::move(peers);state_.peers_updated_at=std::chrono::steady_clock::now();
             } else if (request.command == protocol::LocalCommand::activity) {
                 auto activity = protocol::decode_local_activity(response.payload);
                 std::lock_guard lock(mutex_);
@@ -107,6 +107,13 @@ void NetworkModel::process() {
                     state_.error.clear();
                     if(creates || joins)pending_.push_back({protocol::LocalCommand::list,false,false,protocol::encode_network_list_request()});
                 } else {state_.message.clear();state_.error=std::string(protocol::network_result_code_name(result.code));}
+                if(result.action==protocol::AccessAction::account_status && result.code==protocol::NetworkResultCode::not_found) {
+                    state_.error.clear();state_.message="Accounts are optional. This device uses its relay token.";
+                }
+                if(result.action==protocol::AccessAction::device_revoke && successful) {
+                    protocol::AccessRequest refresh;refresh.action=protocol::AccessAction::account_status;
+                    pending_.push_back({protocol::LocalCommand::user_access,false,false,protocol::encode_access_request(refresh)});
+                }
                 state_.access=std::move(result);++state_.access_generation;
             } else {
                 const auto result = protocol::decode_network_operation_result(response.payload);
