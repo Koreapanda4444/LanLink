@@ -3,6 +3,7 @@
 #include "lanlink/auth/packet_crypto.hpp"
 #include "lanlink/session/network_state.hpp"
 #include "lanlink/network/multicast.hpp"
+#include "lanlink/network/lan_discovery.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -36,6 +37,8 @@ private:
         auth::SignedDeviceKey own_signed_key;
         std::shared_ptr<auth::NetworkPacketCipher> cipher;
         network::MulticastMembership multicast;
+        network::LanDiscoveryGuard outbound_discovery;
+        std::map<auth::DeviceId, network::LanDiscoveryGuard> inbound_discovery;
     };
 
     SendHandler send_;

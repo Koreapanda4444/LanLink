@@ -65,6 +65,10 @@ void VirtualPacketBridge::synchronize(
             if (old->second->peers != state) {
                 old->second->cipher->update_peers(state);
                 old->second->peers = state;
+                std::erase_if(old->second->inbound_discovery, [&](const auto& entry) {
+                    return std::none_of(state.peers.begin(), state.peers.end(),
+                        [&](const auto& peer) { return peer.device_id == entry.first; });
+                });
             }
             updated.emplace(state.network_id, old->second);
             continue;
@@ -74,7 +78,7 @@ void VirtualPacketBridge::synchronize(
             state, network.key, identity->signed_key,
             std::make_shared<auth::NetworkPacketCipher>(
                 state.network_id, state.key_epoch, network.key.key,
-                identity->device_id, identity->signed_key, state.own_address), {}});
+                identity->device_id, identity->signed_key, state.own_address), {}, {}, {}});
         session->cipher->update_peers(state);
         if (!updated.emplace(state.network_id, std::move(session)).second) {
             throw std::invalid_argument("duplicate virtual packet network");
@@ -103,6 +107,8 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
                 session = candidate;
                 if (candidate->multicast.observe(ipv4_packet, network::MulticastMembership::Clock::now()) !=
                     network::MulticastMembership::Report::not_igmp) return;
+                if (protocol::is_ipv4_fanout_destination(destination, state.subnet_address, state.prefix_length) &&
+                    !candidate->outbound_discovery.permit(ipv4_packet, network::LanDiscoveryGuard::Clock::now())) return;
                 break;
             }
         }
@@ -124,10 +130,14 @@ void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delive
     }
     const auto plaintext = session->cipher->decrypt(delivery.packet,
                                                      delivery.sender_device_id);
-    if (protocol::is_ipv4_multicast(delivery.packet.destination_ipv4)) {
+    if (protocol::is_ipv4_fanout_destination(delivery.packet.destination_ipv4,
+                                            session->peers.subnet_address, session->peers.prefix_length)) {
         std::lock_guard lock(mutex_);
-        if (!session->multicast.receives(delivery.packet.destination_ipv4, read_ipv4(plaintext, 12),
+        if (protocol::is_ipv4_multicast(delivery.packet.destination_ipv4) &&
+            !session->multicast.receives(delivery.packet.destination_ipv4, read_ipv4(plaintext, 12),
                                         network::MulticastMembership::Clock::now())) return;
+        if (!session->inbound_discovery[delivery.sender_device_id].permit(plaintext,
+                network::LanDiscoveryGuard::Clock::now())) return;
     }
     inject_(plaintext);
 }

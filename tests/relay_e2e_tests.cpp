@@ -173,7 +173,7 @@ std::vector<std::byte> ipv4(std::uint32_t source, std::uint32_t destination,
         }
     };
     packet[0] = std::byte{0x45};
-    packet[8] = std::byte{64};
+    packet[8] = destination == 0xe00000fbU ? std::byte{255} : std::byte{64};
     packet[9] = std::byte{17};
     word(2, static_cast<std::uint16_t>(size));
     word(4, marker);

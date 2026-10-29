@@ -30,10 +30,10 @@ void authenticate(auth::ClientHandshake& client, auth::ServerHandshake& server) 
 
 std::vector<std::byte> ipv4_packet(const std::uint32_t source,
                                    const std::uint32_t destination) {
-    std::vector<std::byte> bytes(24);
+    std::vector<std::byte> bytes(28);
     bytes[0] = std::byte{0x45};
-    bytes[3] = std::byte{24};
-    bytes[8] = std::byte{64};
+    bytes[3] = std::byte{28};
+    bytes[8] = destination == 0xe00000fbU ? std::byte{255} : std::byte{64};
     bytes[9] = std::byte{17};
     for (std::size_t index = 0; index < 4; ++index) {
         bytes[12 + index] = std::byte{static_cast<unsigned char>(
@@ -41,6 +41,10 @@ std::vector<std::byte> ipv4_packet(const std::uint32_t source,
         bytes[16 + index] = std::byte{static_cast<unsigned char>(
             destination >> ((3U - index) * 8U))};
     }
+    bytes[20] = std::byte{0xc0}; bytes[21] = std::byte{0x01};
+    const auto port = destination == 0xe00000fbU ? 5353U : 47100U;
+    bytes[22] = std::byte{static_cast<unsigned char>(port >> 8U)};
+    bytes[23] = std::byte{static_cast<unsigned char>(port)}; bytes[25] = std::byte{8};
     return bytes;
 }
 
@@ -169,6 +173,7 @@ void test_multicast() {
     };
     auto report = ipv4_packet(source, group);
     report.resize(28);
+    for (std::size_t index = 20; index < report.size(); ++index) report[index] = std::byte{0};
     report[8] = std::byte{1}; report[9] = std::byte{2}; report[20] = std::byte{0x16};
     put(report, 24, group, 4); finish(report);
     require(!membership.receives(group, source, now), "unjoined administrative multicast is filtered");
@@ -200,6 +205,24 @@ void test_multicast() {
     require(!membership.receives(group, source, now), "OS group leave takes effect without IGMP timers");
 }
 
+void test_discovery_guard() {
+    lanlink::network::LanDiscoveryGuard guard;
+    auto now = lanlink::network::LanDiscoveryGuard::Clock::time_point{};
+    auto query = ipv4_packet(0x0a400001U, 0xe00000fbU);
+    require(guard.permit(query, now) && !guard.permit(query, now), "repeated discovery is coalesced before encryption");
+    require(guard.permit(query, now + std::chrono::milliseconds{101}), "later legitimate discovery is forwarded");
+    query[23] = std::byte{0};
+    require(!guard.permit(query, now), "mDNS group cannot carry an unrelated UDP port");
+    query = ipv4_packet(0x0a400001U, 0xe00000fbU); query[8] = std::byte{64};
+    require(!guard.permit(query, now), "mDNS retains its required link-local TTL");
+    lanlink::network::LanDiscoveryGuard flood;
+    const auto broadcast = ipv4_packet(0x0a400001U, 0xffffffffU);
+    for (int index = 0; index < 32; ++index) require(flood.permit(broadcast, now), "initial discovery burst");
+    require(!flood.permit(broadcast, now) && flood.permit(broadcast, now + std::chrono::seconds{1}), "bounded fanout budget refills");
+    require(guard.counters().duplicate == 1 && guard.counters().invalid == 2 && flood.counters().rate_limited == 1,
+            "diagnostic counters distinguish duplicate, malformed and flooded traffic");
+}
+
 }
 
 int main() {
@@ -209,6 +232,7 @@ int main() {
     try {
         std::filesystem::create_directories(directory);
         test_multicast();
+        test_discovery_guard();
         test_bridge(directory);
         std::filesystem::remove_all(directory);
         std::cout << "all packet bridge tests passed\n";
