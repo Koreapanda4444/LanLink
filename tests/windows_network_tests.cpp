@@ -337,6 +337,19 @@ public:
     }
     std::size_t deliveries() const noexcept { return deliveries_.load(); }
     std::size_t fanout() const noexcept { return fanout_.load(); }
+    void send_discovery() {
+        std::vector<std::byte> packet(60, std::byte{0x5a});
+        std::fill_n(packet.begin(), 28, std::byte{0});
+        packet[0] = std::byte{0x45}; packet[3] = std::byte{60};
+        packet[8] = std::byte{64}; packet[9] = std::byte{IPPROTO_UDP};
+        set_address(packet, 12, virtual_peer_.load());
+        set_address(packet, 16, 0xffffffffU);
+        packet[20] = std::byte{0xc0}; packet[21] = std::byte{1};
+        packet[22] = std::byte{0xa6}; packet[23] = std::byte{0x92}; packet[25] = std::byte{40};
+        set_checksum(std::span(packet).first(20), 10);
+        synchronize();
+        bridge.outbound(packet);
+    }
     bool multicast_member(const std::uint32_t group) const {
         if (!adapter_) return false;
         const auto groups = adapter_->multicast_groups();
@@ -573,12 +586,15 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
     peer.attach(id);
     application_roundtrip(peer, owner_ip, peer_ip);
     fanout(peer, outsider, owner_ip);
-    const auto game_metrics = protocol::decode_game_diagnostics(local(protocol::LocalCommand::game_diagnostics));
-    require(!game_metrics.adapter_failed && game_metrics.mtu == 1400 &&
-        std::any_of(game_metrics.networks.begin(), game_metrics.networks.end(), [&](const auto& item) {
-            return item.network_id == id && item.address == owner_ip && item.online_peers == 1 &&
-                item.discovery_received > 0;
-        }), "service game diagnostics did not report the active Wintun network and real discovery traffic");
+    peer.send_discovery();
+    wait_for([&] {
+        const auto game_metrics = protocol::decode_game_diagnostics(local(protocol::LocalCommand::game_diagnostics));
+        return !game_metrics.adapter_failed && game_metrics.mtu == 1400 &&
+            std::any_of(game_metrics.networks.begin(), game_metrics.networks.end(), [&](const auto& item) {
+                return item.network_id == id && item.address == owner_ip && item.online_peers == 1 &&
+                    item.discovery_sent >= 2 && item.discovery_received > 0;
+            });
+    }, "service game diagnostics did not report the active Wintun network and bidirectional discovery traffic");
 
     command(root, 1, "service-stop");
     wait_for([&] { return !address_luid(owner_ip); }, "service stop did not remove its virtual address");
