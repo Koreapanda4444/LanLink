@@ -337,6 +337,11 @@ public:
     }
     std::size_t deliveries() const noexcept { return deliveries_.load(); }
     std::size_t fanout() const noexcept { return fanout_.load(); }
+    bool multicast_member(const std::uint32_t group) const {
+        if (!adapter_) return false;
+        const auto groups = adapter_->multicast_groups();
+        return groups && std::find(groups->begin(), groups->end(), group) != groups->end();
+    }
     auth::DeviceIdentity identity;
     lanlink::core::Logger logger;
 private:
@@ -520,6 +525,7 @@ void fanout(Peer& peer, Peer& outsider, std::uint32_t owner_ip) {
     require(setsockopt(subscriber.get(), IPPROTO_IP, IP_DROP_MEMBERSHIP,
                       reinterpret_cast<const char*>(&membership), sizeof(membership)) == 0,
             "cannot leave virtual multicast group");
+    wait_for([&] { return !peer.multicast_member(0xefff4d01U); }, "Windows did not publish the multicast group leave");
     const auto forwarded = peer.fanout();
     const auto deliveries = peer.deliveries();
     const auto group = endpoint(0xefff4d01U, 42642);
