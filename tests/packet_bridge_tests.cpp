@@ -92,6 +92,15 @@ void test_bridge(const std::filesystem::path& directory) {
     owner_bridge.synchronize(owner_identity, owner_networks);
     member_bridge.synchronize(member_identity, member_networks);
 
+    auto overlapping = owner_networks;
+    auto conflicting = owner_networks.front();
+    conflicting.peers.network_id.front() ^= std::byte{1};
+    overlapping.push_back(conflicting);
+    bool overlap_rejected = false;
+    try { owner_bridge.synchronize(owner_identity, overlapping); }
+    catch (const std::invalid_argument&) { overlap_rejected = true; }
+    require(overlap_rejected, "overlapping networks cannot ambiguously route a broadcast");
+
     const auto plaintext = ipv4_packet(owner_ip, member_ip);
     owner_bridge.outbound(plaintext);
     require(sent.size() == 1 && sent[0].ciphertext != plaintext,

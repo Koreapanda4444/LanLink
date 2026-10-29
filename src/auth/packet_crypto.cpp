@@ -288,9 +288,10 @@ protocol::EncryptedNetworkPacket NetworkPacketCipher::encrypt(
     }
 
     std::lock_guard lock(mutex_);
-    if (destination >= 0xe0000000U &&
-        !protocol::is_ipv4_fanout_destination(destination, subnet_address_,
-                                             prefix_length_)) {
+    const bool fanout = protocol::is_ipv4_fanout_destination(
+        destination, subnet_address_, prefix_length_);
+    if ((!fanout && !protocol::is_ipv4_host(destination, subnet_address_, prefix_length_)) ||
+        (fanout && ipv4_packet[8] == std::byte{0})) {
         throw std::invalid_argument("virtual packet destination is not in the network");
     }
     if (next_sequence_ == std::numeric_limits<std::uint32_t>::max()) {
@@ -349,7 +350,9 @@ std::vector<std::byte> NetworkPacketCipher::decrypt(
     try {
         const auto [source, destination] = ipv4_addresses(plaintext);
         addresses_match = source == receiver.ipv4_address &&
-                          destination == packet.destination_ipv4;
+                          destination == packet.destination_ipv4 &&
+                          (!protocol::is_ipv4_fanout_destination(destination,
+                              subnet_address_, prefix_length_) || plaintext[8] != std::byte{0});
     } catch (const std::invalid_argument&) {
     }
     if (!addresses_match) {

@@ -1,6 +1,7 @@
 #include "lanlink/transport/packet_bridge.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -32,6 +33,19 @@ void VirtualPacketBridge::synchronize(
     if (!identity) {
         sessions_.clear();
         return;
+    }
+
+    for (std::size_t index = 0; index < networks.size(); ++index) {
+        const auto& state = networks[index].peers;
+        if (!protocol::is_ipv4_host(state.own_address, state.subnet_address, state.prefix_length))
+            throw std::invalid_argument("virtual network address is not a subnet host");
+        for (std::size_t other = 0; other < index; ++other) {
+            const auto& previous = networks[other].peers;
+            const auto mask = 0xffffffffU << (32U - std::min(state.prefix_length, previous.prefix_length));
+            if (state.network_id == previous.network_id ||
+                (state.subnet_address & mask) == (previous.subnet_address & mask))
+                throw std::invalid_argument("virtual network subnets overlap");
+        }
     }
 
     std::map<protocol::NetworkId, std::shared_ptr<Session>> updated;

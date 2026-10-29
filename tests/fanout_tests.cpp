@@ -1,6 +1,7 @@
 #include "lanlink/auth/handshake.hpp"
 #include "lanlink/auth/packet_crypto.hpp"
 #include "lanlink/relay/network_service.hpp"
+#include "lanlink/protocol/ipv4_fanout.hpp"
 
 #include <array>
 #include <chrono>
@@ -48,6 +49,12 @@ std::vector<std::byte> ipv4_packet(const std::uint32_t source,
 }
 
 void test_fanout(const std::filesystem::path& directory) {
+    require(!protocol::is_ipv4_fanout_destination(0xffffffffU, 0x0a400001U, 24) &&
+            !protocol::is_ipv4_fanout_destination(0xffffffffU, 0, 0) &&
+            !protocol::is_ipv4_fanout_destination(0xffffffffU, 0, 31) &&
+            protocol::is_ipv4_fanout_destination(0x0a40007fU, 0x0a400000U, 25) &&
+            !protocol::is_ipv4_fanout_destination(0x0a4000ffU, 0x0a400000U, 25),
+            "fanout requires a canonical subnet and the exact directed broadcast");
     const auto owner = auth::DeviceIdentity::load_or_create(directory / "owner.identity");
     const auto first = auth::DeviceIdentity::load_or_create(directory / "first.identity");
     const auto second = auth::DeviceIdentity::load_or_create(directory / "second.identity");
@@ -115,6 +122,19 @@ void test_fanout(const std::filesystem::path& directory) {
     owner_cipher.update_peers(owner_state);
     first_cipher.update_peers(first_state);
     second_cipher.update_peers(second_state);
+
+    for (const auto destination : {0x08080808U, owner_state.subnet_address}) {
+        bool rejected = false;
+        try { static_cast<void>(owner_cipher.encrypt(ipv4_packet(owner_state.own_address, destination))); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected, "cipher refuses external and subnet network destinations");
+    }
+    auto expired = ipv4_packet(owner_state.own_address, 0xffffffffU);
+    expired[8] = std::byte{0};
+    bool rejected = false;
+    try { static_cast<void>(owner_cipher.encrypt(expired)); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected, "expired broadcast never enters the overlay");
 
     const auto broadcast = owner_state.subnet_address | 0xffU;
     constexpr std::array destinations{
