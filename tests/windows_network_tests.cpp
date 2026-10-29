@@ -309,6 +309,7 @@ public:
             if (key && key->epoch == state.key_epoch) networks.push_back({state, *key});
         }
         bridge.synchronize(client.cached_packet_identity(), networks);
+        if (adapter_) bridge.synchronize_multicast(adapter_->multicast_groups());
     }
     void attach(const protocol::NetworkId& id) {
         const auto state = client.cached_peer_state(id);
@@ -491,6 +492,13 @@ void application_roundtrip(Peer& peer, std::uint32_t owner_ip, std::uint32_t pee
 }
 
 void fanout(Peer& peer, Peer& outsider, std::uint32_t owner_ip) {
+    auto subscriber = bound_socket(SOCK_DGRAM, mapped_peer);
+    ip_mreq membership{};
+    membership.imr_multiaddr.s_addr = htonl(0xefff4d01U);
+    membership.imr_interface.s_addr = htonl(mapped_peer);
+    require(setsockopt(subscriber.get(), IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                      reinterpret_cast<const char*>(&membership), sizeof(membership)) == 0,
+            "cannot join virtual multicast group");
     auto sender = bound_socket(SOCK_DGRAM, owner_ip);
     const BOOL enabled = TRUE;
     require(setsockopt(sender.get(), SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&enabled), sizeof(enabled)) == 0,
@@ -509,6 +517,18 @@ void fanout(Peer& peer, Peer& outsider, std::uint32_t owner_ip) {
         wait_for([&] { peer.check(); return peer.fanout() > before; }, "broadcast or multicast did not reach the approved peer");
         require(peer.fanout() == before + 1, "virtual discovery packet was duplicated");
     }
+    require(setsockopt(subscriber.get(), IPPROTO_IP, IP_DROP_MEMBERSHIP,
+                      reinterpret_cast<const char*>(&membership), sizeof(membership)) == 0,
+            "cannot leave virtual multicast group");
+    const auto forwarded = peer.fanout();
+    const auto deliveries = peer.deliveries();
+    const auto group = endpoint(0xefff4d01U, 42642);
+    require(sendto(sender.get(), payload.data(), static_cast<int>(payload.size()), 0,
+                   reinterpret_cast<const sockaddr*>(&group), sizeof(group)) == static_cast<int>(payload.size()),
+            "multicast leave verification send failed");
+    wait_for([&] { peer.check(); return peer.deliveries() > deliveries; }, "multicast leave packet did not reach its encrypted filter");
+    std::this_thread::sleep_for(100ms);
+    require(peer.fanout() == forwarded, "left multicast group was still injected");
     require(outsider.deliveries() == 0, "virtual network leaked packets to an unrelated device");
 }
 
