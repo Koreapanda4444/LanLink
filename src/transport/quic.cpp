@@ -1335,8 +1335,9 @@ public:
 
     [[nodiscard]] protocol::AccessResult access_request(const protocol::AccessRequest& request,
         const std::chrono::milliseconds timeout) {
-        if (!capabilities().supports(protocol::Capability::user_accounts))
-            throw std::runtime_error("This relay does not support account enrollment.");
+        const auto required=request.action>=protocol::AccessAction::password_set ? protocol::Capability::password_networks : protocol::Capability::user_accounts;
+        if (!capabilities().supports(required))
+            throw std::runtime_error("This relay does not support the requested access feature.");
         const auto frame=request_control(protocol::MessageType::user_access_request,
             protocol::encode_access_request(request),protocol::NetworkOperation::list,timeout);
         const auto result=protocol::decode_access_result(frame.payload);

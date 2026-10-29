@@ -4,7 +4,7 @@
 namespace lanlink::protocol {
 enum class AccessAction : std::uint8_t {
     account_create = 1, account_status = 2, enrollment_issue = 3,
-    device_enroll = 4, device_revoke = 5,
+    device_enroll = 4, device_revoke = 5, password_set = 6, password_join = 7,
 };
 struct AccountDevice {
     auth::DeviceId device_id{};
@@ -20,6 +20,7 @@ struct AccessRequest {
     std::string secret;
     std::uint32_t lifetime_seconds = 300;
     std::uint16_t max_uses = 1;
+    bool require_approval = false;
     bool operator==(const AccessRequest&) const = default;
 };
 struct AccessResult {

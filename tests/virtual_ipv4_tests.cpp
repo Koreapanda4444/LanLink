@@ -129,6 +129,7 @@ void test_v2_migration(const std::filesystem::path& directory) {
            "open previous-version database fixture");
     execute_sql(database,
                 "PRAGMA foreign_keys = ON;"
+                "DROP TABLE network_access;"
                 "DROP TABLE device_enrollment;"
                 "DROP TABLE account_devices;"
                 "DROP TABLE accounts;"
@@ -195,6 +196,7 @@ void test_migration_capacity_rollback(const std::filesystem::path& directory) {
            "open oversized previous-version database");
     execute_sql(database,
                 "PRAGMA foreign_keys = ON;"
+                "DROP TABLE network_access;"
                 "DROP TABLE device_enrollment;"
                 "DROP TABLE account_devices;"
                 "DROP TABLE accounts;"

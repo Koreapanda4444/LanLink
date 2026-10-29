@@ -85,7 +85,8 @@ public:
 
     [[nodiscard]] protocol::AccessResult access_request(const auth::DeviceId& actor,
         const protocol::AccessRequest& request, std::int64_t now_ms,
-        std::vector<RoutedPeerStateChange>* changes = nullptr);
+        std::vector<RoutedPeerStateChange>* changes = nullptr,
+        std::vector<RoutedNetworkEvent>* events = nullptr);
     [[nodiscard]] bool device_allowed(const auth::DeviceId& actor) const;
     void record_authenticated_device(const auth::DeviceId& actor, std::int64_t now_ms);
     [[nodiscard]] std::vector<RoutedPeerStateChange> publish_device_key(
@@ -140,6 +141,11 @@ public:
     [[nodiscard]] bool authorize_peer_exchange(const auth::DeviceId& actor, const p2p::CandidateExchange& exchange);
 
 private:
+    [[nodiscard]] bool allow_access_attempt(const auth::DeviceId& actor, const storage::NetworkId& network);
+    [[nodiscard]] NetworkOperationOutcome join_network_locked(const auth::DeviceId& actor,
+        const protocol::NetworkSelectionRequest& request, std::int64_t now_ms, bool credential_verified);
+    struct AccessWindow { Clock::time_point start{}; unsigned attempts=0; };
+    std::map<std::pair<storage::NetworkId,auth::DeviceId>,AccessWindow> access_attempts_;
     [[nodiscard]] std::uint64_t revision_for(const storage::NetworkId& network_id) const;
     [[nodiscard]] std::uint64_t advance_revision(const storage::NetworkId& network_id);
     [[nodiscard]] std::uint64_t key_epoch_for(const storage::NetworkId& network_id) const;

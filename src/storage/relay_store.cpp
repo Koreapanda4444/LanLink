@@ -1001,6 +1001,22 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::optional<auth::PasswordVerifier> network_password(const NetworkId& network) const {
+        std::lock_guard lock(mutex_);
+        Statement q(database_,"SELECT salt,digest,require_approval FROM network_access WHERE network_id=?;");
+        q.bind_blob(1,network.data(),network.size()); if(!q.step_row()) return std::nullopt;
+        return auth::PasswordVerifier{q.column_blob<32>(0),q.column_blob<32>(1),q.column_integer(2)!=0};
+    }
+    void set_network_password(const NetworkId& network,const std::optional<auth::PasswordVerifier>& password) {
+        std::lock_guard lock(mutex_);
+        if(!password) {
+            Statement q(database_,"DELETE FROM network_access WHERE network_id=?;");
+            q.bind_blob(1,network.data(),network.size()); q.step_done(); return;
+        }
+        Statement q(database_,"INSERT INTO network_access(network_id,salt,digest,require_approval) VALUES(?,?,?,?) ON CONFLICT(network_id) DO UPDATE SET salt=excluded.salt,digest=excluded.digest,require_approval=excluded.require_approval;");
+        q.bind_blob(1,network.data(),network.size()); q.bind_blob(2,password->salt.data(),password->salt.size());
+        q.bind_blob(3,password->digest.data(),password->digest.size()); q.bind_integer(4,password->require_approval ? 1 : 0); q.step_done();
+    }
     [[nodiscard]] bool device_revoked(const auth::DeviceId& device) const {
         std::lock_guard lock(mutex_);
         Statement q(database_, "SELECT revoked FROM account_devices WHERE device_id=?;");
@@ -1176,6 +1192,13 @@ private:
             transaction.commit(); version = 4;
         }
 
+        if (version == 4) {
+            Transaction transaction(database_,true);
+            execute(database_,"CREATE TABLE network_access(network_id BLOB PRIMARY KEY NOT NULL REFERENCES networks(network_id) ON DELETE CASCADE,"
+                "salt BLOB NOT NULL CHECK(length(salt)=32),digest BLOB NOT NULL CHECK(length(digest)=32),"
+                "require_approval INTEGER NOT NULL CHECK(require_approval IN(0,1)));PRAGMA user_version=5;");
+            transaction.commit(); version=5;
+        }
         if (version != current_schema_version) {
             throw std::runtime_error("relay database has an unsupported schema version");
         }
@@ -1404,6 +1427,8 @@ private:
     void validate_schema() {
         if (query_integer(database_, "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN('accounts','account_devices','device_enrollment');")!=3)
             throw std::runtime_error("relay account schema is incomplete");
+        if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='network_access';")!=1)
+            throw std::runtime_error("relay network access schema is incomplete");
         validate_schema_v2();
         const auto tables = query_integer(
             database_,
@@ -1556,6 +1581,8 @@ std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_device(
     return impl_->list_join_requests_for_device(device_id);
 }
 
+std::optional<auth::PasswordVerifier> RelayStore::network_password(const NetworkId& n) const { return impl_->network_password(n); }
+void RelayStore::set_network_password(const NetworkId& n,const std::optional<auth::PasswordVerifier>& p) { impl_->set_network_password(n,p); }
 bool RelayStore::device_revoked(const auth::DeviceId& d) const { return impl_->device_revoked(d); }
 std::optional<AccountRecord> RelayStore::account_for_device(const auth::DeviceId& d) const { return impl_->account_for_device(d); }
 std::vector<protocol::AccountDevice> RelayStore::account_devices(const auth::DeviceId& a) const { return impl_->account_devices(a); }

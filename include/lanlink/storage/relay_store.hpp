@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/auth/identity.hpp"
+#include "lanlink/auth/access_secret.hpp"
 #include "lanlink/protocol/user_access.hpp"
 
 #include <array>
@@ -15,7 +16,7 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 4;
+inline constexpr int current_schema_version = 5;
 inline constexpr std::uint32_t virtual_ipv4_pool_first = 0x0a400000U;
 inline constexpr std::uint32_t virtual_ipv4_pool_end = 0x0a800000U;
 inline constexpr std::uint32_t virtual_ipv4_subnet_size = 256;
@@ -170,6 +171,8 @@ public:
     [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_device(
         const auth::DeviceId& device_id) const;
 
+    [[nodiscard]] std::optional<auth::PasswordVerifier> network_password(const NetworkId& network) const;
+    void set_network_password(const NetworkId& network, const std::optional<auth::PasswordVerifier>& password);
     [[nodiscard]] bool device_revoked(const auth::DeviceId& device) const;
     [[nodiscard]] std::optional<AccountRecord> account_for_device(const auth::DeviceId& device) const;
     [[nodiscard]] std::vector<protocol::AccountDevice> account_devices(const auth::DeviceId& account) const;

@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -64,6 +65,7 @@ std::string hex_id(const std::span<const std::byte> id) {
 
 lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     using lanlink::protocol::LocalCommand;
+    if (action == L"password" || action == L"join-password") return LocalCommand::user_access;
     if (action == L"account") return LocalCommand::user_access;
     if (action == L"status") return LocalCommand::status;
     if (action == L"list") return LocalCommand::list;
@@ -106,6 +108,18 @@ int wmain(const int argc, wchar_t* argv[]) {
             if (argc<3) throw std::invalid_argument("account requires status/create/issue/enroll/revoke");
             const std::wstring_view operation=argv[2];
             protocol::AccessRequest access;
+            if(action==L"password" || action==L"join-password") {
+                if(argc!=3 && !(action==L"password" && argc==4 && std::wstring_view(argv[3])==L"approve")) throw std::invalid_argument("password/join-password requires a network ID; password optionally accepts approve");
+                access.network_id=parse_id<16>(argv[2]);
+                access.action=action==L"password" ? protocol::AccessAction::password_set : protocol::AccessAction::password_join;
+                access.require_approval=argc==4;
+                std::cerr << "Network password: ";
+                HANDLE input=GetStdHandle(STD_INPUT_HANDLE); DWORD mode=0; const bool console=GetConsoleMode(input,&mode)!=0;
+                if(console) SetConsoleMode(input,mode & ~ENABLE_ECHO_INPUT);
+                std::getline(std::cin,access.secret);
+                if(console) { SetConsoleMode(input,mode); std::cerr << '\n'; }
+                request.payload=protocol::encode_access_request(access); std::fill(access.secret.begin(),access.secret.end(),'\0'); break;
+            }
             if (operation==L"status" && argc==3) access.action=protocol::AccessAction::account_status;
             else if (operation==L"create" && argc==4) { access.action=protocol::AccessAction::account_create; access.text=utf8(argv[3]); }
             else if (operation==L"issue" && argc==3) access.action=protocol::AccessAction::enrollment_issue;

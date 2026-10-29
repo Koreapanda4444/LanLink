@@ -10,6 +10,7 @@ function(lanlink_foundation_test name)
     add_test(NAME lanlink-${test_name} COMMAND lanlink_${name}_tests)
 endfunction()
 
+lanlink_foundation_test(password_join lanlink_relay_domain)
 lanlink_foundation_test(directory lanlink_auth lanlink_core)
 lanlink_foundation_test(user_access lanlink_relay_domain)
 lanlink_foundation_test(core lanlink_core)

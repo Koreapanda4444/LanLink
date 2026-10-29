@@ -163,8 +163,24 @@ void test_network_management(const std::filesystem::path& directory) {
                store.find_device(member_identity.device_id()).has_value(),
            "relay must persist authenticated client identities");
 
+    protocol::AccessRequest account;
+    account.action=protocol::AccessAction::account_create;account.text="Integration account";
+    expect(owner.access_request(account).code==protocol::NetworkResultCode::success,"account extension over real QUIC");
+    account.action=protocol::AccessAction::enrollment_issue;
+    const auto enrollment=owner.access_request(account).secret;
+    account.action=protocol::AccessAction::device_enroll;account.text="Member device";account.secret=enrollment;
+    expect(member.access_request(account).devices.size()==2,"enrollment extension over real QUIC");
+
     const auto create = owner.create_network("Integration LAN");
     const auto id = create.network_id;
+    protocol::AccessRequest password;password.action=protocol::AccessAction::password_set;
+    password.network_id=id;password.secret="integration password";
+    expect(owner.access_request(password).code==protocol::NetworkResultCode::success,"password set over real QUIC");
+    password.action=protocol::AccessAction::password_join;password.secret="incorrect password";
+    expect(member.access_request(password).code==protocol::NetworkResultCode::permission_denied,"password denied over real QUIC");
+    password.action=protocol::AccessAction::password_set;password.secret.clear();
+    expect(owner.access_request(password).code==protocol::NetworkResultCode::success,"password removed over real QUIC");
+
     expect(create.operation == protocol::NetworkOperation::create &&
                create.code == protocol::NetworkResultCode::success,
            "create must succeed over authenticated control stream");

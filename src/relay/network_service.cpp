@@ -184,12 +184,28 @@ NetworkService::NetworkService(storage::RelayStore& store,
                                : TimeSource{[] { return Clock::now(); }}) {
 }
 
+bool NetworkService::allow_access_attempt(const auth::DeviceId& actor, const storage::NetworkId& network) {
+    const auto now=time_source_();
+    std::erase_if(access_attempts_,[&](const auto& item){return now-item.second.start>=std::chrono::minutes(1);});
+    if(access_attempts_.size()>4092) return false;
+    const std::array keys{std::pair{network,actor},std::pair{storage::NetworkId{},actor},
+        std::pair{network,auth::DeviceId{}},std::pair{storage::NetworkId{},auth::DeviceId{}}};
+    const std::array<unsigned,4> limits{5,10,20,40};
+    for(std::size_t i=0;i<keys.size();++i) {
+        auto [it,inserted]=access_attempts_.try_emplace(keys[i],AccessWindow{now,0});
+        static_cast<void>(inserted);
+        if(it->second.attempts>=limits[i]) return false;
+    }
+    for(const auto& key:keys) ++access_attempts_.at(key).attempts;
+    return true;
+}
+
 bool NetworkService::device_allowed(const auth::DeviceId& actor) const {
     return !store_.device_revoked(actor);
 }
 protocol::AccessResult NetworkService::access_request(const auth::DeviceId& actor,
     const protocol::AccessRequest& request, const std::int64_t now_ms,
-    std::vector<RoutedPeerStateChange>* changes) {
+    std::vector<RoutedPeerStateChange>* changes, std::vector<RoutedNetworkEvent>* events) {
     require_actor_and_time(actor, now_ms);
     static_cast<void>(protocol::encode_access_request(request));
     std::lock_guard lock(mutex_);
@@ -218,6 +234,25 @@ protocol::AccessResult NetworkService::access_request(const auth::DeviceId& acto
         }
         active_keys_.erase(request.device_id);
         result.account_id=account->id; return result;
+    }
+    if(request.action==protocol::AccessAction::password_set || request.action==protocol::AccessAction::password_join) {
+        result.network_id=request.network_id;
+        if(!allow_access_attempt(actor,request.network_id)) { result.code=protocol::NetworkResultCode::limit_reached; return result; }
+        const auto network=store_.find_network(request.network_id);
+        if(request.action==protocol::AccessAction::password_set) {
+            if(!network || network->owner_device_id!=actor) { result.code=protocol::NetworkResultCode::permission_denied; return result; }
+            if(request.secret.empty()) store_.set_network_password(request.network_id,std::nullopt);
+            else store_.set_network_password(request.network_id,auth::protect_password(request.secret,request.require_approval));
+            return result;
+        }
+        const auto verifier=store_.network_password(request.network_id);
+        const bool matches=auth::password_matches(request.secret,verifier.value_or(auth::PasswordVerifier{}));
+        if(!network || !verifier || !matches) { result.code=protocol::NetworkResultCode::permission_denied; return result; }
+        const auto joined=join_network_locked(actor,{request.network_id},now_ms,true);
+        result.code=joined.result.code;
+        if(changes) *changes=joined.peer_changes;
+        if(events) *events=joined.events;
+        return result;
     }
     auto account=store_.account_for_device(actor);
     switch (request.action) {
@@ -494,7 +529,10 @@ NetworkOperationOutcome NetworkService::join_network(
     require_actor_and_time(actor, now_ms);
     require_selection_request(request);
     std::lock_guard lock(mutex_);
-
+    return join_network_locked(actor,request,now_ms,false);
+}
+NetworkOperationOutcome NetworkService::join_network_locked(const auth::DeviceId& actor,
+    const protocol::NetworkSelectionRequest& request, const std::int64_t now_ms, bool credential_verified) {
     try {
         store_.record_device(actor, now_ms);
         const auto network = store_.find_network(request.network_id);
@@ -518,7 +556,11 @@ NetworkOperationOutcome NetworkService::join_network(
                                      request.network_id);
         }
 
-        if (store_.find_invitation(request.network_id, actor)) {
+        const auto password=store_.network_password(request.network_id);
+        const bool invited=store_.find_invitation(request.network_id,actor).has_value();
+        if(password && !credential_verified && !invited)
+            return operation_outcome(protocol::NetworkOperation::join,protocol::NetworkResultCode::invite_required,request.network_id);
+        if (invited || (credential_verified && password && !password->require_approval)) {
             if (!store_.add_member(request.network_id, actor, now_ms)) {
                 return operation_outcome(protocol::NetworkOperation::join,
                                          protocol::NetworkResultCode::conflict,

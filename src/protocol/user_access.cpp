@@ -5,7 +5,7 @@
 namespace lanlink::protocol {
 namespace {
 void action(AccessAction a) {
-    if (a < AccessAction::account_create || a > AccessAction::device_revoke)
+    if (a < AccessAction::account_create || a > AccessAction::password_join)
         throw std::invalid_argument("unknown access action");
 }
 void string(BinaryWriter& w, const std::string& s, std::size_t limit) {
@@ -27,6 +27,7 @@ std::vector<std::byte> encode_access_request(const AccessRequest& x) {
     w.append(x.network_id); w.append(x.device_id);
     string(w, x.text, 128); string(w, x.secret, 256);
     w.put<std::uint32_t>(x.lifetime_seconds); w.put<std::uint16_t>(x.max_uses);
+    if(x.action>=AccessAction::password_set) w.put<std::uint8_t>(x.require_approval ? 1 : 0);
     return std::move(w).finish();
 }
 AccessRequest decode_access_request(std::span<const std::byte> payload) {
@@ -36,6 +37,11 @@ AccessRequest decode_access_request(std::span<const std::byte> payload) {
     x.network_id = r.array<16>(); x.device_id = r.array<32>();
     x.text = string(r, 128); x.secret = string(r, 256);
     x.lifetime_seconds = r.get<std::uint32_t>(); x.max_uses = r.get<std::uint16_t>();
+    if(x.action>=AccessAction::password_set) {
+        const auto flag=r.get<std::uint8_t>();
+        if(flag>1) throw std::invalid_argument("invalid approval policy");
+        x.require_approval=flag!=0;
+    }
     r.finish(); static_cast<void>(encode_access_request(x)); return x;
 }
 std::vector<std::byte> encode_access_result(const AccessResult& x) {

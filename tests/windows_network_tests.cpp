@@ -562,6 +562,15 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
         protocol::encode_network_create_request({"Windows Wintun E2E"})));
     require(created.code == protocol::NetworkResultCode::success, "service network creation failed");
     const auto id = created.network_id;
+    wait_for([&]{return peer.client.capabilities().supports(protocol::Capability::password_networks);},"access capability negotiation failed");
+    protocol::AccessRequest access;access.action=protocol::AccessAction::password_set;
+    access.network_id=id;access.secret="Windows package password";
+    require(protocol::decode_access_result(local(protocol::LocalCommand::user_access,protocol::encode_access_request(access))).code==protocol::NetworkResultCode::success,"service password policy failed");
+    access.action=protocol::AccessAction::password_join;access.secret="incorrect password";
+    require(peer.client.access_request(access).code==protocol::NetworkResultCode::permission_denied,"peer bypassed service password policy");
+    access.action=protocol::AccessAction::password_set;access.secret.clear();
+    require(protocol::decode_access_result(local(protocol::LocalCommand::user_access,protocol::encode_access_request(access))).code==protocol::NetworkResultCode::success,"service password removal failed");
+
     require(peer.client.join_network(id).code == protocol::NetworkResultCode::pending_approval,
             "unapproved peer bypassed membership approval");
     wait_for([&] {
