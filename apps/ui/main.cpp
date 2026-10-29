@@ -440,8 +440,9 @@ private:
         if (ImGui::BeginChild("navigation", ImVec2(270, -40), ImGuiChildFlags_Borders)) {
             int language=preferences_.language==lanlink::core::UiLanguage::korean ? 1 : 0;
             const char* languages[]{"English","한국어"};
+            ImGui::TextUnformatted(tr("Language"));
             ImGui::SetNextItemWidth(-1);
-            if(ImGui::Combo(tr("Language"),&language,languages,2)) {
+            if(ImGui::Combo("##language",&language,languages,2)) {
                 preferences_.language=language==1 ? lanlink::core::UiLanguage::korean : lanlink::core::UiLanguage::english;
                 attempt([&]{lanlink::ui::save_preferences(preferences_);});
             }
