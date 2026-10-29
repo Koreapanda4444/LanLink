@@ -74,7 +74,7 @@ void VirtualPacketBridge::synchronize(
             state, network.key, identity->signed_key,
             std::make_shared<auth::NetworkPacketCipher>(
                 state.network_id, state.key_epoch, network.key.key,
-                identity->device_id, identity->signed_key, state.own_address)});
+                identity->device_id, identity->signed_key, state.own_address), {}});
         session->cipher->update_peers(state);
         if (!updated.emplace(state.network_id, std::move(session)).second) {
             throw std::invalid_argument("duplicate virtual packet network");
@@ -97,10 +97,12 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
             const auto& state = candidate->peers;
             const auto mask = 0xffffffffU << (32U - state.prefix_length);
             if (source == state.own_address &&
-                ((destination & mask) == state.subnet_address ||
+                (ipv4_packet[9] == std::byte{2} || (destination & mask) == state.subnet_address ||
                  protocol::is_ipv4_fanout_destination(
                      destination, state.subnet_address, state.prefix_length))) {
                 session = candidate;
+                if (candidate->multicast.observe(ipv4_packet, network::MulticastMembership::Clock::now()) !=
+                    network::MulticastMembership::Report::not_igmp) return;
                 break;
             }
         }
@@ -122,7 +124,17 @@ void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delive
     }
     const auto plaintext = session->cipher->decrypt(delivery.packet,
                                                      delivery.sender_device_id);
+    if (protocol::is_ipv4_multicast(delivery.packet.destination_ipv4)) {
+        std::lock_guard lock(mutex_);
+        if (!session->multicast.receives(delivery.packet.destination_ipv4, read_ipv4(plaintext, 12),
+                                        network::MulticastMembership::Clock::now())) return;
+    }
     inject_(plaintext);
+}
+
+void VirtualPacketBridge::synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups) {
+    std::lock_guard lock(mutex_);
+    for (auto& [id, session] : sessions_) { static_cast<void>(id); session->multicast.synchronize(groups); }
 }
 
 void VirtualPacketBridge::clear() noexcept {

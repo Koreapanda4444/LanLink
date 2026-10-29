@@ -2,6 +2,7 @@
 
 #include "lanlink/auth/packet_crypto.hpp"
 #include "lanlink/session/network_state.hpp"
+#include "lanlink/network/multicast.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -26,6 +27,7 @@ public:
     void outbound(std::span<const std::byte> ipv4_packet);
     void inbound(const protocol::ForwardedNetworkPacket& delivery);
     void clear() noexcept;
+    void synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups);
 
 private:
     struct Session {
@@ -33,6 +35,7 @@ private:
         NetworkKeySnapshot key;
         auth::SignedDeviceKey own_signed_key;
         std::shared_ptr<auth::NetworkPacketCipher> cipher;
+        network::MulticastMembership multicast;
     };
 
     SendHandler send_;

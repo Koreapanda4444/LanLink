@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <exception>
 #include <functional>
+#include <optional>
 #include <span>
+#include <vector>
 
 namespace lanlink::network {
 
@@ -27,6 +29,7 @@ public:
     virtual void inject(std::span<const std::byte> packet) = 0;
     virtual void stop() noexcept = 0;
     [[nodiscard]] virtual std::exception_ptr pump_error() const noexcept = 0;
+    [[nodiscard]] virtual std::optional<std::vector<std::uint32_t>> multicast_groups() const { return std::nullopt; }
 };
 
 }

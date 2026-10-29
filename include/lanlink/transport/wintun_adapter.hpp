@@ -35,6 +35,7 @@ public:
     void inject(std::span<const std::byte> packet) override;
     void stop() noexcept override;
     [[nodiscard]] std::exception_ptr pump_error() const noexcept override;
+    [[nodiscard]] std::optional<std::vector<std::uint32_t>> multicast_groups() const override;
 
 private:
     class Impl;

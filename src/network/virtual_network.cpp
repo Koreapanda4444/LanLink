@@ -86,6 +86,7 @@ void VirtualNetwork::synchronize(const session::NetworkSnapshot& snapshot) {
         installed_.insert_or_assign(id, address);
     }
     state_->bridge->synchronize(snapshot.identity, snapshot.networks);
+    state_->bridge->synchronize_multicast(state_->adapter->multicast_groups());
     for (auto it = installed_.begin(); it != installed_.end();) {
         if (!desired.contains(it->first)) {
             state_->adapter->remove(it->first);

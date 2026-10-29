@@ -147,6 +147,59 @@ void test_bridge(const std::filesystem::path& directory) {
     require(sent.size() == 5, "revoked network stops outbound packets");
 }
 
+void test_multicast() {
+    using Membership = lanlink::network::MulticastMembership;
+    auto now = Membership::Clock::time_point{};
+    Membership membership;
+    constexpr std::uint32_t group = 0xef010203U;
+    constexpr std::uint32_t source = 0x0a400001U;
+    const auto put = [](auto& bytes, std::size_t offset, std::uint32_t value, std::size_t count) {
+        for (std::size_t index = 0; index < count; ++index)
+            bytes[offset + index] = std::byte{static_cast<unsigned char>(value >> ((count - 1 - index) * 8U))};
+    };
+    const auto finish = [&](auto& bytes) {
+        put(bytes, 2, static_cast<std::uint32_t>(bytes.size()), 2);
+        bytes[22] = bytes[23] = std::byte{0};
+        std::uint32_t sum = 0;
+        for (std::size_t index = 20; index < bytes.size(); index += 2)
+            sum += (std::to_integer<unsigned char>(bytes[index]) << 8U) |
+                   std::to_integer<unsigned char>(bytes[index + 1]);
+        while (sum >> 16U) sum = (sum & 0xffffU) + (sum >> 16U);
+        put(bytes, 22, static_cast<std::uint16_t>(~sum), 2);
+    };
+    auto report = ipv4_packet(source, group);
+    report.resize(28);
+    report[8] = std::byte{1}; report[9] = std::byte{2}; report[20] = std::byte{0x16};
+    put(report, 24, group, 4); finish(report);
+    require(!membership.receives(group, source, now), "unjoined administrative multicast is filtered");
+    require(membership.observe(report, now) == Membership::Report::accepted &&
+            membership.receives(group, source, now), "IGMPv2 join enables this group");
+    report[20] = std::byte{0x17}; put(report, 16, 0xe0000002U, 4); finish(report);
+    require(membership.observe(report, now) == Membership::Report::accepted &&
+            !membership.receives(group, source, now), "IGMPv2 leave revokes the group");
+    report.resize(40);
+    report[20] = std::byte{0x22}; put(report, 16, 0xe0000016U, 4);
+    put(report, 24, 0, 2); put(report, 26, 1, 2);
+    report[28] = std::byte{1}; report[29] = std::byte{0};
+    put(report, 30, 1, 2); put(report, 32, group, 4); put(report, 36, source, 4); finish(report);
+    require(membership.observe(report, now) == Membership::Report::accepted &&
+            membership.receives(group, source, now) && !membership.receives(group, source + 1, now),
+            "IGMPv3 INCLUDE filters sources");
+    auto invalid = report; invalid[23] ^= std::byte{1};
+    require(membership.observe(invalid, now) == Membership::Report::rejected &&
+            membership.receives(group, source, now), "bad checksum cannot change membership");
+    invalid = report; invalid[8] = std::byte{2};
+    require(membership.observe(invalid, now) == Membership::Report::rejected,
+            "IGMP must remain link local with TTL one");
+    require(!membership.receives(group, source, now + std::chrono::seconds{261}) &&
+            !membership.receives(0xe0010203U, source, now), "expired and global groups are filtered");
+    membership.synchronize(std::vector<std::uint32_t>{group});
+    require(membership.receives(group, source, now + std::chrono::hours{1}) &&
+            !membership.receives(0xe00000fbU, source, now), "OS membership snapshot is authoritative");
+    membership.synchronize(std::vector<std::uint32_t>{});
+    require(!membership.receives(group, source, now), "OS group leave takes effect without IGMP timers");
+}
+
 }
 
 int main() {
@@ -155,6 +208,7 @@ int main() {
             std::chrono::steady_clock::now().time_since_epoch().count()));
     try {
         std::filesystem::create_directories(directory);
+        test_multicast();
         test_bridge(directory);
         std::filesystem::remove_all(directory);
         std::cout << "all packet bridge tests passed\n";
