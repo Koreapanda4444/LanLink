@@ -33,7 +33,7 @@ int main() {
         network.owner_device_id[0] = std::byte{2};
         network.name = "test-room";
         network.member_count = 1;
-        std::atomic<bool> relay_unavailable{false},paths_available{true};
+        std::atomic<bool> relay_unavailable{false},paths_available{true},games_available{true};
         lanlink::transport::LocalPipeServer server([&](
             const protocol::LocalMessage& request) {
             if (request.command == protocol::LocalCommand::list) {
@@ -58,6 +58,12 @@ int main() {
                 path.lifecycle=protocol::PathLifecycle::authenticated;path.reason=protocol::PathReason::direct_ready;path.rtt_us=900;
                 metrics.peers.push_back({network.network_id,{std::byte{3}},0x0a4d0002,path});
                 return protocol::LocalMessage{request.command,true,false,protocol::encode_path_diagnostics(metrics)};
+            }
+            if (request.command == protocol::LocalCommand::game_diagnostics) {
+                if (!games_available) throw std::runtime_error("unsupported local command");
+                protocol::GameDiagnostics metrics;
+                metrics.networks.push_back({network.network_id, 0x0a4d0001U, 0x0a4d0000U, 24, 1, 7, 8});
+                return protocol::LocalMessage{request.command, true, false, protocol::encode_game_diagnostics(metrics)};
             }
             if (request.command == protocol::LocalCommand::create) {
                 const auto name = protocol::decode_network_create_request(request.payload).name;
@@ -104,6 +110,17 @@ int main() {
         wait_until("peer path diagnostics",[&]{const auto state=model.snapshot();return !state.busy && state.paths && state.paths->peers.size()==1 && state.paths->peers[0].path.kind==protocol::PathKind::direct_quic && state.paths->peers[0].path.rtt_us==900;});
         paths_available=false;model.submit(protocol::LocalCommand::path_diagnostics);
         wait_until("legacy service fallback",[&]{const auto state=model.snapshot();return !state.busy && !state.paths && state.service_online && state.error.empty() && !state.networks.empty();});
+        model.submit(protocol::LocalCommand::game_diagnostics);
+        wait_until("game telemetry", [&] {
+            const auto state = model.snapshot();
+            return !state.busy && state.games && state.games->networks.size() == 1 &&
+                state.games->networks.front().discovery_received == 8;
+        });
+        games_available = false; model.submit(protocol::LocalCommand::game_diagnostics);
+        wait_until("legacy game telemetry fallback", [&] {
+            const auto state = model.snapshot();
+            return !state.busy && !state.games && state.service_online && state.error.empty() && !state.networks.empty();
+        });
         model.submit(protocol::LocalCommand::activity);
         model.submit(protocol::LocalCommand::peers, protocol::encode_network_selection_request({network.network_id}));
         wait_until("desktop peers and requests", [&] {

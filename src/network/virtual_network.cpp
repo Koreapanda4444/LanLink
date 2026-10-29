@@ -110,4 +110,11 @@ void VirtualNetwork::stop() noexcept {
 std::exception_ptr VirtualNetwork::pump_error() const noexcept { return state_->adapter->pump_error(); }
 std::uint64_t VirtualNetwork::rejected_packets() const noexcept { return state_->rejected_packets.load(); }
 
+protocol::GameDiagnostics VirtualNetwork::game_diagnostics() const {
+    auto result = state_->bridge->game_diagnostics();
+    result.rejected_packets = state_->rejected_packets.load();
+    result.adapter_failed = static_cast<bool>(state_->adapter->pump_error());
+    return result;
+}
+
 }

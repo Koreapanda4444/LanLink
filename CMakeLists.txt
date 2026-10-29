@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(LanLink VERSION 0.4.0 LANGUAGES CXX)
+project(LanLink VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,6 +64,7 @@ lanlink_enable_warnings(lanlink_core)
 add_library(lanlink_protocol STATIC
     src/protocol/ipv4.cpp
     src/protocol/game_profiles.cpp
+    src/protocol/game_diagnostics.cpp
     src/network/ethernet.cpp
     src/p2p/candidates.cpp
     src/protocol/path_diagnostics.cpp
@@ -274,6 +275,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_game_diagnostics_tests tests/game_diagnostics_tests.cpp)
+    target_link_libraries(lanlink_game_diagnostics_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_game_diagnostics_tests)
+    add_test(NAME lanlink-game-diagnostics COMMAND lanlink_game_diagnostics_tests)
     add_executable(lanlink_ethernet_tests tests/ethernet_tests.cpp)
     target_link_libraries(lanlink_ethernet_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_ethernet_tests)

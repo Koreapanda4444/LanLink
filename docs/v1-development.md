@@ -1,6 +1,6 @@
 # v1.0 개발 로드맵
 
-첨부 최종 기획서의 60개 커밋을 유지한다. 이번 작업 범위는 01~17이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
+첨부 최종 기획서의 60개 커밋을 유지한다. 현재 작업 범위는 01~25이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
 
 | 번호 | 목표 | 상태 |
 |---|---|---|
@@ -21,14 +21,14 @@
 | 15 | `feat(p2p): add path quality sampling and selection` — RTT·손실·상태 기반 선정, 경로 선택 로그·진단 표시 | 구현 |
 | 16 | `feat(p2p): implement migration and path revalidation` — IP 변경·NIC 전환·일시 단절 후 세션 복구 및 중복 패킷 처리 | 구현 |
 | 17 | `feat(ui): expose direct and relayed peer connection status` — 사용자에게 현재 경로·상태·폴백 사유 노출 | 구현 |
-| 18 | `fix(network): audit and harden existing IPv4 broadcast fanout` — 기존 fanout 구현 재사용, 실제 전달·서브넷·유출 차단 검증 | 대기 |
-| 19 | `feat(network): extend scoped multicast forwarding` — 그룹 범위·참여/탈퇴·TTL·rate-limit 검증 | 대기 |
-| 20 | `feat(discovery): stabilize LAN service discovery over virtual networks` — 범위 한정한 검색 트래픽 라우팅, 중복/폭주 억제 | 대기 |
-| 21 | `feat(discovery): add verified game compatibility profiles` — 확인된 게임에 한해 명시적 프로파일/우회책, 근거 문서 | 대기 |
-| 22 | `fix(network): improve MTU and IPv4 fragmentation handling` — 경로별 MTU 차이/큰 패킷/체크섬 및 연결 무손상 | 대기 |
-| 23 | `fix(network): prevent fanout loops and duplicate injection` — P2P-Relay 전환 시 중복·브로드캐스트 증폭 방지 | 대기 |
-| 24 | `feat(network): add optional platform-specific L2 backend` — 실제 TAP/브리지 기반 선택적 L2, 최소 1개 지원 OS에서 실동작·격리 검증; 불가능한 OS는 명시 | 대기 |
-| 25 | `feat(ui): add game network diagnostics and compatibility guidance` — LAN 검색 실패 원인/방화벽/라우팅/연결 방법 안내 | 대기 |
+| 18 | `fix(network): audit and harden existing IPv4 broadcast fanout` — 기존 fanout 구현 재사용, 실제 전달·서브넷·유출 차단 검증 | 구현 |
+| 19 | `feat(network): extend scoped multicast forwarding` — 그룹 범위·참여/탈퇴·TTL·rate-limit 검증 | 구현 |
+| 20 | `feat(discovery): stabilize LAN service discovery over virtual networks` — 범위 한정한 검색 트래픽 라우팅, 중복/폭주 억제 | 구현 |
+| 21 | `feat(discovery): add verified game compatibility profiles` — 확인된 게임에 한해 명시적 프로파일/우회책, 근거 문서 | 구현 |
+| 22 | `fix(network): improve MTU and IPv4 fragmentation handling` — 경로별 MTU 차이/큰 패킷/체크섬 및 연결 무손상 | 구현 |
+| 23 | `fix(network): prevent fanout loops and duplicate injection` — P2P-Relay 전환 시 중복·브로드캐스트 증폭 방지 | 구현 |
+| 24 | `feat(network): add optional platform-specific L2 backend` — 실제 TAP/브리지 기반 선택적 L2, 최소 1개 지원 OS에서 실동작·격리 검증; 불가능한 OS는 명시 | 구현 |
+| 25 | `feat(ui): add game network diagnostics and compatibility guidance` — LAN 검색 실패 원인/방화벽/라우팅/연결 방법 안내 | 구현 |
 | 26 | `feat(identity): introduce optional user account and device enrollment` — 필수 계정 없이 자체 서버 사용 유지, 장치 등록·폐기 지원 | 대기 |
 | 27 | `feat(directory): add configurable official and self-hosted bootstrap` — 검증 가능한 Directory API·서버 목록 서명/인증·수동 URL 대체 불가 방지 | 대기 |
 | 28 | `feat(network): implement password-protected network joining` — KDF·가입 제한·기존 관리자 승인과 충돌 없는 정책 | 대기 |
@@ -65,7 +65,7 @@
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
-01~17의 자동 검증 대상과 실제 환경 제한은 [v0.4 검증 기록](verification-v0.4.md)에 정리한다. 18~60은 이번 개발 범위에 포함하지 않는다.
+01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
 
 ## 기능별 커밋 SHA
 
@@ -90,3 +90,11 @@
 | 15 | [f9a3f39](https://github.com/Koreapanda4444/LanLink/commit/f9a3f3973763cf2590daab13347ce5396a19841c) |
 | 16 | [b6aacfd](https://github.com/Koreapanda4444/LanLink/commit/b6aacfd34a4905b367ceccce2c7d8ddd8795c4da) |
 | 17 | [bdf4af5](https://github.com/Koreapanda4444/LanLink/commit/bdf4af560b82f4c065e97009b697ce19be00d9a5) |
+| 18 | [2d9d4f8](https://github.com/Koreapanda4444/LanLink/commit/2d9d4f8d641bd478914fca15446026bb7c49d7a6) |
+| 19 | [a18b225](https://github.com/Koreapanda4444/LanLink/commit/a18b225e531cbd86c5428a037ac0c22255bb4f53) |
+| 20 | [ef3a4bb](https://github.com/Koreapanda4444/LanLink/commit/ef3a4bb4b53b128442571bd6ff9739ad090f8e13) |
+| 21 | [9b68eac](https://github.com/Koreapanda4444/LanLink/commit/9b68eac6b5b00ead47aa22bc94a57327022de55d) |
+| 22 | [673f62a](https://github.com/Koreapanda4444/LanLink/commit/673f62a41097c0eae2a010a2a877e6ab9ac17d80) |
+| 23 | [76140a6](https://github.com/Koreapanda4444/LanLink/commit/76140a6632ce72c84eb461b8c6ea1d25a9a63ba8) |
+| 24 | [79dad74](https://github.com/Koreapanda4444/LanLink/commit/79dad74ddebb791c815381dd0cd9dc0d227e1ba5) |
+| 25 | 게임 진단 및 v0.5 메타데이터를 포함한 이 문서의 변경 커밋 |

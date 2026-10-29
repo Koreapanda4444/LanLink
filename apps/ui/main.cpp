@@ -1,5 +1,6 @@
 #include "lanlink/core/component.hpp"
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/game_profiles.hpp"
 #include "network_model.hpp"
 #include "lanlink_resources.h"
 
@@ -339,6 +340,7 @@ private:
             attempt([&] {
                 networks_.submit(protocol::LocalCommand::diagnostics);
                 networks_.submit(protocol::LocalCommand::path_diagnostics);
+                networks_.submit(protocol::LocalCommand::game_diagnostics);
                 networks_.submit(protocol::LocalCommand::activity);
                 if (selected_) networks_.submit(protocol::LocalCommand::peers,
                     protocol::encode_network_selection_request({*selected_}));
@@ -551,6 +553,62 @@ private:
                 } else ImGui::TextWrapped("Waiting for an active network address. The owner may still need to approve this device.");
             }
             ImGui::Spacing();
+            if (ImGui::CollapsingHeader("Game network diagnostics", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (state.games) {
+                    const auto& metrics = *state.games;
+                    ImGui::Text("Virtual adapter MTU: %u  /  Rejected packets: %llu",
+                        static_cast<unsigned>(metrics.mtu), static_cast<unsigned long long>(metrics.rejected_packets));
+                    if (metrics.adapter_failed)
+                        ImGui::TextColored(ImVec4(1, .5f, .4f, 1), "The virtual adapter failed. Restart the LanLink service.");
+                    const auto current = std::find_if(metrics.networks.begin(), metrics.networks.end(),
+                        [&](const auto& item) { return selected_ && item.network_id == *selected_; });
+                    if (current != metrics.networks.end()) {
+                        ImGui::Text("Virtual subnet: %s/%u  /  Online peers: %u",
+                            ipv4(current->subnet).c_str(), static_cast<unsigned>(current->prefix_length), current->online_peers);
+                        ImGui::Text("Discovery: %llu sent / %llu received",
+                            static_cast<unsigned long long>(current->discovery_sent),
+                            static_cast<unsigned long long>(current->discovery_received));
+                        ImGui::TextDisabled("Suppressed: %llu rate limited / %llu duplicates / %llu reflections",
+                            static_cast<unsigned long long>(current->rate_limited),
+                            static_cast<unsigned long long>(current->duplicates),
+                            static_cast<unsigned long long>(current->reflections));
+                        if (!current->online_peers)
+                            ImGui::TextWrapped("No other authenticated device is online. Check that the host joined this network and was approved.");
+                        else if (!current->discovery_received)
+                            ImGui::TextWrapped("No inbound discovery has been observed in this session. Refresh the game's LAN list and check the host's game server and firewall rules.");
+                        if (ImGui::Button("Copy game diagnostics")) {
+                            const auto report = std::string("LanLink game diagnostics\nVirtual IP: ") + ipv4(current->address) +
+                                "\nSubnet: " + ipv4(current->subnet) + "/" + std::to_string(current->prefix_length) +
+                                "\nMTU: " + std::to_string(metrics.mtu) +
+                                "\nOnline peers: " + std::to_string(current->online_peers) +
+                                "\nDiscovery sent/received: " + std::to_string(current->discovery_sent) + "/" +
+                                std::to_string(current->discovery_received) +
+                                "\nRate limited: " + std::to_string(current->rate_limited) +
+                                "\nFirewall/game server status: not measured";
+                            ImGui::SetClipboardText(report.c_str());
+                        }
+                    } else ImGui::TextWrapped("Select an approved network with an active virtual address.");
+                    if (metrics.truncated) ImGui::TextDisabled("Showing a limited number of network diagnostics.");
+                } else ImGui::TextWrapped("Game telemetry is unavailable. Check the background service and use matching UI/service versions.");
+                ImGui::TextWrapped("If LAN search fails, connect to the host's virtual IPv4 and game port. Both devices must use the same game version and virtual network.");
+                ImGui::TextWrapped("Allow the game's required inbound ports on the LanLink adapter. Firewall and game-server rules are not measured automatically.");
+                const auto profiles = protocol::game_profiles();
+                const char* selection = game_profile_ >= 0 && static_cast<std::size_t>(game_profile_) < profiles.size()
+                    ? profiles[static_cast<std::size_t>(game_profile_)].name.data() : "General guidance";
+                if (ImGui::BeginCombo("Game profile", selection)) {
+                    if (ImGui::Selectable("General guidance", game_profile_ == -1)) game_profile_ = -1;
+                    for (std::size_t index = 0; index < profiles.size(); ++index)
+                        if (ImGui::Selectable(profiles[index].name.data(), game_profile_ == static_cast<int>(index)))
+                            game_profile_ = static_cast<int>(index);
+                    ImGui::EndCombo();
+                }
+                if (game_profile_ >= 0 && static_cast<std::size_t>(game_profile_) < profiles.size()) {
+                    const auto& profile = profiles[static_cast<std::size_t>(game_profile_)];
+                    ImGui::Text("Version %s / UDP %u-%u", profile.version.data(),
+                        static_cast<unsigned>(profile.first_port), static_cast<unsigned>(profile.last_port));
+                    ImGui::TextWrapped("%s", profile.guidance.data());
+                }
+            }
             if (ImGui::CollapsingHeader("Connection details", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (state.diagnostics) {
                     const auto& d = *state.diagnostics;
@@ -697,6 +755,7 @@ private:
     std::chrono::steady_clock::time_point next_diagnostics_{};
     std::chrono::steady_clock::time_point last_diagnostics_time_{};
     std::uint64_t last_diagnostics_generation_ = 0;
+    int game_profile_ = -1;
     std::uint64_t last_sent_bytes_ = 0;
     std::uint64_t last_received_bytes_ = 0;
     bool last_tcp_ = false;

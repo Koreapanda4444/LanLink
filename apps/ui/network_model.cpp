@@ -29,14 +29,17 @@ void NetworkModel::submit(const protocol::LocalCommand command,
     if ((command < protocol::LocalCommand::list ||
          command > protocol::LocalCommand::kick) &&
         command != protocol::LocalCommand::diagnostics && command != protocol::LocalCommand::path_diagnostics &&
+        command != protocol::LocalCommand::game_diagnostics &&
         command != protocol::LocalCommand::peers && command != protocol::LocalCommand::activity) {
         throw std::invalid_argument("unsupported desktop network command");
     }
     std::lock_guard lock(mutex_);
     if (stopping_ || (command==protocol::LocalCommand::path_diagnostics && !paths_supported_)) return;
+    if (command == protocol::LocalCommand::game_diagnostics && !games_supported_) return;
     if (command == protocol::LocalCommand::list ||
         command == protocol::LocalCommand::diagnostics || command == protocol::LocalCommand::peers ||
-        command == protocol::LocalCommand::activity || command == protocol::LocalCommand::path_diagnostics) {
+        command == protocol::LocalCommand::activity || command == protocol::LocalCommand::path_diagnostics ||
+        command == protocol::LocalCommand::game_diagnostics) {
         for (const auto& request : pending_) {
             if (request.command == command) return;
         }
@@ -73,11 +76,14 @@ void NetworkModel::process() {
             } else if (request.command == protocol::LocalCommand::diagnostics) {
                 auto diagnostics = protocol::decode_local_diagnostics(response.payload);
                 std::lock_guard lock(mutex_);
-                if(!diagnostics.authenticated)state_.paths.reset();
+                if(!diagnostics.authenticated) { state_.paths.reset(); state_.games.reset(); }
                 state_.diagnostics = std::move(diagnostics);
                 ++state_.diagnostics_generation;
                 state_.service_online = true;
                 state_.error.clear();
+            } else if (request.command == protocol::LocalCommand::game_diagnostics) {
+                auto games = protocol::decode_game_diagnostics(response.payload);
+                std::lock_guard lock(mutex_); state_.games = std::move(games);
             } else if (request.command == protocol::LocalCommand::path_diagnostics) {
                 auto paths=protocol::decode_path_diagnostics(response.payload);
                 std::lock_guard lock(mutex_);state_.paths=std::move(paths);
@@ -112,17 +118,20 @@ void NetworkModel::process() {
             }
         } catch (const std::exception& error) {
             std::lock_guard lock(mutex_);
-            if (request.command != protocol::LocalCommand::peers && request.command != protocol::LocalCommand::activity && request.command != protocol::LocalCommand::path_diagnostics) {
+            if (request.command != protocol::LocalCommand::peers && request.command != protocol::LocalCommand::activity &&
+                request.command != protocol::LocalCommand::path_diagnostics && request.command != protocol::LocalCommand::game_diagnostics) {
                 state_.error = error.what();
                 state_.message.clear();
             }
             if (request.command == protocol::LocalCommand::path_diagnostics) {state_.paths.reset();paths_supported_=false;}
+            if (request.command == protocol::LocalCommand::game_diagnostics) { state_.games.reset(); games_supported_ = false; }
             if (request.command == protocol::LocalCommand::peers) state_.peers.reset();
             if (request.command == protocol::LocalCommand::list) state_.networks.clear();
             if (request.command == protocol::LocalCommand::diagnostics ||
                 (request.command == protocol::LocalCommand::list && !state_.diagnostics)) {
                 state_.service_online = false;
                 state_.diagnostics.reset();state_.paths.reset();paths_supported_=true;
+                state_.games.reset(); games_supported_ = true;
                 state_.peers.reset();
                 state_.activity = {};
             }

@@ -153,6 +153,10 @@ void test_bridge(const std::filesystem::path& directory) {
         require(sent.size() == before, "injected fanout cannot re-enter the encrypted path");
     }
     require(member_bridge.reflected_packets() == 4, "fanout reflections are counted across TTL changes");
+    const auto diagnostics = member_bridge.game_diagnostics();
+    require(diagnostics.networks.size() == 1 && diagnostics.networks.front().reflections == 4 &&
+            diagnostics.networks.front().discovery_received > 0,
+            "game diagnostics did not report real fanout traffic");
 
     member_bridge.synchronize(std::nullopt, {});
     member_bridge.inbound({owner.device_id(), sent[1]});

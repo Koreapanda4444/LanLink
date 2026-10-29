@@ -2,6 +2,7 @@
 
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/path_diagnostics.hpp"
+#include "lanlink/protocol/game_diagnostics.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,7 @@ enum class LocalCommand : std::uint8_t {
     peers = 11,
     activity = 12,
     path_diagnostics = 13,
+    game_diagnostics = 14,
 };
 
 struct LocalActivity {

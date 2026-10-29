@@ -573,6 +573,12 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
     peer.attach(id);
     application_roundtrip(peer, owner_ip, peer_ip);
     fanout(peer, outsider, owner_ip);
+    const auto game_metrics = protocol::decode_game_diagnostics(local(protocol::LocalCommand::game_diagnostics));
+    require(!game_metrics.adapter_failed && game_metrics.mtu == 1400 &&
+        std::any_of(game_metrics.networks.begin(), game_metrics.networks.end(), [&](const auto& item) {
+            return item.network_id == id && item.address == owner_ip && item.online_peers == 1 &&
+                item.discovery_received > 0;
+        }), "service game diagnostics did not report the active Wintun network and real discovery traffic");
 
     command(root, 1, "service-stop");
     wait_for([&] { return !address_luid(owner_ip); }, "service stop did not remove its virtual address");

@@ -11,7 +11,7 @@ constexpr std::byte magic[]{std::byte{'L'}, std::byte{'L'},
                             std::byte{'C'}, std::byte{'P'}};
 
 bool valid_command(const LocalCommand command) {
-    return command >= LocalCommand::status && command <= LocalCommand::path_diagnostics;
+    return command >= LocalCommand::status && command <= LocalCommand::game_diagnostics;
 }
 
 

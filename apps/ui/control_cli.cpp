@@ -74,6 +74,7 @@ lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     if (action == L"stop") return LocalCommand::stop;
     if (action == L"diagnostics") return LocalCommand::diagnostics;
     if (action == L"paths") return LocalCommand::path_diagnostics;
+    if (action == L"game") return LocalCommand::game_diagnostics;
     throw std::invalid_argument("unknown local control command");
 }
 
@@ -90,6 +91,7 @@ int wmain(const int argc, wchar_t* argv[]) {
         case protocol::LocalCommand::stop:
         case protocol::LocalCommand::diagnostics:
         case protocol::LocalCommand::path_diagnostics:
+        case protocol::LocalCommand::game_diagnostics:
             if (argc != 1 && argc != 2) {
                 throw std::invalid_argument("status, stop and diagnostics take no arguments");
             }
@@ -158,6 +160,17 @@ int wmain(const int argc, wchar_t* argv[]) {
             if (path.retransmitted_packets) std::cout << *path.retransmitted_packets;
             else std::cout << "unavailable";
             std::cout << '\n';
+        } else if (command == protocol::LocalCommand::game_diagnostics) {
+            const auto metrics = protocol::decode_game_diagnostics(response.payload);
+            std::cout << "virtual MTU: " << metrics.mtu << "\nadapter failed: " << metrics.adapter_failed
+                      << "\nrejected packets: " << metrics.rejected_packets << '\n';
+            for (const auto& item : metrics.networks)
+                std::cout << hex_id(item.network_id) << " online peers=" << item.online_peers
+                          << " discovery sent=" << item.discovery_sent << " received=" << item.discovery_received
+                          << " rate limited=" << item.rate_limited << " duplicates=" << item.duplicates
+                          << " reflections=" << item.reflections << '\n';
+            if (metrics.truncated) std::cout << "network diagnostics truncated\n";
+            std::cout << "Try the host virtual IPv4:port if LAN search fails. Check the game's inbound firewall rules.\n";
         } else if (command == protocol::LocalCommand::diagnostics) {
             const auto metrics = protocol::decode_local_diagnostics(response.payload);
             std::cout << "connected: " << metrics.connected

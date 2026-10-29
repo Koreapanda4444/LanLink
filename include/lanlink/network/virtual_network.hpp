@@ -3,6 +3,7 @@
 #include "lanlink/network/virtual_adapter.hpp"
 #include "lanlink/session/network_state.hpp"
 #include "lanlink/transport/packet_path.hpp"
+#include "lanlink/protocol/game_diagnostics.hpp"
 
 #include <map>
 #include <memory>
@@ -24,6 +25,7 @@ public:
     void stop() noexcept;
     [[nodiscard]] std::exception_ptr pump_error() const noexcept;
     [[nodiscard]] std::uint64_t rejected_packets() const noexcept;
+    [[nodiscard]] protocol::GameDiagnostics game_diagnostics() const;
 
 private:
     struct State;

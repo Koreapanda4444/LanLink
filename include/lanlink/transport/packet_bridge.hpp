@@ -5,6 +5,7 @@
 #include "lanlink/network/multicast.hpp"
 #include "lanlink/network/lan_discovery.hpp"
 #include "lanlink/network/packet_history.hpp"
+#include "lanlink/protocol/game_diagnostics.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -32,6 +33,7 @@ public:
     void synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups);
     void set_mtu(std::uint16_t mtu);
     [[nodiscard]] std::uint64_t reflected_packets() const;
+    [[nodiscard]] protocol::GameDiagnostics game_diagnostics() const;
 
 private:
     struct Session {

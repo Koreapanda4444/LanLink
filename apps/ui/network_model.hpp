@@ -25,6 +25,7 @@ struct NetworkSnapshot {
     std::uint64_t diagnostics_generation = 0;
     std::optional<protocol::NetworkPeerState> peers;
     std::optional<protocol::PathDiagnostics> paths;
+    std::optional<protocol::GameDiagnostics> games;
     protocol::LocalActivity activity;
 };
 
@@ -47,6 +48,7 @@ private:
     std::deque<protocol::LocalMessage> pending_;
     NetworkSnapshot state_;
     bool paths_supported_=true;
+    bool games_supported_ = true;
     bool stopping_ = false;
     std::thread worker_;
 };

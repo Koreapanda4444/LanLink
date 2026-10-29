@@ -211,6 +211,11 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 payload = protocol::encode_path_diagnostics(metrics);
                 break;
             }
+            case protocol::LocalCommand::game_diagnostics: {
+                if (!request.payload.empty()) throw std::invalid_argument("game diagnostics does not accept a payload");
+                payload = protocol::encode_game_diagnostics(network.game_diagnostics());
+                break;
+            }
             case protocol::LocalCommand::diagnostics: {
                 if (!request.payload.empty()) {
                     throw std::invalid_argument("diagnostics does not accept a payload");

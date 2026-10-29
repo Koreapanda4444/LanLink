@@ -187,6 +187,34 @@ std::uint64_t VirtualPacketBridge::reflected_packets() const {
     return count;
 }
 
+protocol::GameDiagnostics VirtualPacketBridge::game_diagnostics() const {
+    std::lock_guard lock(mutex_);
+    protocol::GameDiagnostics result;
+    result.mtu = mtu_;
+    for (const auto& [id, session] : sessions_) {
+        if (result.networks.size() == protocol::max_game_diagnostic_networks) {
+            result.truncated = true; break;
+        }
+        protocol::GameNetworkStatus item;
+        item.network_id = id; item.address = session->peers.own_address;
+        item.subnet = session->peers.subnet_address; item.prefix_length = session->peers.prefix_length;
+        item.online_peers = static_cast<std::uint32_t>(std::count_if(
+            session->peers.peers.begin(), session->peers.peers.end(),
+            [](const auto& peer) { return peer.signed_key.has_value(); }));
+        const auto outgoing = session->outbound_discovery.counters();
+        item.discovery_sent = outgoing.forwarded; item.rate_limited = outgoing.rate_limited;
+        item.duplicates = outgoing.duplicate; item.invalid = outgoing.invalid; item.reflections = session->reflected;
+        for (const auto& [peer, guard] : session->inbound_discovery) {
+            static_cast<void>(peer);
+            const auto incoming = guard.counters();
+            item.discovery_received += incoming.forwarded; item.rate_limited += incoming.rate_limited;
+            item.duplicates += incoming.duplicate; item.invalid += incoming.invalid;
+        }
+        result.networks.push_back(item);
+    }
+    return result;
+}
+
 void VirtualPacketBridge::set_mtu(const std::uint16_t mtu) {
     if (mtu < 68) throw std::invalid_argument("virtual MTU is below 68");
     std::lock_guard lock(mutex_); mtu_ = mtu;

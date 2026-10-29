@@ -35,4 +35,4 @@ Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux 
 
 ## v1.0 개발
 
-현재 소스는 v0.4.0 마일스톤(기획서 Commit 01~17)이다. 승인된 멤버 사이의 Direct QUIC, Relay 폴백, 경로 재탐색과 피어별 경로 표시를 포함한다. 공개 안정판 v0.2.2의 설정·장치 ID와 Relay 경로를 유지하며 개발 아티팩트는 공개 Release와 구분한다. [60개 커밋 로드맵](docs/v1-development.md), [P2P 설정](docs/p2p.md), [검증 범위](docs/verification-v0.4.md), [빌드 구성](docs/building.md)을 참고한다.
+현재 소스는 v0.5.0 마일스톤(기획서 Commit 01~25)이다. Direct QUIC/Relay 경로에 더해 제한된 broadcast·multicast 검색, MTU/조각 처리, 중복·반사 방지와 게임별 진단을 포함한다. Linux에는 [선택적 TAP Ethernet 모드](docs/l2.md)를 제공하며 Windows/macOS L2는 지원하지 않는다. 공개 안정판 v0.2.2의 설정·장치 ID와 Relay 경로를 유지하며 개발 아티팩트는 공개 Release와 구분한다. [60개 커밋 로드맵](docs/v1-development.md), [P2P 설정](docs/p2p.md), [검증 범위](docs/verification-v0.5.md), [게임 호환성](docs/game-compatibility.md), [빌드 구성](docs/building.md)을 참고한다.
