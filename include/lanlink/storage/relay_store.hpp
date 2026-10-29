@@ -16,7 +16,7 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 5;
+inline constexpr int current_schema_version = 6;
 inline constexpr std::uint32_t virtual_ipv4_pool_first = 0x0a400000U;
 inline constexpr std::uint32_t virtual_ipv4_pool_end = 0x0a800000U;
 inline constexpr std::uint32_t virtual_ipv4_subnet_size = 256;
@@ -171,6 +171,11 @@ public:
     [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_device(
         const auth::DeviceId& device_id) const;
 
+    void issue_invite_link(const NetworkId& network, const auth::DeviceId& digest,
+        std::int64_t now_ms, std::int64_t expires_ms, std::uint16_t max_uses);
+    [[nodiscard]] bool redeem_invite_link(const NetworkId& network, const auth::DeviceId& digest,
+        const auth::DeviceId& actor, std::int64_t now_ms);
+    void revoke_invite_links(const NetworkId& network);
     [[nodiscard]] std::optional<auth::PasswordVerifier> network_password(const NetworkId& network) const;
     void set_network_password(const NetworkId& network, const std::optional<auth::PasswordVerifier>& password);
     [[nodiscard]] bool device_revoked(const auth::DeviceId& device) const;

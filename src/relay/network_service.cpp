@@ -1,5 +1,6 @@
 #include "lanlink/relay/network_service.hpp"
 #include "lanlink/auth/access_secret.hpp"
+#include "lanlink/protocol/join_target.hpp"
 #include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 
@@ -234,6 +235,36 @@ protocol::AccessResult NetworkService::access_request(const auth::DeviceId& acto
         }
         active_keys_.erase(request.device_id);
         result.account_id=account->id; return result;
+    }
+    if(request.action>=protocol::AccessAction::invite_issue) {
+        result.network_id=request.network_id;
+        if(!allow_access_attempt(actor,request.network_id)){result.code=protocol::NetworkResultCode::limit_reached;return result;}
+        const auto network=store_.find_network(request.network_id);
+        if(request.action!=protocol::AccessAction::invite_redeem) {
+            if(!network || network->owner_device_id!=actor){result.code=protocol::NetworkResultCode::permission_denied;return result;}
+            if(request.action==protocol::AccessAction::invite_revoke){store_.revoke_invite_links(request.network_id);return result;}
+            if(request.lifetime_seconds<60 || request.lifetime_seconds>86400 || !request.max_uses || request.max_uses>100) {
+                result.code=protocol::NetworkResultCode::invalid_request;return result;
+            }
+            const auto code=auth::random_access_code();
+            store_.issue_invite_link(request.network_id,auth::access_digest(code),now_ms,
+                now_ms+static_cast<std::int64_t>(request.lifetime_seconds)*1000,request.max_uses);
+            result.secret=protocol::make_invite_link(request.network_id,code);
+            result.text=protocol::make_invite_code(request.network_id,code);return result;
+        }
+        if(!network || request.secret.size()!=40) {result.code=protocol::NetworkResultCode::permission_denied;return result;}
+        if(store_.find_virtual_ipv4_lease(request.network_id,actor)){result.code=protocol::NetworkResultCode::already_exists;return result;}
+        if(network_limit_reached(store_,actor) || store_.list_members(request.network_id).size()>=protocol::max_network_peer_entries+1) {
+            result.code=protocol::NetworkResultCode::limit_reached;return result;
+        }
+        if(!store_.redeem_invite_link(request.network_id,auth::access_digest(request.secret),actor,now_ms)) {
+            result.code=protocol::NetworkResultCode::permission_denied;return result;
+        }
+        const auto joined=join_network_locked(actor,{request.network_id},now_ms,false);
+        result.code=joined.result.code;
+        if(changes)*changes=joined.peer_changes;
+        if(events)*events=joined.events;
+        return result;
     }
     if(request.action==protocol::AccessAction::password_set || request.action==protocol::AccessAction::password_join) {
         result.network_id=request.network_id;

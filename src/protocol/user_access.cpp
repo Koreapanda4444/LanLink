@@ -5,7 +5,7 @@
 namespace lanlink::protocol {
 namespace {
 void action(AccessAction a) {
-    if (a < AccessAction::account_create || a > AccessAction::password_join)
+    if (a < AccessAction::account_create || a > AccessAction::invite_revoke)
         throw std::invalid_argument("unknown access action");
 }
 void string(BinaryWriter& w, const std::string& s, std::size_t limit) {

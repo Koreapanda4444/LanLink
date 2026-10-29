@@ -10,10 +10,10 @@ namespace lanlink::protocol {
 
 inline constexpr std::uint32_t capability_request_id = 0xffffffffU;
 enum class Capability : std::uint64_t {
-    negotiation = 1, structured_diagnostics = 2, peer_candidates = 4, direct_quic = 8, candidate_generations = 16, user_accounts = 32, password_networks = 64,
+    negotiation = 1, structured_diagnostics = 2, peer_candidates = 4, direct_quic = 8, candidate_generations = 16, user_accounts = 32, password_networks = 64, invitation_codes = 128,
 };
 inline constexpr std::uint64_t supported_capabilities = static_cast<std::uint64_t>(Capability::negotiation) |
-    static_cast<std::uint64_t>(Capability::structured_diagnostics) | static_cast<std::uint64_t>(Capability::peer_candidates) | static_cast<std::uint64_t>(Capability::direct_quic) | static_cast<std::uint64_t>(Capability::candidate_generations) | static_cast<std::uint64_t>(Capability::user_accounts) | static_cast<std::uint64_t>(Capability::password_networks);
+    static_cast<std::uint64_t>(Capability::structured_diagnostics) | static_cast<std::uint64_t>(Capability::peer_candidates) | static_cast<std::uint64_t>(Capability::direct_quic) | static_cast<std::uint64_t>(Capability::candidate_generations) | static_cast<std::uint64_t>(Capability::user_accounts) | static_cast<std::uint64_t>(Capability::password_networks) | static_cast<std::uint64_t>(Capability::invitation_codes);
 
 struct CapabilityOffer {
     std::uint16_t minimum_version = protocol_version;

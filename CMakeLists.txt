@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/join_target.cpp
     src/protocol/user_access.cpp
     src/protocol/ipv4.cpp
     src/protocol/game_profiles.cpp
@@ -284,6 +285,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_invitation_tests tests/invitation_tests.cpp)
+    target_link_libraries(lanlink_invitation_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_invitation_tests)
+    add_test(NAME lanlink-invitation COMMAND lanlink_invitation_tests)
     add_executable(lanlink_password_join_tests tests/password_join_tests.cpp)
     target_link_libraries(lanlink_password_join_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_password_join_tests)

@@ -1,6 +1,7 @@
 #include "lanlink/core/component.hpp"
 #include "lanlink/protocol/local_control.hpp"
 #include "lanlink/protocol/user_access.hpp"
+#include "lanlink/protocol/join_target.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/transport/local_pipe.hpp"
 
@@ -65,6 +66,7 @@ std::string hex_id(const std::span<const std::byte> id) {
 
 lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     using lanlink::protocol::LocalCommand;
+    if (action == L"invite-link" || action == L"revoke-links") return LocalCommand::user_access;
     if (action == L"password" || action == L"join-password") return LocalCommand::user_access;
     if (action == L"account") return LocalCommand::user_access;
     if (action == L"status") return LocalCommand::status;
@@ -108,6 +110,11 @@ int wmain(const int argc, wchar_t* argv[]) {
             if (argc<3) throw std::invalid_argument("account requires status/create/issue/enroll/revoke");
             const std::wstring_view operation=argv[2];
             protocol::AccessRequest access;
+            if(action==L"invite-link" || action==L"revoke-links") {
+                if(argc!=3) throw std::invalid_argument("invite-link/revoke-links requires a network ID");
+                access.network_id=parse_id<16>(argv[2]);access.action=action==L"invite-link" ? protocol::AccessAction::invite_issue : protocol::AccessAction::invite_revoke;
+                access.lifetime_seconds=900;request.payload=protocol::encode_access_request(access);break;
+            }
             if(action==L"password" || action==L"join-password") {
                 if(argc!=3 && !(action==L"password" && argc==4 && std::wstring_view(argv[3])==L"approve")) throw std::invalid_argument("password/join-password requires a network ID; password optionally accepts approve");
                 access.network_id=parse_id<16>(argv[2]);
@@ -137,8 +144,15 @@ int wmain(const int argc, wchar_t* argv[]) {
         case protocol::LocalCommand::join:
         case protocol::LocalCommand::leave:
             if (argc != 3) throw std::invalid_argument("join/leave requires a network ID");
-            request.payload = protocol::encode_network_selection_request(
-                {parse_id<protocol::network_id_size>(argv[2])});
+            if(command==protocol::LocalCommand::join) {
+                const auto target=protocol::parse_join_target(utf8(argv[2]));
+                if(!target.invitation.empty()) {
+                    protocol::AccessRequest access;access.action=protocol::AccessAction::invite_redeem;
+                    access.network_id=target.network_id;access.secret=target.invitation;
+                    request.command=protocol::LocalCommand::user_access;request.payload=protocol::encode_access_request(access);break;
+                }
+                request.payload=protocol::encode_network_selection_request({target.network_id});
+            } else request.payload=protocol::encode_network_selection_request({parse_id<protocol::network_id_size>(argv[2])});
             break;
         case protocol::LocalCommand::invite:
         case protocol::LocalCommand::approve:
@@ -155,12 +169,16 @@ int wmain(const int argc, wchar_t* argv[]) {
         const auto response = lanlink::transport::local_pipe_request(request);
         std::cout << "LanLink " << lanlink::core::component_name(
             lanlink::core::Component::ui) << " " << lanlink::core::project_version() << '\n';
-        if (command == protocol::LocalCommand::user_access) {
+        if (request.command == protocol::LocalCommand::user_access) {
             const auto result=protocol::decode_access_result(response.payload);
             std::cout << protocol::network_result_code_name(result.code) << '\n';
             if (result.code!=protocol::NetworkResultCode::success) return EXIT_FAILURE;
-            std::cout << "Account: " << result.text << " " << hex_id(result.account_id) << '\n';
-            if (!result.secret.empty()) std::cout << "Enrollment code (5 minutes, one use): " << result.secret << '\n';
+            if(result.action>=protocol::AccessAction::invite_issue) {
+                if(!result.secret.empty()) std::cout << "Invitation link: " << result.secret << "\nInvitation code: " << result.text << '\n';
+            } else {
+                std::cout << "Account: " << result.text << " " << hex_id(result.account_id) << '\n';
+                if (!result.secret.empty()) std::cout << "Enrollment code (5 minutes, one use): " << result.secret << '\n';
+            }
             for (const auto& device:result.devices) std::cout << hex_id(device.device_id) << " " << device.label << (device.revoked ? " [revoked]" : "") << '\n';
         } else if (command == protocol::LocalCommand::status) {
             if (response.payload.size() != 8 || response.payload[3] != std::byte{0}) {

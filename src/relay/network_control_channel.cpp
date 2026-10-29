@@ -225,7 +225,8 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
         if (!service_.device_allowed(actor)) return {error_response(request.request_id), {}};
         if (request.type == protocol::MessageType::user_access_request) {
             const auto access=protocol::decode_access_request(request.payload);
-            const auto required=access.action>=protocol::AccessAction::password_set ? protocol::Capability::password_networks : protocol::Capability::user_accounts;
+            const auto required=access.action>=protocol::AccessAction::invite_issue ? protocol::Capability::invitation_codes :
+                access.action>=protocol::AccessAction::password_set ? protocol::Capability::password_networks : protocol::Capability::user_accounts;
             if (!capabilities(actor).supports(required)) return {error_response(request.request_id), {}};
             std::vector<RoutedPeerStateChange> changes;
             std::vector<RoutedNetworkEvent> network_events;

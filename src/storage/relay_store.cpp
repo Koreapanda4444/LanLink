@@ -1001,6 +1001,31 @@ public:
         return result;
     }
 
+    void issue_invite_link(const NetworkId& network,const auth::DeviceId& digest,
+        std::int64_t now_ms,std::int64_t expires_ms,std::uint16_t max_uses) {
+        if(expires_ms<=now_ms || expires_ms-now_ms>86400000 || !max_uses || max_uses>100) throw std::invalid_argument("invalid invitation policy");
+        std::lock_guard lock(mutex_);Transaction transaction(database_,true);
+        Statement clean(database_,"DELETE FROM invitation_links WHERE expires_ms<=? OR remaining=0;");clean.bind_integer(1,now_ms);clean.step_done();
+        Statement count(database_,"SELECT COUNT(*) FROM invitation_links WHERE network_id=?;");count.bind_blob(1,network.data(),network.size());
+        if(!count.step_row() || count.column_integer(0)>=64) throw std::length_error("invitation limit reached");
+        Statement q(database_,"INSERT INTO invitation_links(digest,network_id,expires_ms,remaining) VALUES(?,?,?,?);");
+        q.bind_blob(1,digest.data(),digest.size());q.bind_blob(2,network.data(),network.size());q.bind_integer(3,expires_ms);q.bind_integer(4,max_uses);q.step_done();transaction.commit();
+    }
+    [[nodiscard]] bool redeem_invite_link(const NetworkId& network,const auth::DeviceId& digest,
+        const auth::DeviceId& actor,std::int64_t now_ms) {
+        std::lock_guard lock(mutex_);Transaction transaction(database_,true);
+        Statement q(database_,"SELECT remaining FROM invitation_links WHERE network_id=? AND digest=? AND expires_ms>? AND remaining>0;");
+        q.bind_blob(1,network.data(),network.size());q.bind_blob(2,digest.data(),digest.size());q.bind_integer(3,now_ms);
+        if(!q.step_row()) return false;
+        Statement pending(database_,"DELETE FROM network_join_requests WHERE network_id=? AND device_id=?;");
+        pending.bind_blob(1,network.data(),network.size());pending.bind_blob(2,actor.data(),actor.size());pending.step_done();
+        Statement grant(database_,"INSERT OR IGNORE INTO network_invitations(network_id,device_id,invited_at_ms) VALUES(?,?,?);");
+        grant.bind_blob(1,network.data(),network.size());grant.bind_blob(2,actor.data(),actor.size());grant.bind_integer(3,now_ms);grant.step_done();
+        Statement use(database_,"UPDATE invitation_links SET remaining=remaining-1 WHERE digest=?;");use.bind_blob(1,digest.data(),digest.size());use.step_done();transaction.commit();return true;
+    }
+    void revoke_invite_links(const NetworkId& network) {
+        std::lock_guard lock(mutex_);Statement q(database_,"DELETE FROM invitation_links WHERE network_id=?;");q.bind_blob(1,network.data(),network.size());q.step_done();
+    }
     [[nodiscard]] std::optional<auth::PasswordVerifier> network_password(const NetworkId& network) const {
         std::lock_guard lock(mutex_);
         Statement q(database_,"SELECT salt,digest,require_approval FROM network_access WHERE network_id=?;");
@@ -1198,6 +1223,14 @@ private:
                 "salt BLOB NOT NULL CHECK(length(salt)=32),digest BLOB NOT NULL CHECK(length(digest)=32),"
                 "require_approval INTEGER NOT NULL CHECK(require_approval IN(0,1)));PRAGMA user_version=5;");
             transaction.commit(); version=5;
+        }
+        if(version==5) {
+            Transaction transaction(database_,true);
+            execute(database_,"CREATE TABLE invitation_links(digest BLOB PRIMARY KEY NOT NULL CHECK(length(digest)=32),"
+                "network_id BLOB NOT NULL REFERENCES networks(network_id) ON DELETE CASCADE,"
+                "expires_ms INTEGER NOT NULL,remaining INTEGER NOT NULL CHECK(remaining BETWEEN 0 AND 100));"
+                "CREATE INDEX invitation_links_network_idx ON invitation_links(network_id);PRAGMA user_version=6;");
+            transaction.commit();version=6;
         }
         if (version != current_schema_version) {
             throw std::runtime_error("relay database has an unsupported schema version");
@@ -1425,6 +1458,8 @@ private:
     }
 
     void validate_schema() {
+        if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='invitation_links';")!=1)
+            throw std::runtime_error("relay invitation schema is incomplete");
         if (query_integer(database_, "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN('accounts','account_devices','device_enrollment');")!=3)
             throw std::runtime_error("relay account schema is incomplete");
         if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='network_access';")!=1)
@@ -1581,6 +1616,9 @@ std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_device(
     return impl_->list_join_requests_for_device(device_id);
 }
 
+void RelayStore::issue_invite_link(const NetworkId& n,const auth::DeviceId& h,std::int64_t now,std::int64_t expires,std::uint16_t uses){impl_->issue_invite_link(n,h,now,expires,uses);}
+bool RelayStore::redeem_invite_link(const NetworkId& n,const auth::DeviceId& h,const auth::DeviceId& d,std::int64_t now){return impl_->redeem_invite_link(n,h,d,now);}
+void RelayStore::revoke_invite_links(const NetworkId& n){impl_->revoke_invite_links(n);}
 std::optional<auth::PasswordVerifier> RelayStore::network_password(const NetworkId& n) const { return impl_->network_password(n); }
 void RelayStore::set_network_password(const NetworkId& n,const std::optional<auth::PasswordVerifier>& p) { impl_->set_network_password(n,p); }
 bool RelayStore::device_revoked(const auth::DeviceId& d) const { return impl_->device_revoked(d); }
