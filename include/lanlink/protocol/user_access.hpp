@@ -5,7 +5,7 @@ namespace lanlink::protocol {
 enum class AccessAction : std::uint8_t {
     account_create = 1, account_status = 2, enrollment_issue = 3,
     device_enroll = 4, device_revoke = 5, password_set = 6, password_join = 7,
-    invite_issue = 8, invite_redeem = 9, invite_revoke = 10,
+    invite_issue = 8, invite_redeem = 9, invite_revoke = 10, network_create_protected = 11,
 };
 struct AccountDevice {
     auth::DeviceId device_id{};

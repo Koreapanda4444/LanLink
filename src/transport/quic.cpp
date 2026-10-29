@@ -1335,7 +1335,7 @@ public:
 
     [[nodiscard]] protocol::AccessResult access_request(const protocol::AccessRequest& request,
         const std::chrono::milliseconds timeout) {
-        const auto required=request.action>=protocol::AccessAction::invite_issue ? protocol::Capability::invitation_codes :
+        const auto required=(request.action>=protocol::AccessAction::invite_issue && request.action<=protocol::AccessAction::invite_revoke) ? protocol::Capability::invitation_codes :
                 request.action>=protocol::AccessAction::password_set ? protocol::Capability::password_networks : protocol::Capability::user_accounts;
         if (!capabilities().supports(required))
             throw std::runtime_error("This relay does not support the requested access feature.");

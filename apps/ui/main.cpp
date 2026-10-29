@@ -2,6 +2,7 @@
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/game_profiles.hpp"
 #include "network_model.hpp"
+#include "lanlink/protocol/network_workflow.hpp"
 #include "lanlink_resources.h"
 
 #include <d3d11.h>
@@ -349,6 +350,25 @@ private:
             next_diagnostics_ = now + std::chrono::seconds{2};
         }
         const auto state = networks_.snapshot();
+        if(state.operation_generation!=operation_generation_ && state.last_operation) {
+            operation_generation_=state.operation_generation;
+            const auto& operation=*state.last_operation;
+            if(operation.code==protocol::NetworkResultCode::success || operation.code==protocol::NetworkResultCode::pending_approval) {
+                if(operation.operation==protocol::NetworkOperation::create)close_create_=true;
+                if(operation.operation==protocol::NetworkOperation::join)close_join_=true;
+                if(operation.code==protocol::NetworkResultCode::success)selection_hint_=operation.network_id;
+            }
+        }
+        if(selection_hint_ && std::any_of(state.networks.begin(),state.networks.end(),[&](const auto& n){return n.network_id==*selection_hint_;})) {
+            selected_=selection_hint_;selection_hint_.reset();
+        }
+        if(state.access_generation!=access_generation_ && state.access) {
+            access_generation_=state.access_generation;
+            if(state.access->action==protocol::AccessAction::invite_issue && state.access->code==protocol::NetworkResultCode::success) {
+                invitation_link_=state.access->secret;invitation_code_=state.access->text;invitation_network_=state.access->network_id;
+            }
+            if(state.access->action==protocol::AccessAction::invite_revoke && state.access->code==protocol::NetworkResultCode::success){invitation_link_.clear();invitation_code_.clear();}
+        }
         if (selected_ && std::none_of(state.networks.begin(), state.networks.end(),
                 [&](const auto& network) { return network.network_id == *selected_; })) selected_.reset();
         if (!selected_ && !state.networks.empty()) {
@@ -458,11 +478,29 @@ private:
                 if (ImGui::Button("Copy network ID")) ImGui::SetClipboardText(id.c_str());
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!connected || state.busy);
+                if(owner && ImGui::Button("Create invitation")) attempt([&]{
+                    protocol::AccessRequest r;r.action=protocol::AccessAction::invite_issue;r.network_id=selected->network_id;
+                    r.lifetime_seconds=900;r.max_uses=1;
+                    networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));
+                });
+                if(owner)ImGui::SameLine();
                 if (ImGui::Button("Leave network")) {
                     confirmation_ = protocol::LocalCommand::leave;
                     confirmation_payload_ = protocol::encode_network_selection_request({selected->network_id});
                     confirmation_text_ = "Leave this network? You will need approval to join it again.";
                     confirm_dialog_ = true;
+                }
+                ImGui::EndDisabled();
+                if(owner && invitation_network_==selected->network_id && !invitation_link_.empty()) {
+                    ImGui::TextWrapped("Invitation: one use, expires in 15 minutes. Share it privately.");
+                    if(ImGui::Button("Copy invitation link"))ImGui::SetClipboardText(invitation_link_.c_str());
+                    ImGui::SameLine();if(ImGui::Button("Copy invitation code"))ImGui::SetClipboardText(invitation_code_.c_str());
+                }
+                ImGui::BeginDisabled(!connected || state.busy);
+                if(owner && ImGui::SmallButton("Revoke invitation links")) {
+                    protocol::AccessRequest r;r.action=protocol::AccessAction::invite_revoke;r.network_id=selected->network_id;
+                    confirmation_=protocol::LocalCommand::user_access;confirmation_payload_=protocol::encode_access_request(r);
+                    confirmation_text_="Revoke all unused invitation links for this network?";confirm_dialog_=true;
                 }
                 ImGui::EndDisabled();
                 if (state.peers && state.peers->network_id == selected->network_id) {
@@ -634,34 +672,45 @@ private:
         else if (!state.error.empty()) ImGui::TextColored(ImVec4(1, .5f, .4f, 1), "%s", state.error.c_str());
         else if (!state.message.empty()) ImGui::TextUnformatted(state.message.c_str());
         else ImGui::TextDisabled("The background service keeps your networks connected when this window is closed.");
-        if (create_dialog_) { ImGui::OpenPopup("Create network"); create_dialog_ = false; }
-        if (join_dialog_) { ImGui::OpenPopup("Join network"); join_dialog_ = false; }
+        if (create_dialog_) { close_create_=false;ImGui::OpenPopup("Create network"); create_dialog_ = false; }
+        if (join_dialog_) { close_join_=false;ImGui::OpenPopup("Join network"); join_dialog_ = false; }
         if (confirm_dialog_) { ImGui::OpenPopup("Confirm network change"); confirm_dialog_ = false; }
         if (ImGui::BeginPopupModal("Create network", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted("Name your private network.");
             ImGui::SetNextItemWidth(380);
             ImGui::InputTextWithHint("##name", "Network name", name_.data(), name_.size());
+            ImGui::SetNextItemWidth(380);
+            ImGui::InputTextWithHint("##createpassword","Password (optional)",create_password_.data(),create_password_.size(),ImGuiInputTextFlags_Password);
+            if(create_password_[0])ImGui::Checkbox("Require owner approval",&require_approval_);
             ImGui::BeginDisabled(!connected || state.busy || name_[0] == 0);
             if (ImGui::Button("Create", ImVec2(180, 0))) {
-                attempt([&] { networks_.submit(protocol::LocalCommand::create, protocol::encode_network_create_request({name_.data()})); });
-                if (local_error_.empty()) ImGui::CloseCurrentPopup();
+                attempt([&] { const auto request=protocol::create_network_command(name_.data(),create_password_.data(),require_approval_);
+                    networks_.submit(request.command,request.payload); });
+                if(local_error_.empty())std::fill(create_password_.begin(),create_password_.end(),0);
             }
             ImGui::EndDisabled(); ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(180, 0))) ImGui::CloseCurrentPopup();
+            if (ImGui::Button("Cancel", ImVec2(180, 0))) {std::fill(create_password_.begin(),create_password_.end(),0);ImGui::CloseCurrentPopup();}
+            if(!state.error.empty())ImGui::TextWrapped("%s",state.error.c_str());
+            if(!local_error_.empty())ImGui::TextWrapped("%s",local_error_.c_str());
+            if(close_create_){ImGui::CloseCurrentPopup();close_create_=false;}
             ImGui::EndPopup();
         }
         if (ImGui::BeginPopupModal("Join network", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("Paste the network ID shared by its owner.");
+            ImGui::TextUnformatted("Paste a network ID, invitation link or invitation code.");
             ImGui::SetNextItemWidth(420);
-            ImGui::InputTextWithHint("##network", "Network ID", network_id_.data(), network_id_.size());
+            ImGui::InputTextWithHint("##network", "Network ID or invitation", network_id_.data(), network_id_.size());
+            ImGui::SetNextItemWidth(420);
+            ImGui::InputTextWithHint("##joinpassword","Network password (if required)",join_password_.data(),join_password_.size(),ImGuiInputTextFlags_Password);
             ImGui::BeginDisabled(!connected || state.busy || network_id_[0] == 0);
             if (ImGui::Button("Send join request", ImVec2(200, 0))) {
-                attempt([&] { networks_.submit(protocol::LocalCommand::join,
-                    protocol::encode_network_selection_request({parse_id<protocol::network_id_size>(network_id_.data())})); });
-                if (local_error_.empty()) ImGui::CloseCurrentPopup();
+                attempt([&] {const auto request=protocol::join_network_command(network_id_.data(),join_password_.data());
+                    networks_.submit(request.command,request.payload);});
+                if(local_error_.empty())std::fill(join_password_.begin(),join_password_.end(),0);
             }
             ImGui::EndDisabled(); ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(200, 0))) ImGui::CloseCurrentPopup();
+            if (ImGui::Button("Cancel", ImVec2(200, 0))) {std::fill(join_password_.begin(),join_password_.end(),0);ImGui::CloseCurrentPopup();}
+            if(close_join_){ImGui::CloseCurrentPopup();close_join_=false;}
+            if(!state.error.empty())ImGui::TextWrapped("%s",state.error.c_str());
             if (!local_error_.empty()) ImGui::TextWrapped("%s", local_error_.c_str());
             ImGui::EndPopup();
         }
@@ -742,7 +791,13 @@ private:
     lanlink::ui::NetworkModel networks_;
     std::optional<lanlink::protocol::NetworkId> selected_;
     std::array<char, 129> name_{};
-    std::array<char, 33> network_id_{};
+    std::array<char, 256> network_id_{};
+    std::array<char,129> create_password_{},join_password_{};
+    bool require_approval_=true,close_create_=false,close_join_=false;
+    std::optional<lanlink::protocol::NetworkId> selection_hint_;
+    std::uint64_t operation_generation_=0,access_generation_=0;
+    lanlink::protocol::NetworkId invitation_network_{};
+    std::string invitation_link_,invitation_code_;
     std::array<char, 65> device_id_{};
     std::string local_error_;
     bool create_dialog_ = false;

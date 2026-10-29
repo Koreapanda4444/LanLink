@@ -124,7 +124,7 @@ public:
     [[nodiscard]] std::optional<DeviceRecord> find_device(
         const auth::DeviceId& device_id) const;
 
-    void create_network(const NetworkRecord& network);
+    void create_network(const NetworkRecord& network, const std::optional<auth::PasswordVerifier>& password = std::nullopt);
     [[nodiscard]] std::optional<NetworkRecord> find_network(
         const NetworkId& network_id) const;
     [[nodiscard]] bool delete_network(const NetworkId& network_id);

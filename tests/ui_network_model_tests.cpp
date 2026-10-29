@@ -65,6 +65,11 @@ int main() {
                 metrics.networks.push_back({network.network_id, 0x0a4d0001U, 0x0a4d0000U, 24, 1, 7, 8});
                 return protocol::LocalMessage{request.command, true, false, protocol::encode_game_diagnostics(metrics)};
             }
+            if(request.command==protocol::LocalCommand::user_access) {
+                const auto access=protocol::decode_access_request(request.payload);
+                protocol::AccessResult result;result.action=access.action;result.network_id=network.network_id;
+                return protocol::LocalMessage{request.command,true,false,protocol::encode_access_result(result)};
+            }
             if (request.command == protocol::LocalCommand::create) {
                 const auto name = protocol::decode_network_create_request(request.payload).name;
                 return protocol::LocalMessage{request.command, true, false,
@@ -99,6 +104,10 @@ int main() {
             return !state.busy && state.message == "Network updated." &&
                    state.networks.size() == 1;
         });
+        protocol::AccessRequest protected_create;protected_create.action=protocol::AccessAction::network_create_protected;
+        protected_create.text="Protected";protected_create.secret="private password";
+        model.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(protected_create));
+        wait_until("protected create and selection hint",[&]{const auto state=model.snapshot();return !state.busy && state.access && state.last_operation && state.last_operation->operation==protocol::NetworkOperation::create && state.last_operation->network_id==network.network_id;});
         model.submit(protocol::LocalCommand::diagnostics);
         wait_until("diagnostics", [&] {
             const auto state = model.snapshot();

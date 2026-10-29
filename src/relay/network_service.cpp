@@ -236,6 +236,16 @@ protocol::AccessResult NetworkService::access_request(const auth::DeviceId& acto
         active_keys_.erase(request.device_id);
         result.account_id=account->id; return result;
     }
+    if(request.action==protocol::AccessAction::network_create_protected) {
+        static_cast<void>(protocol::encode_network_create_request({request.text}));
+        if(!allow_access_attempt(actor,{})){result.code=protocol::NetworkResultCode::limit_reached;return result;}
+        const auto verifier=auth::protect_password(request.secret,request.require_approval);
+        const auto created=create_network_locked(actor,{request.text},now_ms,verifier);
+        result.code=created.result.code;result.network_id=created.result.network_id;
+        if(changes)*changes=created.peer_changes;
+        if(events)*events=created.events;
+        return result;
+    }
     if(request.action>=protocol::AccessAction::invite_issue) {
         result.network_id=request.network_id;
         if(!allow_access_attempt(actor,request.network_id)){result.code=protocol::NetworkResultCode::limit_reached;return result;}
@@ -478,6 +488,11 @@ NetworkOperationOutcome NetworkService::create_network(
 
     std::lock_guard lock(mutex_);
 
+    return create_network_locked(actor,request,now_ms);
+}
+NetworkOperationOutcome NetworkService::create_network_locked(const auth::DeviceId& actor,
+    const protocol::NetworkCreateRequest& request, const std::int64_t now_ms,
+    const std::optional<auth::PasswordVerifier>& password) {
     try {
         store_.record_device(actor, now_ms);
 
@@ -494,7 +509,7 @@ NetworkOperationOutcome NetworkService::create_network(
             }
 
             try {
-                store_.create_network({network_id, request.name, actor, now_ms});
+                store_.create_network({network_id, request.name, actor, now_ms},password);
             } catch (const std::exception&) {
                 if (store_.find_network(network_id).has_value()) {
                     continue;

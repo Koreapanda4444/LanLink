@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/network_workflow.cpp
     src/protocol/join_target.cpp
     src/protocol/user_access.cpp
     src/protocol/ipv4.cpp
@@ -285,6 +286,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_network_workflow_tests tests/network_workflow_tests.cpp)
+    target_link_libraries(lanlink_network_workflow_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_network_workflow_tests)
+    add_test(NAME lanlink-network-workflow COMMAND lanlink_network_workflow_tests)
     add_executable(lanlink_invitation_tests tests/invitation_tests.cpp)
     target_link_libraries(lanlink_invitation_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_invitation_tests)

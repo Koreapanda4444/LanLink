@@ -29,7 +29,7 @@ void NetworkModel::submit(const protocol::LocalCommand command,
     if ((command < protocol::LocalCommand::list ||
          command > protocol::LocalCommand::kick) &&
         command != protocol::LocalCommand::diagnostics && command != protocol::LocalCommand::path_diagnostics &&
-        command != protocol::LocalCommand::game_diagnostics &&
+        command != protocol::LocalCommand::game_diagnostics && command != protocol::LocalCommand::user_access &&
         command != protocol::LocalCommand::peers && command != protocol::LocalCommand::activity) {
         throw std::invalid_argument("unsupported desktop network command");
     }
@@ -95,9 +95,23 @@ void NetworkModel::process() {
                 auto activity = protocol::decode_local_activity(response.payload);
                 std::lock_guard lock(mutex_);
                 state_.activity = std::move(activity);
+            } else if(request.command==protocol::LocalCommand::user_access) {
+                auto result=protocol::decode_access_result(response.payload);
+                std::lock_guard lock(mutex_);
+                const bool successful=result.code==protocol::NetworkResultCode::success || result.code==protocol::NetworkResultCode::pending_approval;
+                const bool creates=result.action==protocol::AccessAction::network_create_protected;
+                const bool joins=result.action==protocol::AccessAction::password_join || result.action==protocol::AccessAction::invite_redeem;
+                if(creates || joins){state_.last_operation=protocol::NetworkOperationResult{creates ? protocol::NetworkOperation::create : protocol::NetworkOperation::join,result.code,result.network_id};++state_.operation_generation;}
+                if(successful) {
+                    state_.message=result.code==protocol::NetworkResultCode::pending_approval ? "Join request sent. Waiting for the network owner to approve this device." : "Network updated.";
+                    state_.error.clear();
+                    if(creates || joins)pending_.push_back({protocol::LocalCommand::list,false,false,protocol::encode_network_list_request()});
+                } else {state_.message.clear();state_.error=std::string(protocol::network_result_code_name(result.code));}
+                state_.access=std::move(result);++state_.access_generation;
             } else {
                 const auto result = protocol::decode_network_operation_result(response.payload);
                 std::lock_guard lock(mutex_);
+                state_.last_operation=result;++state_.operation_generation;
                 const auto successful = result.code == protocol::NetworkResultCode::success ||
                                         result.code == protocol::NetworkResultCode::pending_approval;
                 if (successful) {

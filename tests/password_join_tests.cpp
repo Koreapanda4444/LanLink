@@ -12,6 +12,11 @@ int main(){
         relay::NetworkService service(store,{},[&]{return now;});
         const auto owner=auth::random_nonce(),member=auth::random_nonce(),pending=auth::random_nonce();
         const auto network=service.create_network(owner,{"Protected"},1000).result.network_id;
+        protocol::AccessRequest atomic;atomic.action=protocol::AccessAction::network_create_protected;
+        atomic.text="Atomic room";atomic.secret="atomic password";
+        const auto created=service.access_request(owner,atomic,1000);
+        require(created.code==protocol::NetworkResultCode::success && store.network_password(created.network_id).has_value(),"password committed with network creation");
+        require(service.join_network(member,{created.network_id},1000).result.code==protocol::NetworkResultCode::invite_required,"new room is never briefly unprotected");
         protocol::AccessRequest r;r.network_id=network;r.action=protocol::AccessAction::password_set;r.secret="correct horse battery";
         require(service.access_request(owner,r,1000).code==protocol::NetworkResultCode::success,"password saved");
         require(service.join_network(member,{network},1000).result.code==protocol::NetworkResultCode::invite_required,"legacy join cannot bypass password");

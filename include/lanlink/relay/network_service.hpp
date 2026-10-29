@@ -141,6 +141,9 @@ public:
     [[nodiscard]] bool authorize_peer_exchange(const auth::DeviceId& actor, const p2p::CandidateExchange& exchange);
 
 private:
+    [[nodiscard]] NetworkOperationOutcome create_network_locked(const auth::DeviceId& actor,
+        const protocol::NetworkCreateRequest& request, std::int64_t now_ms,
+        const std::optional<auth::PasswordVerifier>& password = std::nullopt);
     [[nodiscard]] bool allow_access_attempt(const auth::DeviceId& actor, const storage::NetworkId& network);
     [[nodiscard]] NetworkOperationOutcome join_network_locked(const auth::DeviceId& actor,
         const protocol::NetworkSelectionRequest& request, std::int64_t now_ms, bool credential_verified);

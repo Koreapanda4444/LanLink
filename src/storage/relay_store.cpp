@@ -604,7 +604,7 @@ public:
         return result;
     }
 
-    void create_network(const NetworkRecord& network) {
+    void create_network(const NetworkRecord& network, const std::optional<auth::PasswordVerifier>& password) {
         require_network_id(network.id);
         require_network_name(network.name);
         require_device_id(network.owner_device_id);
@@ -641,7 +641,11 @@ public:
         }
 
         insert_lease(network.id, network.owner_device_id);
-
+        if(password) {
+            Statement access(database_,"INSERT INTO network_access(network_id,salt,digest,require_approval) VALUES(?,?,?,?);");
+            access.bind_blob(1,network.id.data(),network.id.size());access.bind_blob(2,password->salt.data(),password->salt.size());
+            access.bind_blob(3,password->digest.data(),password->digest.size());access.bind_integer(4,password->require_approval ? 1 : 0);access.step_done();
+        }
         transaction.commit();
     }
 
@@ -1515,8 +1519,8 @@ std::optional<DeviceRecord> RelayStore::find_device(const auth::DeviceId& device
     return impl_->find_device(device_id);
 }
 
-void RelayStore::create_network(const NetworkRecord& network) {
-    impl_->create_network(network);
+void RelayStore::create_network(const NetworkRecord& network, const std::optional<auth::PasswordVerifier>& password) {
+    impl_->create_network(network,password);
 }
 
 std::optional<NetworkRecord> RelayStore::find_network(const NetworkId& network_id) const {

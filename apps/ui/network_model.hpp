@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/local_control.hpp"
+#include "lanlink/protocol/user_access.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/path_diagnostics.hpp"
 
@@ -27,6 +28,10 @@ struct NetworkSnapshot {
     std::optional<protocol::PathDiagnostics> paths;
     std::optional<protocol::GameDiagnostics> games;
     protocol::LocalActivity activity;
+    std::optional<protocol::AccessResult> access;
+    std::uint64_t access_generation = 0;
+    std::optional<protocol::NetworkOperationResult> last_operation;
+    std::uint64_t operation_generation = 0;
 };
 
 class NetworkModel {
