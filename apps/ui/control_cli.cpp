@@ -1,5 +1,6 @@
 #include "lanlink/core/component.hpp"
 #include "lanlink/protocol/local_control.hpp"
+#include "lanlink/protocol/user_access.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/transport/local_pipe.hpp"
 
@@ -63,6 +64,7 @@ std::string hex_id(const std::span<const std::byte> id) {
 
 lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     using lanlink::protocol::LocalCommand;
+    if (action == L"account") return LocalCommand::user_access;
     if (action == L"status") return LocalCommand::status;
     if (action == L"list") return LocalCommand::list;
     if (action == L"create") return LocalCommand::create;
@@ -100,6 +102,20 @@ int wmain(const int argc, wchar_t* argv[]) {
             if (argc != 2) throw std::invalid_argument("list takes no arguments");
             request.payload = protocol::encode_network_list_request();
             break;
+        case protocol::LocalCommand::user_access: {
+            if (argc<3) throw std::invalid_argument("account requires status/create/issue/enroll/revoke");
+            const std::wstring_view operation=argv[2];
+            protocol::AccessRequest access;
+            if (operation==L"status" && argc==3) access.action=protocol::AccessAction::account_status;
+            else if (operation==L"create" && argc==4) { access.action=protocol::AccessAction::account_create; access.text=utf8(argv[3]); }
+            else if (operation==L"issue" && argc==3) access.action=protocol::AccessAction::enrollment_issue;
+            else if (operation==L"enroll" && argc==4) {
+                access.action=protocol::AccessAction::device_enroll; access.text=utf8(argv[3]);
+                std::cerr << "Enrollment code: "; std::getline(std::cin,access.secret);
+            } else if (operation==L"revoke" && argc==4) { access.action=protocol::AccessAction::device_revoke; access.device_id=parse_id<32>(argv[3]); }
+            else throw std::invalid_argument("invalid account arguments");
+            request.payload=protocol::encode_access_request(access); break;
+        }
         case protocol::LocalCommand::create:
             if (argc != 3) throw std::invalid_argument("create requires a name");
             request.payload = protocol::encode_network_create_request({utf8(argv[2])});
@@ -125,7 +141,14 @@ int wmain(const int argc, wchar_t* argv[]) {
         const auto response = lanlink::transport::local_pipe_request(request);
         std::cout << "LanLink " << lanlink::core::component_name(
             lanlink::core::Component::ui) << " " << lanlink::core::project_version() << '\n';
-        if (command == protocol::LocalCommand::status) {
+        if (command == protocol::LocalCommand::user_access) {
+            const auto result=protocol::decode_access_result(response.payload);
+            std::cout << protocol::network_result_code_name(result.code) << '\n';
+            if (result.code!=protocol::NetworkResultCode::success) return EXIT_FAILURE;
+            std::cout << "Account: " << result.text << " " << hex_id(result.account_id) << '\n';
+            if (!result.secret.empty()) std::cout << "Enrollment code (5 minutes, one use): " << result.secret << '\n';
+            for (const auto& device:result.devices) std::cout << hex_id(device.device_id) << " " << device.label << (device.revoked ? " [revoked]" : "") << '\n';
+        } else if (command == protocol::LocalCommand::status) {
             if (response.payload.size() != 8 || response.payload[3] != std::byte{0}) {
                 throw std::runtime_error("invalid service status");
             }

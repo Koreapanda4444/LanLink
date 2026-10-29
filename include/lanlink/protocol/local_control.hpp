@@ -31,6 +31,7 @@ enum class LocalCommand : std::uint8_t {
     activity = 12,
     path_diagnostics = 13,
     game_diagnostics = 14,
+    user_access = 15,
 };
 
 struct LocalActivity {

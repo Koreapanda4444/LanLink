@@ -1001,6 +1001,67 @@ public:
         return result;
     }
 
+    [[nodiscard]] bool device_revoked(const auth::DeviceId& device) const {
+        std::lock_guard lock(mutex_);
+        Statement q(database_, "SELECT revoked FROM account_devices WHERE device_id=?;");
+        q.bind_blob(1, device.data(), device.size());
+        return q.step_row() && q.column_integer(0) != 0;
+    }
+    [[nodiscard]] std::optional<AccountRecord> account_for_device(const auth::DeviceId& device) const {
+        std::lock_guard lock(mutex_);
+        Statement q(database_, "SELECT a.account_id,a.owner,a.name FROM accounts a JOIN account_devices d ON d.account_id=a.account_id WHERE d.device_id=? AND d.revoked=0;");
+        q.bind_blob(1, device.data(), device.size());
+        if (!q.step_row()) return std::nullopt;
+        return AccountRecord{q.column_blob<32>(0),q.column_blob<32>(1),q.column_text(2)};
+    }
+    [[nodiscard]] std::vector<protocol::AccountDevice> account_devices(const auth::DeviceId& account) const {
+        std::lock_guard lock(mutex_);
+        Statement q(database_, "SELECT device_id,label,revoked FROM account_devices WHERE account_id=? ORDER BY device_id LIMIT 64;");
+        q.bind_blob(1, account.data(), account.size());
+        std::vector<protocol::AccountDevice> result;
+        while (q.step_row()) result.push_back({q.column_blob<32>(0),q.column_text(1),q.column_integer(2)!=0});
+        return result;
+    }
+    void create_account(const AccountRecord& a, std::int64_t now_ms) {
+        require_device_id(a.id); require_device_id(a.owner); require_timestamp(now_ms);
+        if (a.name.empty() || a.name.size()>128) throw std::invalid_argument("invalid account name");
+        std::lock_guard lock(mutex_); Transaction t(database_, true);
+        Statement q(database_, "INSERT INTO accounts(account_id,owner,name) VALUES(?,?,?);");
+        q.bind_blob(1,a.id.data(),a.id.size()); q.bind_blob(2,a.owner.data(),a.owner.size()); q.bind_text(3,a.name); q.step_done();
+        Statement d(database_, "INSERT INTO account_devices(device_id,account_id,label) VALUES(?,?,?);");
+        d.bind_blob(1,a.owner.data(),a.owner.size()); d.bind_blob(2,a.id.data(),a.id.size()); d.bind_text(3,a.name); d.step_done(); t.commit();
+    }
+    void issue_enrollment(const auth::DeviceId& account, const auth::DeviceId& digest, std::int64_t expires_ms) {
+        std::lock_guard lock(mutex_);
+        Statement q(database_, "INSERT INTO device_enrollment(account_id,digest,expires_ms) VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET digest=excluded.digest,expires_ms=excluded.expires_ms;");
+        q.bind_blob(1,account.data(),account.size()); q.bind_blob(2,digest.data(),digest.size()); q.bind_integer(3,expires_ms); q.step_done();
+    }
+    [[nodiscard]] bool enroll_device(const auth::DeviceId& digest, const auth::DeviceId& device,
+                                     std::string_view label, std::int64_t now_ms) {
+        require_device_id(device); require_timestamp(now_ms);
+        if (label.empty() || label.size()>128) throw std::invalid_argument("invalid device label");
+        std::lock_guard lock(mutex_); Transaction t(database_, true);
+        Statement q(database_, "SELECT account_id FROM device_enrollment WHERE digest=? AND expires_ms>?;");
+        q.bind_blob(1,digest.data(),digest.size()); q.bind_integer(2,now_ms);
+        if (!q.step_row()) return false;
+        const auto account=q.column_blob<32>(0);
+        Statement existing(database_, "SELECT account_id,revoked FROM account_devices WHERE device_id=?;");
+        existing.bind_blob(1,device.data(),device.size());
+        if (existing.step_row() && (existing.column_blob<32>(0)!=account || existing.column_integer(1)==0)) return false;
+        Statement count(database_, "SELECT COUNT(*) FROM account_devices WHERE account_id=?;");
+        count.bind_blob(1,account.data(),account.size());
+        if (!count.step_row() || count.column_integer(0)>=64) return false;
+        Statement d(database_, "INSERT INTO account_devices(device_id,account_id,label) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET label=excluded.label,revoked=0;");
+        d.bind_blob(1,device.data(),device.size()); d.bind_blob(2,account.data(),account.size()); d.bind_text(3,label); d.step_done();
+        Statement remove(database_, "DELETE FROM device_enrollment WHERE digest=?;");
+        remove.bind_blob(1,digest.data(),digest.size()); remove.step_done(); t.commit(); return true;
+    }
+    void revoke_account_device(const auth::DeviceId& account, const auth::DeviceId& device) {
+        std::lock_guard lock(mutex_);
+        Statement q(database_, "UPDATE account_devices SET revoked=1 WHERE account_id=? AND device_id=? AND device_id NOT IN(SELECT owner FROM accounts);");
+        q.bind_blob(1,account.data(),account.size()); q.bind_blob(2,device.data(),device.size()); q.step_done();
+    }
+
     [[nodiscard]] RelayState load_state() const {
         std::lock_guard lock(mutex_);
         Transaction transaction(database_, false);
@@ -1099,6 +1160,20 @@ private:
             validate_schema_v2();
             migrate_to_v3();
             version = 3;
+        }
+
+        if (version == 3) {
+            Transaction transaction(database_, true);
+            execute(database_,
+                "CREATE TABLE accounts(account_id BLOB PRIMARY KEY NOT NULL CHECK(length(account_id)=32),"
+                "owner BLOB NOT NULL UNIQUE REFERENCES devices(device_id),name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 128));"
+                "CREATE TABLE account_devices(device_id BLOB PRIMARY KEY NOT NULL REFERENCES devices(device_id),"
+                "account_id BLOB NOT NULL REFERENCES accounts(account_id),label TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)));"
+                "CREATE INDEX account_devices_account_idx ON account_devices(account_id);"
+                "CREATE TABLE device_enrollment(account_id BLOB PRIMARY KEY NOT NULL REFERENCES accounts(account_id),"
+                "digest BLOB NOT NULL UNIQUE CHECK(length(digest)=32),expires_ms INTEGER NOT NULL);"
+                "PRAGMA user_version=4;");
+            transaction.commit(); version = 4;
         }
 
         if (version != current_schema_version) {
@@ -1327,6 +1402,8 @@ private:
     }
 
     void validate_schema() {
+        if (query_integer(database_, "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN('accounts','account_devices','device_enrollment');")!=3)
+            throw std::runtime_error("relay account schema is incomplete");
         validate_schema_v2();
         const auto tables = query_integer(
             database_,
@@ -1478,6 +1555,14 @@ std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_device(
     const auth::DeviceId& device_id) const {
     return impl_->list_join_requests_for_device(device_id);
 }
+
+bool RelayStore::device_revoked(const auth::DeviceId& d) const { return impl_->device_revoked(d); }
+std::optional<AccountRecord> RelayStore::account_for_device(const auth::DeviceId& d) const { return impl_->account_for_device(d); }
+std::vector<protocol::AccountDevice> RelayStore::account_devices(const auth::DeviceId& a) const { return impl_->account_devices(a); }
+void RelayStore::create_account(const AccountRecord& a, std::int64_t n) { impl_->create_account(a,n); }
+void RelayStore::issue_enrollment(const auth::DeviceId& a, const auth::DeviceId& d, std::int64_t e) { impl_->issue_enrollment(a,d,e); }
+bool RelayStore::enroll_device(const auth::DeviceId& h, const auth::DeviceId& d, std::string_view l, std::int64_t n) { return impl_->enroll_device(h,d,l,n); }
+void RelayStore::revoke_account_device(const auth::DeviceId& a, const auth::DeviceId& d) { impl_->revoke_account_device(a,d); }
 
 RelayState RelayStore::load_state() const {
     return impl_->load_state();

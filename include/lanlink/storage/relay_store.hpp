@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/auth/identity.hpp"
+#include "lanlink/protocol/user_access.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,7 +15,7 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 3;
+inline constexpr int current_schema_version = 4;
 inline constexpr std::uint32_t virtual_ipv4_pool_first = 0x0a400000U;
 inline constexpr std::uint32_t virtual_ipv4_pool_end = 0x0a800000U;
 inline constexpr std::uint32_t virtual_ipv4_subnet_size = 256;
@@ -26,6 +27,12 @@ using VirtualIpv4Address = std::uint32_t;
 enum class MembershipRole : std::int32_t {
     member = 0,
     owner = 1,
+};
+
+struct AccountRecord {
+    auth::DeviceId id{};
+    auth::DeviceId owner{};
+    std::string name;
 };
 
 struct DeviceRecord {
@@ -162,6 +169,15 @@ public:
         const NetworkId& network_id) const;
     [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_device(
         const auth::DeviceId& device_id) const;
+
+    [[nodiscard]] bool device_revoked(const auth::DeviceId& device) const;
+    [[nodiscard]] std::optional<AccountRecord> account_for_device(const auth::DeviceId& device) const;
+    [[nodiscard]] std::vector<protocol::AccountDevice> account_devices(const auth::DeviceId& account) const;
+    void create_account(const AccountRecord& account, std::int64_t now_ms);
+    void issue_enrollment(const auth::DeviceId& account, const auth::DeviceId& digest, std::int64_t expires_ms);
+    [[nodiscard]] bool enroll_device(const auth::DeviceId& digest, const auth::DeviceId& device,
+                                     std::string_view label, std::int64_t now_ms);
+    void revoke_account_device(const auth::DeviceId& account, const auth::DeviceId& device);
 
     [[nodiscard]] RelayState load_state() const;
 

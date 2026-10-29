@@ -32,6 +32,7 @@ protocol::Frame error_response(const std::uint32_t request_id) {
 
 bool is_network_request(const protocol::MessageType type) noexcept {
     switch (type) {
+        case protocol::MessageType::user_access_request:
         case protocol::MessageType::peer_candidates_send:
         case protocol::MessageType::network_create_request:
         case protocol::MessageType::network_list_request:
@@ -221,6 +222,17 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
     }
 
     try {
+        if (!service_.device_allowed(actor)) return {error_response(request.request_id), {}};
+        if (request.type == protocol::MessageType::user_access_request) {
+            if (!capabilities(actor).supports(protocol::Capability::user_accounts))
+                return {error_response(request.request_id), {}};
+            const auto access=protocol::decode_access_request(request.payload);
+            std::vector<RoutedPeerStateChange> changes;
+            const auto result=service_.access_request(actor,access,now_ms(),&changes);
+            auto events=encode_peer_changes(changes);
+            return {{protocol::MessageType::user_access_result,request.request_id,
+                     protocol::encode_access_result(result)},std::move(events)};
+        }
         if (request.type == protocol::MessageType::peer_candidates_send) {
             const auto x = p2p::decode_candidates(request.payload);
             if (!service_.authorize_peer_exchange(actor, x)) return {error_response(request.request_id), {}};

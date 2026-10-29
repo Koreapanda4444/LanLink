@@ -6,6 +6,7 @@
 #include "lanlink/transport/resource_limits.hpp"
 #include "lanlink/session/network_state.hpp"
 #include "lanlink/protocol/capabilities.hpp"
+#include "lanlink/protocol/user_access.hpp"
 #include "lanlink/core/error.hpp"
 #include "lanlink/p2p/candidates.hpp"
 
@@ -133,6 +134,8 @@ public:
     [[nodiscard]] ClientDiagnostics diagnostics() const;
     [[nodiscard]] protocol::NegotiatedCapabilities capabilities() const;
 
+    [[nodiscard]] protocol::AccessResult access_request(const protocol::AccessRequest& request,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds{5000});
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name,
         std::chrono::milliseconds timeout = std::chrono::seconds{10});

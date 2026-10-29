@@ -133,6 +133,10 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 payload = protocol::encode_network_list_result(result.result);
                 break;
             }
+            case protocol::LocalCommand::user_access: {
+                payload=protocol::encode_access_result(client.access_request(protocol::decode_access_request(request.payload)));
+                break;
+            }
             case protocol::LocalCommand::create: {
                 const auto name = protocol::decode_network_create_request(request.payload).name;
                 payload = protocol::encode_network_operation_result(

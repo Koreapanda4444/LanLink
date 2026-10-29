@@ -1333,6 +1333,17 @@ public:
         return negotiated_capabilities_;
     }
 
+    [[nodiscard]] protocol::AccessResult access_request(const protocol::AccessRequest& request,
+        const std::chrono::milliseconds timeout) {
+        if (!capabilities().supports(protocol::Capability::user_accounts))
+            throw std::runtime_error("This relay does not support account enrollment.");
+        const auto frame=request_control(protocol::MessageType::user_access_request,
+            protocol::encode_access_request(request),protocol::NetworkOperation::list,timeout);
+        const auto result=protocol::decode_access_result(frame.payload);
+        if (result.action!=request.action) throw std::runtime_error("access response action mismatch");
+        return result;
+    }
+
     [[nodiscard]] protocol::NetworkOperationResult create_network(
         std::string name, const std::chrono::milliseconds timeout) {
         return request_operation(protocol::NetworkOperation::create,
@@ -1720,6 +1731,7 @@ private:
     }
 
     struct PendingControl {
+        protocol::MessageType request_type=protocol::MessageType::network_list_request;
         protocol::NetworkOperation operation;
         std::optional<protocol::NetworkId> network_id;
         std::condition_variable wake;
@@ -1825,6 +1837,7 @@ private:
 
         auto pending = std::make_shared<PendingControl>();
         pending->operation = operation;
+        pending->request_type = type;
         pending->network_id = network_id;
         state->pending.emplace(request_id, pending);
         if (!send_client_frame(state, {type, request_id, std::move(payload)})) {
@@ -2766,7 +2779,11 @@ private:
         }
 
         const auto expected = found->second->operation;
-        if (frame.type == protocol::MessageType::network_operation_result) {
+        if (found->second->request_type == protocol::MessageType::user_access_request &&
+            frame.type == protocol::MessageType::user_access_result) {
+            static_cast<void>(protocol::decode_access_result(frame.payload));
+        } else if (frame.type == protocol::MessageType::network_operation_result &&
+                   found->second->request_type != protocol::MessageType::user_access_request) {
             const auto result = protocol::decode_network_operation_result(frame.payload);
             if (result.operation != expected) {
                 throw std::runtime_error("network control response operation mismatch");
@@ -2923,6 +2940,9 @@ protocol::NegotiatedCapabilities QuicRelayClient::capabilities() const {
 ClientDiagnostics QuicRelayClient::diagnostics() const {
     return impl_->diagnostics();
 }
+
+protocol::AccessResult QuicRelayClient::access_request(const protocol::AccessRequest& request,
+    const std::chrono::milliseconds timeout) { return impl_->access_request(request,timeout); }
 
 protocol::NetworkOperationResult QuicRelayClient::create_network(
     std::string name, const std::chrono::milliseconds timeout) {

@@ -36,6 +36,8 @@ Integer read_integer(const std::span<const std::byte> bytes, const std::size_t o
 
 bool is_known_message_type(const MessageType type) noexcept {
     switch (type) {
+        case MessageType::user_access_request:
+        case MessageType::user_access_result:
         case MessageType::peer_candidates_send:
         case MessageType::peer_candidates_forward:
         case MessageType::peer_candidates_ack:
@@ -73,6 +75,8 @@ bool is_known_message_type(const MessageType type) noexcept {
 
 std::string_view message_type_name(const MessageType type) noexcept {
     switch (type) {
+        case MessageType::user_access_request: return "user_access_request";
+        case MessageType::user_access_result: return "user_access_result";
         case MessageType::peer_candidates_send: return "peer_candidates_send";
         case MessageType::peer_candidates_forward: return "peer_candidates_forward";
         case MessageType::peer_candidates_ack: return "peer_candidates_ack";

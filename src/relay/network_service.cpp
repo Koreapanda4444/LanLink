@@ -1,4 +1,5 @@
 #include "lanlink/relay/network_service.hpp"
+#include "lanlink/auth/access_secret.hpp"
 #include "lanlink/auth/network_keys.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 
@@ -183,10 +184,72 @@ NetworkService::NetworkService(storage::RelayStore& store,
                                : TimeSource{[] { return Clock::now(); }}) {
 }
 
+bool NetworkService::device_allowed(const auth::DeviceId& actor) const {
+    return !store_.device_revoked(actor);
+}
+protocol::AccessResult NetworkService::access_request(const auth::DeviceId& actor,
+    const protocol::AccessRequest& request, const std::int64_t now_ms,
+    std::vector<RoutedPeerStateChange>* changes) {
+    require_actor_and_time(actor, now_ms);
+    static_cast<void>(protocol::encode_access_request(request));
+    std::lock_guard lock(mutex_);
+    protocol::AccessResult result; result.action=request.action;
+    if (!device_allowed(actor)) { result.code=protocol::NetworkResultCode::permission_denied; return result; }
+    store_.record_device(actor,now_ms);
+    if (request.action==protocol::AccessAction::device_revoke) {
+        const auto account=store_.account_for_device(actor);
+        const auto target=store_.account_for_device(request.device_id);
+        if (!account || account->owner!=actor || !target || target->id!=account->id || request.device_id==actor) {
+            result.code=protocol::NetworkResultCode::permission_denied; return result;
+        }
+        const auto networks=store_.list_networks_for_device(request.device_id);
+        if (std::any_of(networks.begin(),networks.end(),[&](const auto& n){return n.owner_device_id==request.device_id;})) {
+            result.code=protocol::NetworkResultCode::conflict; return result;
+        }
+        store_.revoke_account_device(account->id,request.device_id);
+        for (const auto& n : networks) {
+            static_cast<void>(store_.remove_member(n.id,request.device_id));
+            advance_key_epoch(n.id); const auto revision=advance_revision(n.id);
+            if (changes) {
+                auto updates=changes_for_members(n.id,revision);
+                changes->insert(changes->end(),updates.begin(),updates.end());
+                changes->push_back({request.device_id,std::nullopt,{n.id,revision}});
+            }
+        }
+        active_keys_.erase(request.device_id);
+        result.account_id=account->id; return result;
+    }
+    auto account=store_.account_for_device(actor);
+    switch (request.action) {
+    case protocol::AccessAction::account_create:
+        if (account) { result.code=protocol::NetworkResultCode::already_exists; break; }
+        if (request.text.empty()) { result.code=protocol::NetworkResultCode::invalid_request; break; }
+        store_.create_account({auth::random_nonce(),actor,request.text},now_ms);
+        account=store_.account_for_device(actor); break;
+    case protocol::AccessAction::account_status: break;
+    case protocol::AccessAction::enrollment_issue:
+        if (!account || account->owner!=actor) { result.code=protocol::NetworkResultCode::permission_denied; break; }
+        result.secret=auth::random_access_code();
+        store_.issue_enrollment(account->id,auth::access_digest(result.secret),now_ms+300000); break;
+    case protocol::AccessAction::device_enroll:
+        if (request.secret.size()!=40 || !store_.enroll_device(auth::access_digest(request.secret),actor,request.text,now_ms)) {
+            result.code=protocol::NetworkResultCode::permission_denied; break;
+        }
+        account=store_.account_for_device(actor); break;
+    default: result.code=protocol::NetworkResultCode::invalid_request; break;
+    }
+    if (account && result.code==protocol::NetworkResultCode::success) {
+        result.account_id=account->id; result.text=account->name;
+        result.devices=store_.account_devices(account->id);
+    } else if (!account && result.code==protocol::NetworkResultCode::success) result.code=protocol::NetworkResultCode::not_found;
+    return result;
+}
+
 void NetworkService::record_authenticated_device(const auth::DeviceId& actor,
                                                  const std::int64_t now_ms) {
     require_actor_and_time(actor, now_ms);
     std::lock_guard lock(mutex_);
+    if (!device_allowed(actor)) throw std::runtime_error("device enrollment revoked");
     store_.record_device(actor, now_ms);
 }
 
@@ -202,6 +265,7 @@ std::vector<RoutedPeerStateChange> NetworkService::publish_device_key(
 
     std::lock_guard lock(mutex_);
     store_.record_device(actor, now_ms);
+    if (!device_allowed(actor)) throw std::runtime_error("device enrollment revoked");
     active_keys_.insert_or_assign(actor, ActiveKey{session_id, signed_key});
     const auto networks = store_.list_networks_for_device(actor);
     std::vector<RoutedPeerStateChange> changes;
@@ -247,7 +311,7 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
 std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
     const auth::DeviceId& actor,
     const protocol::EncryptedNetworkPacket& packet) {
-    if (is_zero(actor)) {
+    if (is_zero(actor) || !device_allowed(actor)) {
         return {};
     }
     static_cast<void>(protocol::encode_encrypted_network_packet(packet));
@@ -946,7 +1010,8 @@ std::vector<RoutedPeerStateChange> NetworkService::peer_states_for_device(
 namespace lanlink::relay {
 bool NetworkService::authorize_peer_exchange(const auth::DeviceId& actor, const p2p::CandidateExchange& x) {
     std::lock_guard lock(mutex_);
-    if (actor != x.sender || actor == x.recipient ||
+    if (!device_allowed(actor) || !device_allowed(x.recipient) ||
+        actor != x.sender || actor == x.recipient ||
         !store_.find_virtual_ipv4_lease(x.network_id, actor) ||
         !store_.find_virtual_ipv4_lease(x.network_id, x.recipient) || key_epoch_for(x.network_id) != x.key_epoch) return false;
     const auto a=active_keys_.find(actor), b=active_keys_.find(x.recipient);

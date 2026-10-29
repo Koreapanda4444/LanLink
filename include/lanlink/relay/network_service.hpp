@@ -83,6 +83,10 @@ public:
     NetworkService(NetworkService&&) = delete;
     NetworkService& operator=(NetworkService&&) = delete;
 
+    [[nodiscard]] protocol::AccessResult access_request(const auth::DeviceId& actor,
+        const protocol::AccessRequest& request, std::int64_t now_ms,
+        std::vector<RoutedPeerStateChange>* changes = nullptr);
+    [[nodiscard]] bool device_allowed(const auth::DeviceId& actor) const;
     void record_authenticated_device(const auth::DeviceId& actor, std::int64_t now_ms);
     [[nodiscard]] std::vector<RoutedPeerStateChange> publish_device_key(
         const auth::DeviceId& actor,

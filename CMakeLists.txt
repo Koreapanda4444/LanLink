@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/user_access.cpp
     src/protocol/ipv4.cpp
     src/protocol/game_profiles.cpp
     src/protocol/game_diagnostics.cpp
@@ -84,6 +85,7 @@ target_include_directories(lanlink_protocol
 lanlink_enable_warnings(lanlink_protocol)
 
 add_library(lanlink_auth STATIC
+    src/auth/access_secret.cpp
     src/auth/device_keys.cpp
     src/auth/network_keys.cpp
     src/auth/packet_crypto.cpp
@@ -275,6 +277,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_user_access_tests tests/user_access_tests.cpp)
+    target_link_libraries(lanlink_user_access_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_user_access_tests)
+    add_test(NAME lanlink-user-access COMMAND lanlink_user_access_tests)
     add_executable(lanlink_game_diagnostics_tests tests/game_diagnostics_tests.cpp)
     target_link_libraries(lanlink_game_diagnostics_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_game_diagnostics_tests)
