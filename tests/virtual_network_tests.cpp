@@ -1,6 +1,7 @@
 #include "lanlink/auth/handshake.hpp"
 #include "lanlink/core/logger.hpp"
 #include "lanlink/network/virtual_network.hpp"
+#include "lanlink/protocol/ipv4.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -91,6 +92,7 @@ void scenario(const std::filesystem::path& directory) {
     plain[0] = std::byte{0x45}; plain[3] = std::byte{24}; plain[8] = std::byte{64}; plain[9] = std::byte{17};
     plain[12] = plain[16] = std::byte{10}; plain[13] = plain[17] = std::byte{64};
     plain[15] = std::byte{1}; plain[19] = std::byte{2};
+    protocol::update_ipv4_checksum(plain);
     a->handler(plain);
     require(b->received.size() == 1 && b->received[0] == plain && outgoing.sent[0].ciphertext != plain,
             "independent adapters did not exchange an encrypted IPv4 packet");

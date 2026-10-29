@@ -96,7 +96,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
             logger.warning(std::string{operation} + ": " + error.what());
         }
     };
-    auto adapter = std::make_shared<lanlink::transport::WintunAdapter>();
+    auto adapter = std::make_shared<lanlink::transport::WintunAdapter>(L"LanLink", config.virtual_mtu);
     lanlink::network::VirtualNetwork network(adapter, path, logger);
     network.start();
 

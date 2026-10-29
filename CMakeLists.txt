@@ -62,6 +62,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/ipv4.cpp
     src/protocol/game_profiles.cpp
     src/p2p/candidates.cpp
     src/protocol/path_diagnostics.cpp
@@ -258,6 +259,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_ipv4_tests tests/ipv4_tests.cpp)
+    target_link_libraries(lanlink_ipv4_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_ipv4_tests)
+    add_test(NAME lanlink-ipv4 COMMAND lanlink_ipv4_tests)
     add_executable(lanlink_game_profile_tests tests/game_profile_tests.cpp)
     target_link_libraries(lanlink_game_profile_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_game_profile_tests)

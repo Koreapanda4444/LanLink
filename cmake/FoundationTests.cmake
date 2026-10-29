@@ -12,6 +12,7 @@ endfunction()
 
 lanlink_foundation_test(core lanlink_core)
 lanlink_foundation_test(protocol lanlink_protocol)
+lanlink_foundation_test(ipv4 lanlink_protocol)
 lanlink_foundation_test(game_profile lanlink_protocol)
 lanlink_foundation_test(local_control lanlink_protocol lanlink_core)
 lanlink_foundation_test(network_protocol lanlink_protocol)

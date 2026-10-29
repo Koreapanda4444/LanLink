@@ -221,6 +221,8 @@ public:
         return groups;
     }
 
+    std::uint16_t packet_mtu() const noexcept { return static_cast<std::uint16_t>(mtu_); }
+
     void configure(const WintunNetworkAddress& address) {
         validate_address(address);
         const auto existing = addresses_.find(address.network_id);
@@ -486,5 +488,7 @@ std::exception_ptr WintunAdapter::pump_error() const noexcept {
 std::optional<std::vector<std::uint32_t>> WintunAdapter::multicast_groups() const {
     return impl_->multicast_groups();
 }
+
+std::uint16_t WintunAdapter::packet_mtu() const noexcept { return impl_->packet_mtu(); }
 
 }

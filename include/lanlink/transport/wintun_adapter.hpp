@@ -36,6 +36,7 @@ public:
     void stop() noexcept override;
     [[nodiscard]] std::exception_ptr pump_error() const noexcept override;
     [[nodiscard]] std::optional<std::vector<std::uint32_t>> multicast_groups() const override;
+    [[nodiscard]] std::uint16_t packet_mtu() const noexcept override;
 
 private:
     class Impl;

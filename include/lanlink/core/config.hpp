@@ -11,6 +11,7 @@
 namespace lanlink::core {
 
 struct RuntimeConfig {
+    std::uint16_t virtual_mtu = 1400;
     bool p2p_enabled=true;
     std::string p2p_stun_host;
     std::uint16_t p2p_stun_port=3478;

@@ -1,6 +1,8 @@
 #include "lanlink/auth/handshake.hpp"
 #include "lanlink/transport/packet_bridge.hpp"
+#include "lanlink/protocol/ipv4.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +47,7 @@ std::vector<std::byte> ipv4_packet(const std::uint32_t source,
     const auto port = destination == 0xe00000fbU ? 5353U : 47100U;
     bytes[22] = std::byte{static_cast<unsigned char>(port >> 8U)};
     bytes[23] = std::byte{static_cast<unsigned char>(port)}; bytes[25] = std::byte{8};
+    protocol::update_ipv4_checksum(bytes);
     return bytes;
 }
 
@@ -86,12 +89,14 @@ void test_bridge(const std::filesystem::path& directory) {
         transport::ActiveNetworkPacketState{member_state, {7, key}}};
 
     std::vector<protocol::EncryptedNetworkPacket> sent;
+    std::vector<protocol::EncryptedNetworkPacket> feedback;
     std::vector<std::vector<std::byte>> delivered;
+    std::vector<std::vector<std::byte>> local_errors;
     transport::VirtualPacketBridge owner_bridge(
         [&](const auto& packet) { sent.push_back(packet); },
-        [](const auto) {});
+        [&](const auto bytes) { local_errors.emplace_back(bytes.begin(), bytes.end()); });
     transport::VirtualPacketBridge member_bridge(
-        [](const auto&) {},
+        [&](const auto& packet) { feedback.push_back(packet); },
         [&](const auto bytes) { delivered.emplace_back(bytes.begin(), bytes.end()); });
     owner_bridge.synchronize(owner_identity, owner_networks);
     member_bridge.synchronize(member_identity, member_networks);
@@ -149,6 +154,38 @@ void test_bridge(const std::filesystem::path& directory) {
     owner_bridge.clear();
     owner_bridge.outbound(plaintext);
     require(sent.size() == 5, "revoked network stops outbound packets");
+
+    owner_bridge.synchronize(owner_identity, owner_networks);
+    member_bridge.synchronize(member_identity, member_networks);
+    owner_bridge.set_mtu(576); member_bridge.set_mtu(576);
+    sent.clear(); delivered.clear();
+    auto large = ipv4_packet(owner_ip, member_ip);
+    large.resize(3600, std::byte{0x5a}); large[2] = std::byte{14}; large[3] = std::byte{16};
+    large[24] = std::byte{13}; large[25] = std::byte{252};
+    protocol::update_ipv4_checksum(large);
+    owner_bridge.outbound(large);
+    require(sent.size() > 1 && std::all_of(sent.begin(), sent.end(), [](const auto& packet) {
+        return packet.ciphertext.size() <= 576;
+    }), "large IPv4 datagram is encrypted as bounded fragments");
+    for (const auto& packet : sent) member_bridge.inbound({owner.device_id(), packet});
+    require(delivered.size() == sent.size() && protocol::inspect_ipv4(delivered[1]).fragment_offset > 0,
+            "authenticated fragments reach the adapter for kernel reassembly");
+    large[6] = std::byte{0x40}; protocol::update_ipv4_checksum(large);
+    const auto sent_before = sent.size();
+    owner_bridge.outbound(large);
+    require(sent.size() == sent_before && local_errors.size() == 1 && local_errors[0][21] == std::byte{4},
+            "local DF packet gets an MTU error without transmission");
+    owner_bridge.set_mtu(65535);
+    owner_bridge.outbound(large);
+    member_bridge.inbound({owner.device_id(), sent.back()});
+    require(feedback.size() == 1, "smaller receiving adapter reports its MTU to the authenticated sender");
+    owner_bridge.inbound({member.device_id(), feedback.front()});
+    require(local_errors.size() == 2 && protocol::inspect_ipv4(local_errors.back()).destination == owner_ip,
+            "remote fragmentation-needed ICMP returns through the encrypted network");
+    large[10] ^= std::byte{1};
+    bool checksum_rejected = false;
+    try { owner_bridge.outbound(large); } catch (const std::invalid_argument&) { checksum_rejected = true; }
+    require(checksum_rejected, "bad IPv4 checksum cannot enter the encrypted path");
 }
 
 void test_multicast() {

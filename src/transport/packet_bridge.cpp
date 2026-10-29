@@ -1,5 +1,6 @@
 #include "lanlink/transport/packet_bridge.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
+#include "lanlink/protocol/ipv4.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -93,7 +94,9 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
     }
     const auto source = read_ipv4(ipv4_packet, 12);
     const auto destination = read_ipv4(ipv4_packet, 16);
+    const auto header = protocol::inspect_ipv4(ipv4_packet);
     std::shared_ptr<Session> session;
+    std::uint16_t mtu = 0;
     {
         std::lock_guard lock(mutex_);
         for (const auto& [id, candidate] : sessions_) {
@@ -105,8 +108,11 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
                  protocol::is_ipv4_fanout_destination(
                      destination, state.subnet_address, state.prefix_length))) {
                 session = candidate;
+                mtu = mtu_;
                 if (candidate->multicast.observe(ipv4_packet, network::MulticastMembership::Clock::now()) !=
                     network::MulticastMembership::Report::not_igmp) return;
+                if (protocol::is_ipv4_fanout_destination(destination, state.subnet_address, state.prefix_length) &&
+                    ipv4_packet.size() > std::min<std::uint16_t>(mtu, 1400)) return;
                 if (protocol::is_ipv4_fanout_destination(destination, state.subnet_address, state.prefix_length) &&
                     !candidate->outbound_discovery.permit(ipv4_packet, network::LanDiscoveryGuard::Clock::now())) return;
                 break;
@@ -114,12 +120,17 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
         }
     }
     if (session) {
-        send_(session->cipher->encrypt(ipv4_packet));
+        if (ipv4_packet.size() > mtu && header.dont_fragment) {
+            if (const auto error = protocol::ipv4_fragmentation_needed(ipv4_packet, source, mtu)) inject_(*error);
+            return;
+        }
+        for (const auto& fragment : protocol::fragment_ipv4(ipv4_packet, mtu)) send_(session->cipher->encrypt(fragment));
     }
 }
 
 void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delivery) {
     std::shared_ptr<Session> session;
+    std::uint16_t mtu = 0;
     {
         std::lock_guard lock(mutex_);
         const auto found = sessions_.find(delivery.packet.network_id);
@@ -127,19 +138,32 @@ void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delive
             return;
         }
         session = found->second;
+        mtu = mtu_;
     }
     const auto plaintext = session->cipher->decrypt(delivery.packet,
                                                      delivery.sender_device_id);
+    const auto header = protocol::inspect_ipv4(plaintext);
     if (protocol::is_ipv4_fanout_destination(delivery.packet.destination_ipv4,
                                             session->peers.subnet_address, session->peers.prefix_length)) {
         std::lock_guard lock(mutex_);
+        if (plaintext.size() > std::min<std::uint16_t>(mtu, 1400)) return;
         if (protocol::is_ipv4_multicast(delivery.packet.destination_ipv4) &&
             !session->multicast.receives(delivery.packet.destination_ipv4, read_ipv4(plaintext, 12),
                                         network::MulticastMembership::Clock::now())) return;
         if (!session->inbound_discovery[delivery.sender_device_id].permit(plaintext,
                 network::LanDiscoveryGuard::Clock::now())) return;
     }
-    inject_(plaintext);
+    if (plaintext.size() > mtu && header.dont_fragment) {
+        if (const auto error = protocol::ipv4_fragmentation_needed(plaintext, session->peers.own_address, mtu))
+            send_(session->cipher->encrypt(*error));
+        return;
+    }
+    for (const auto& fragment : protocol::fragment_ipv4(plaintext, mtu)) inject_(fragment);
+}
+
+void VirtualPacketBridge::set_mtu(const std::uint16_t mtu) {
+    if (mtu < 68) throw std::invalid_argument("virtual MTU is below 68");
+    std::lock_guard lock(mutex_); mtu_ = mtu;
 }
 
 void VirtualPacketBridge::synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups) {

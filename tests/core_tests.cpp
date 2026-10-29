@@ -48,6 +48,10 @@ std::filesystem::path make_test_directory() {
 
 void test_configuration() {
     expect(lanlink::core::parse_config("").p2p_enabled,"legacy configuration enables native P2P defaults");
+    expect(lanlink::core::parse_config("").virtual_mtu == 1400 &&
+           lanlink::core::parse_config("virtual_mtu=1280\n").virtual_mtu == 1280, "virtual MTU configuration");
+    for (const auto invalid : {"virtual_mtu=575\n", "virtual_mtu=9001\n", "virtual_mtu=65536\n"})
+        expect_error([&] { static_cast<void>(lanlink::core::parse_config(invalid)); }, "invalid virtual MTU");
     const auto peer=lanlink::core::parse_config("p2p_enabled=false\np2p_stun_host=192.168.1.2\np2p_stun_port=3479\n");
     expect(!peer.p2p_enabled && peer.p2p_stun_host=="192.168.1.2" && peer.p2p_stun_port==3479,"P2P configuration");
     for(const auto invalid:{"p2p_enabled=yes\n","p2p_stun_host=stun.example.com\n","p2p_stun_host=224.0.0.1\n","p2p_stun_port=0\n"})

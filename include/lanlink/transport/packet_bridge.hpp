@@ -29,6 +29,7 @@ public:
     void inbound(const protocol::ForwardedNetworkPacket& delivery);
     void clear() noexcept;
     void synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups);
+    void set_mtu(std::uint16_t mtu);
 
 private:
     struct Session {
@@ -45,6 +46,7 @@ private:
     InjectHandler inject_;
     std::mutex mutex_;
     std::map<protocol::NetworkId, std::shared_ptr<Session>> sessions_;
+    std::uint16_t mtu_ = 65535;
 };
 
 }

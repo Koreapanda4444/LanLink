@@ -30,6 +30,7 @@ public:
     virtual void stop() noexcept = 0;
     [[nodiscard]] virtual std::exception_ptr pump_error() const noexcept = 0;
     [[nodiscard]] virtual std::optional<std::vector<std::uint32_t>> multicast_groups() const { return std::nullopt; }
+    [[nodiscard]] virtual std::uint16_t packet_mtu() const noexcept { return 1400; }
 };
 
 }

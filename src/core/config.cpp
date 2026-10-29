@@ -104,7 +104,11 @@ RuntimeConfig parse_config(const std::string_view content) {
                 fail(line_number, "duplicate key " + key);
             }
 
-            if(key=="p2p_enabled") {
+            if (key == "virtual_mtu") {
+                const auto mtu = parse_unsigned(value, key_view, line_number);
+                if (mtu < 576 || mtu > 9000) fail(line_number, "virtual_mtu must be between 576 and 9000");
+                config.virtual_mtu = static_cast<std::uint16_t>(mtu);
+            } else if(key=="p2p_enabled") {
                 if(value!="true" && value!="false")fail(line_number,"p2p_enabled must be true or false");
                 config.p2p_enabled=value=="true";
             } else if(key=="p2p_stun_host")config.p2p_stun_host=value;
@@ -249,6 +253,7 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
 }
 
 void validate_config(const RuntimeConfig& config) {
+    if (config.virtual_mtu < 576 || config.virtual_mtu > 9000) throw std::runtime_error("invalid virtual MTU");
     if(!config.p2p_stun_port)throw std::runtime_error("invalid STUN port");
     if(!config.p2p_stun_host.empty()) {
         const auto host=std::string_view(config.p2p_stun_host);std::size_t offset=0;

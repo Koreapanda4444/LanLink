@@ -39,6 +39,7 @@ VirtualNetwork::VirtualNetwork(std::shared_ptr<VirtualAdapter> adapter,
             if (path.send(packet) != transport::PacketSendResult::accepted)
                 throw std::runtime_error("encrypted packet path unavailable");
         }, [device](std::span<const std::byte> packet) { device->inject(packet); });
+    state_->bridge->set_mtu(device->packet_mtu());
 }
 
 VirtualNetwork::~VirtualNetwork() { stop(); }
