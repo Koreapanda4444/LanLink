@@ -104,7 +104,11 @@ RuntimeConfig parse_config(const std::string_view content) {
                 fail(line_number, "duplicate key " + key);
             }
 
-            if (key == "virtual_mtu") {
+            if (key=="bootstrap_mode") config.bootstrap_mode=value;
+            else if(key=="directory_url") config.directory_url=value;
+            else if(key=="directory_public_key") config.directory_public_key=value;
+            else if(key=="directory_relay_id") config.directory_relay_id=value;
+            else if (key == "virtual_mtu") {
                 const auto mtu = parse_unsigned(value, key_view, line_number);
                 if (mtu < 576 || mtu > 9000) fail(line_number, "virtual_mtu must be between 576 and 9000");
                 config.virtual_mtu = static_cast<std::uint16_t>(mtu);
@@ -253,6 +257,13 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
 }
 
 void validate_config(const RuntimeConfig& config) {
+    if(config.bootstrap_mode!="manual" && config.bootstrap_mode!="official" && config.bootstrap_mode!="self_hosted")
+        throw std::runtime_error("bootstrap_mode must be manual, official or self_hosted");
+    if(config.bootstrap_mode!="manual" && (!config.directory_url.starts_with("https://") || config.directory_url.size()>2048 ||
+       config.directory_url.find_first_of("\r\n\t @#\\")!=std::string::npos || config.directory_public_key.size()!=64 ||
+       !std::all_of(config.directory_public_key.begin(),config.directory_public_key.end(),[](unsigned char c){return std::isxdigit(c)!=0;}) ||
+       config.directory_public_key==std::string(64,'0')))
+        throw std::runtime_error("directory bootstrap requires an HTTPS URL and pinned Ed25519 public key");
     if (config.virtual_mtu < 576 || config.virtual_mtu > 9000) throw std::runtime_error("invalid virtual MTU");
     if(!config.p2p_stun_port)throw std::runtime_error("invalid STUN port");
     if(!config.p2p_stun_host.empty()) {

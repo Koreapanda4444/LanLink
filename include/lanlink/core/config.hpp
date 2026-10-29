@@ -11,6 +11,10 @@
 namespace lanlink::core {
 
 struct RuntimeConfig {
+    std::string bootstrap_mode = "manual";
+    std::string directory_url;
+    std::string directory_public_key;
+    std::string directory_relay_id;
     std::uint16_t virtual_mtu = 1400;
     bool p2p_enabled=true;
     std::string p2p_stun_host;

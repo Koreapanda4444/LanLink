@@ -1,6 +1,8 @@
 #include "windows_service.hpp"
 
 #include "lanlink/core/config.hpp"
+#include "lanlink/auth/directory.hpp"
+#include "lanlink/transport/directory_fetch.hpp"
 #include "lanlink/core/component.hpp"
 #include "lanlink/core/logger.hpp"
 #include "lanlink/protocol/local_control.hpp"
@@ -49,8 +51,10 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
               << " " << lanlink::core::project_version() << '\n';
 
     lanlink::transport::QuicClientOptions options;
-    options.relay_host = config.relay_host;
-    options.port = config.relay_port;
+    const auto bootstrap=lanlink::auth::resolve_bootstrap(config,lanlink::transport::fetch_directory,
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
+    if(!bootstrap.error.empty()) logger.warning(bootstrap.error);
+    options.relay_host=bootstrap.relay.host; options.port=bootstrap.relay.port;
     options.identity_file = config.device_identity_file;
     options.auth_token_file = config.auth_token_file;
     options.handshake_timeout = std::chrono::milliseconds{config.quic_handshake_timeout_ms};

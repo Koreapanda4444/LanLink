@@ -85,6 +85,7 @@ target_include_directories(lanlink_protocol
 lanlink_enable_warnings(lanlink_protocol)
 
 add_library(lanlink_auth STATIC
+    src/auth/directory.cpp
     src/auth/access_secret.cpp
     src/auth/device_keys.cpp
     src/auth/network_keys.cpp
@@ -158,6 +159,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     lanlink_enable_warnings(lanlink_linux_tap)
 endif()
 
+add_executable(lanlink_directory_sign apps/relay/directory_sign.cpp)
+target_link_libraries(lanlink_directory_sign PRIVATE lanlink_auth)
+set_target_properties(lanlink_directory_sign PROPERTIES OUTPUT_NAME "lanlink-directory-sign")
+lanlink_enable_warnings(lanlink_directory_sign)
+
 add_library(lanlink_p2p STATIC src/p2p/local_candidates.cpp src/p2p/udp_socket.cpp src/p2p/stun.cpp src/p2p/punch.cpp src/p2p/connectivity.cpp src/p2p/peer_authorization.cpp src/p2p/path_quality.cpp)
 target_include_directories(lanlink_p2p PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_p2p PUBLIC lanlink_auth lanlink_core PRIVATE OpenSSL::Crypto)
@@ -177,6 +183,7 @@ if(LANLINK_FOUNDATION_ONLY)
 endif()
 
 add_library(lanlink_transport STATIC
+    src/transport/directory_fetch.cpp
     src/p2p/direct_quic.cpp
     src/transport/quic.cpp
     src/transport/reconnect.cpp
@@ -203,7 +210,7 @@ target_link_libraries(lanlink_transport
 )
 
 if(WIN32)
-    target_link_libraries(lanlink_transport PRIVATE ntdll ws2_32)
+    target_link_libraries(lanlink_transport PRIVATE ntdll ws2_32 winhttp)
 
     target_sources(lanlink_transport PRIVATE src/transport/wintun_adapter.cpp src/transport/windows_certificate.cpp)
     target_link_libraries(lanlink_transport PRIVATE iphlpapi Crypt32 ncrypt)
@@ -277,6 +284,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_directory_tests tests/directory_tests.cpp)
+    target_link_libraries(lanlink_directory_tests PRIVATE lanlink_auth lanlink_core)
+    lanlink_enable_warnings(lanlink_directory_tests)
+    add_test(NAME lanlink-directory COMMAND lanlink_directory_tests)
     add_executable(lanlink_user_access_tests tests/user_access_tests.cpp)
     target_link_libraries(lanlink_user_access_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_user_access_tests)
@@ -491,6 +502,15 @@ if(BUILD_TESTING)
         find_program(LANLINK_BASH_EXECUTABLE bash)
 
         if(LANLINK_OPENSSL_EXECUTABLE AND LANLINK_BASH_EXECUTABLE)
+            add_executable(lanlink_directory_fetch_tests tests/directory_fetch_tests.cpp)
+            target_link_libraries(lanlink_directory_fetch_tests PRIVATE lanlink_transport lanlink_auth)
+            lanlink_enable_warnings(lanlink_directory_fetch_tests)
+            add_test(NAME lanlink-directory-https
+                COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/directory_https.py
+                    ${LANLINK_OPENSSL_EXECUTABLE} $<TARGET_FILE:lanlink_directory_sign>
+                    $<TARGET_FILE:lanlink_directory_fetch_tests> ${PROJECT_SOURCE_DIR}/deploy/directory/serve.py)
+            set_tests_properties(lanlink-directory-https PROPERTIES TIMEOUT 40)
+
             add_executable(lanlink_network_client_tests
                 tests/network_client_tests.cpp
             )

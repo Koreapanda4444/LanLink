@@ -1,4 +1,6 @@
 #include "lanlink/core/config.hpp"
+#include "lanlink/auth/directory.hpp"
+#include "lanlink/transport/directory_fetch.hpp"
 #include "lanlink/network/linux_tap.hpp"
 #include "lanlink/network/virtual_network.hpp"
 #include "lanlink/session/peer_packet_path.hpp"
@@ -38,7 +40,10 @@ int main(int argc, char* argv[]) {
         lanlink::core::Logger logger(config.log_directory / "l2.log", "linux-l2",
             config.log_level, config.log_max_size_bytes, config.log_max_files);
         lanlink::transport::QuicClientOptions options;
-        options.relay_host = config.relay_host; options.port = config.relay_port;
+        const auto bootstrap=lanlink::auth::resolve_bootstrap(config,lanlink::transport::fetch_directory,
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
+        if(!bootstrap.error.empty()) logger.warning(bootstrap.error);
+        options.relay_host=bootstrap.relay.host; options.port=bootstrap.relay.port;
         options.identity_file = config.device_identity_file; options.auth_token_file = config.auth_token_file;
         options.handshake_timeout = std::chrono::milliseconds{config.quic_handshake_timeout_ms};
         options.authentication_timeout = std::chrono::milliseconds{config.authentication_timeout_ms};
