@@ -64,6 +64,7 @@ lanlink_enable_warnings(lanlink_core)
 add_library(lanlink_protocol STATIC
     src/protocol/ipv4.cpp
     src/protocol/game_profiles.cpp
+    src/network/ethernet.cpp
     src/p2p/candidates.cpp
     src/protocol/path_diagnostics.cpp
     src/protocol/capabilities.cpp
@@ -147,6 +148,13 @@ target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core PRIVATE OpenSSL::Crypto)
 lanlink_enable_warnings(lanlink_packet_engine)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(lanlink_linux_tap STATIC src/network/linux_tap.cpp)
+    target_include_directories(lanlink_linux_tap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lanlink_linux_tap PUBLIC lanlink_packet_engine)
+    lanlink_enable_warnings(lanlink_linux_tap)
+endif()
+
 add_library(lanlink_p2p STATIC src/p2p/local_candidates.cpp src/p2p/udp_socket.cpp src/p2p/stun.cpp src/p2p/punch.cpp src/p2p/connectivity.cpp src/p2p/peer_authorization.cpp src/p2p/path_quality.cpp)
 target_include_directories(lanlink_p2p PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_p2p PUBLIC lanlink_auth lanlink_core PRIVATE OpenSSL::Crypto)
@@ -205,6 +213,13 @@ target_include_directories(lanlink_session PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(lanlink_session PUBLIC lanlink_transport)
 lanlink_enable_warnings(lanlink_session)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(lanlink_l2 apps/service/linux_l2.cpp)
+    target_link_libraries(lanlink_l2 PRIVATE lanlink_session lanlink_linux_tap)
+    set_target_properties(lanlink_l2 PROPERTIES OUTPUT_NAME "lanlink-l2")
+    lanlink_enable_warnings(lanlink_l2)
+endif()
+
 add_executable(lanlink_relay
     apps/relay/main.cpp
 )
@@ -259,6 +274,15 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_ethernet_tests tests/ethernet_tests.cpp)
+    target_link_libraries(lanlink_ethernet_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_ethernet_tests)
+    add_test(NAME lanlink-ethernet COMMAND lanlink_ethernet_tests)
+    if(TARGET lanlink_linux_tap)
+        add_executable(lanlink_linux_tap_tests tests/linux_tap_tests.cpp)
+        target_link_libraries(lanlink_linux_tap_tests PRIVATE lanlink_linux_tap)
+        lanlink_enable_warnings(lanlink_linux_tap_tests)
+    endif()
     add_executable(lanlink_ipv4_tests tests/ipv4_tests.cpp)
     target_link_libraries(lanlink_ipv4_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_ipv4_tests)

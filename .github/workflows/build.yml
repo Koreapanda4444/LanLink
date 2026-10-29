@@ -99,6 +99,9 @@ jobs:
         run: cmake --build build --config Release --parallel 2
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
+      - name: Verify isolated Linux TAP Ethernet networking
+        if: runner.os == 'Linux'
+        run: sudo timeout 30 ./build/lanlink_linux_tap_tests
       - name: Test compatibility with the released v0.2.2 relay
         if: runner.os == 'Linux'
         env:
