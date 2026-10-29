@@ -1,12 +1,12 @@
-# LanLink 0.5.0 설치
+# LanLink 0.6.0 설치
 
 ## 파일 선택
 
 | 파일 | 용도 |
 | --- | --- |
-| `LanLink-Setup-0.5.0-windows-x64.exe` | Windows 설치 프로그램 |
-| `LanLink-0.5.0-windows-x64.zip` | Windows 수동 설치 패키지 |
-| `LanLink-relay-0.5.0-linux-x86_64.tar.gz` | Linux x64 릴레이 서버 |
+| `LanLink-Setup-0.6.0-windows-x64.exe` | Windows 설치 프로그램 |
+| `LanLink-0.6.0-windows-x64.zip` | Windows 수동 설치 패키지 |
+| `LanLink-relay-0.6.0-linux-x86_64.tar.gz` | Linux x64 릴레이 서버 |
 
 `SHA256SUMS`에서 받은 파일의 해시를 확인한다. PowerShell에서는 `Get-FileHash 파일이름 -Algorithm SHA256`, Linux에서는 `sha256sum --check SHA256SUMS --ignore-missing`을 사용한다. `release-manifest.json`은 해당 빌드의 소스 커밋과 패키지 정보를 담는다.
 
@@ -70,7 +70,7 @@ relay_control_requests_per_second=32
 
 설치 시작 시 한국어 또는 영어를 선택한다. 무인 설치에서는 `/LANG=ko` 또는 `/LANG=en`으로 지정할 수 있다.
 
-`LanLink-Setup-0.5.0-windows-x64.exe`를 실행하고 릴레이 주소, 포트와 인증 토큰 파일을 입력한다. 관리자 권한이 필요하다. 기본 프로그램 위치는 `C:\Program Files\LanLink`, 데이터 위치는 `C:\ProgramData\LanLink`다. 필요한 DLL과 서명된 공식 Wintun을 포함하며, LanLink 자체 실행 파일과 설치 프로그램은 서명되지 않았다.
+`LanLink-Setup-0.6.0-windows-x64.exe`를 실행하고 릴레이 주소, 포트와 인증 토큰 파일을 입력한다. 관리자 권한이 필요하다. 기본 프로그램 위치는 `C:\Program Files\LanLink`, 데이터 위치는 `C:\ProgramData\LanLink`다. 필요한 DLL과 서명된 공식 Wintun을 포함하며, LanLink 자체 실행 파일과 설치 프로그램은 서명되지 않았다.
 
 설치가 끝나면 시작 메뉴에서 LanLink를 연다. 네트워크를 만들고 ID를 공유하거나, 전달받은 ID로 가입 요청을 보낸다. 소유자가 승인하면 가상 IP가 표시된다. 게임이나 애플리케이션에서는 상대 기기의 가상 IP를 사용한다. 창을 닫아도 Windows 서비스가 연결을 유지한다.
 
@@ -88,3 +88,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-LanLink.ps1 `
 새 Windows 설치 EXE를 실행한다. 기존 연결을 유지하려면 릴레이 주소와 토큰 파일을 비워 두고 원래 프로그램·데이터 디렉터리를 사용한다. 수동 설치는 새 패키지의 설치 스크립트를 기존 디렉터리에 대해 다시 실행한다. 릴레이도 새 패키지의 설치기를 다시 실행한다. 설정, 기기 인증 정보와 릴레이 데이터베이스를 유지한다.
 
 Windows는 설치된 앱 목록이나 `C:\Program Files\LanLink\Uninstall-LanLink.ps1`에서 제거한다. 릴레이는 `sudo bash /opt/lanlink/uninstall-relay.sh`로 제거한다. 기본 제거는 데이터를 남긴다. Windows의 `-RemoveData`, 릴레이의 `--remove-data`는 인증 정보와 저장 상태까지 삭제한다.
+
+## 데스크톱 첫 실행과 언어
+
+첫 실행에서 표시 언어를 선택하고 서비스 인증 상태를 확인한 뒤 네트워크를 만들거나 초대 링크·코드로 참여한다. 왼쪽의 언어 선택은 설치 언어와 독립적이며 사용자별로 보존된다. 시작 안내는 다시 열 수 있다. 자체 릴레이의 주소·포트·인증 토큰은 설치 프로그램에서 설정하며 공식 계정은 필요하지 않다.
+
+비밀번호 방은 생성 창에서 비밀번호와 관리자 승인 여부를 설정한다. 초대 링크는 기본 15분·1회 사용이며 관리자가 남은 링크를 회수할 수 있다. 계정/기기 등록, Directory와 가입 정책은 README의 기능별 안내를 참고한다. 릴레이 데이터베이스는 스키마 6으로 자동 마이그레이션되므로 업그레이드 전 백업해야 한다.

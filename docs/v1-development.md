@@ -29,13 +29,13 @@
 | 23 | `fix(network): prevent fanout loops and duplicate injection` — P2P-Relay 전환 시 중복·브로드캐스트 증폭 방지 | 구현 |
 | 24 | `feat(network): add optional platform-specific L2 backend` — 실제 TAP/브리지 기반 선택적 L2, 최소 1개 지원 OS에서 실동작·격리 검증; 불가능한 OS는 명시 | 구현 |
 | 25 | `feat(ui): add game network diagnostics and compatibility guidance` — LAN 검색 실패 원인/방화벽/라우팅/연결 방법 안내 | 구현 |
-| 26 | `feat(identity): introduce optional user account and device enrollment` — 필수 계정 없이 자체 서버 사용 유지, 장치 등록·폐기 지원 | 대기 |
-| 27 | `feat(directory): add configurable official and self-hosted bootstrap` — 검증 가능한 Directory API·서버 목록 서명/인증·수동 URL 대체 불가 방지 | 대기 |
-| 28 | `feat(network): implement password-protected network joining` — KDF·가입 제한·기존 관리자 승인과 충돌 없는 정책 | 대기 |
-| 29 | `feat(invite): add expiring invitation links and one-time codes` — 기한·사용 횟수·권한·회수 기능 | 대기 |
-| 30 | `feat(ui): simplify network creation and join workflows` — 방 생성·참여 최소 단계, 네트워크 상태 표시 | 대기 |
-| 31 | `feat(ui): add presence, path diagnostics and network overview` — 실시간 멤버 상태·가상 IP 복사·P2P/Relay 표시 | 대기 |
-| 32 | `feat(onboarding): implement first-run setup and UI localization` — 기존 설치 언어 기능 유지, 데스크톱 UI 한국어/영어 및 첫 실행 안내 | 대기 |
+| 26 | `feat(identity): introduce optional user account and device enrollment` — 필수 계정 없이 자체 서버 사용 유지, 장치 등록·폐기 지원 | 구현 |
+| 27 | `feat(directory): add configurable official and self-hosted bootstrap` — 검증 가능한 Directory API·서버 목록 서명/인증·수동 URL 대체 불가 방지 | 구현 |
+| 28 | `feat(network): implement password-protected network joining` — KDF·가입 제한·기존 관리자 승인과 충돌 없는 정책 | 구현 |
+| 29 | `feat(invite): add expiring invitation links and one-time codes` — 기한·사용 횟수·권한·회수 기능 | 구현 |
+| 30 | `feat(ui): simplify network creation and join workflows` — 방 생성·참여 최소 단계, 네트워크 상태 표시 | 구현 |
+| 31 | `feat(ui): add presence, path diagnostics and network overview` — 실시간 멤버 상태·가상 IP 복사·P2P/Relay 표시 | 구현 |
+| 32 | `feat(onboarding): implement first-run setup and UI localization` — 기존 설치 언어 기능 유지, 데스크톱 UI 한국어/영어 및 첫 실행 안내 | 구현 |
 | 33 | `feat(topology): support managed mesh policies` — 허용 멤버 간 네트워크 경로/권한 정책, P2P·Relay 일치 | 대기 |
 | 34 | `feat(topology): add hub-and-spoke restrictions` — spoke 간 통신 제한, hub 차단 시 우회 경로 방지 | 대기 |
 | 35 | `feat(gateway): register approved gateway nodes` — 관리자 승인된 gateway만 등록·공지 | 대기 |
@@ -65,7 +65,7 @@
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
-01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
+01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
 
 ## 기능별 커밋 SHA
 
@@ -98,3 +98,11 @@
 | 23 | [76140a6](https://github.com/Koreapanda4444/LanLink/commit/76140a6632ce72c84eb461b8c6ea1d25a9a63ba8) |
 | 24 | [79dad74](https://github.com/Koreapanda4444/LanLink/commit/79dad74ddebb791c815381dd0cd9dc0d227e1ba5) |
 | 25 | 게임 진단 및 v0.5 메타데이터를 포함한 이 문서의 변경 커밋 |
+
+| 26 | [3935bfc](https://github.com/Koreapanda4444/LanLink/commit/3935bfcd21a7b4157b6e96fd58c0c29780596284) |
+| 27 | [857247b](https://github.com/Koreapanda4444/LanLink/commit/857247b7b46ce7cc3cf7773575a525cb3f632c25) |
+| 28 | [c1acd66](https://github.com/Koreapanda4444/LanLink/commit/c1acd664c4596ab9e902b836cab6b465f2869de3) |
+| 29 | [d5e8edc](https://github.com/Koreapanda4444/LanLink/commit/d5e8edc7443d2ec6cfdec4b3c3e1532d00c92d79) |
+| 30 | [6aa28a9](https://github.com/Koreapanda4444/LanLink/commit/6aa28a98d55401135c89dd9c14f9d321b4254180) |
+| 31 | [c96a327](https://github.com/Koreapanda4444/LanLink/commit/c96a3277cd5540f4b7d650d62fae375454abf278) |
+| 32 | 첫 실행·UI 번역 및 v0.6.0 메타데이터를 포함한 이 문서의 변경 커밋 |

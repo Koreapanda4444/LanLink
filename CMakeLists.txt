@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(LanLink VERSION 0.5.0 LANGUAGES CXX)
+project(LanLink VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +41,7 @@ function(lanlink_enable_warnings target)
 endfunction()
 
 add_library(lanlink_core STATIC
+    src/core/localization.cpp
     src/core/error.cpp
     src/core/config.cpp
     src/core/component.cpp
@@ -266,11 +267,12 @@ if(WIN32)
     lanlink_enable_warnings(lanlink_service)
 
     add_executable(lanlink_ui WIN32
+        apps/ui/preferences.cpp
         apps/ui/main.cpp
         apps/ui/network_model.cpp
     )
 
-    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc imgui::imgui d3d11 dxgi shell32 windowscodecs ole32)
+    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc advapi32 imgui::imgui d3d11 dxgi shell32 windowscodecs ole32)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
 
@@ -287,6 +289,10 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_localization_tests tests/localization_tests.cpp)
+    target_link_libraries(lanlink_localization_tests PRIVATE lanlink_core)
+    lanlink_enable_warnings(lanlink_localization_tests)
+    add_test(NAME lanlink-localization COMMAND lanlink_localization_tests)
     add_executable(lanlink_network_workflow_tests tests/network_workflow_tests.cpp)
     target_link_libraries(lanlink_network_workflow_tests PRIVATE lanlink_protocol)
     lanlink_enable_warnings(lanlink_network_workflow_tests)

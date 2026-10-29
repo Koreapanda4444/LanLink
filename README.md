@@ -12,7 +12,7 @@ Windows 서비스가 연결과 가상 어댑터를 유지하고, 데스크톱 UI
 
 릴레이는 특정 클라우드에 종속되지 않는다. Oracle Cloud, 다른 VPS, 자체 서버에서 운영할 수 있다. 배포 파일은 Linux x64용이며 glibc 2.34 이상과 systemd를 기준으로 한다. 같은 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검증한다. 서버 설치와 방화벽 설정은 [설치 안내](release/INSTALL.md)를 참고한다.
 
-설치를 시작할 때 한국어 또는 영어를 선택할 수 있다. 이 선택은 설치 프로그램의 표시 언어에 적용되며, 데스크톱 UI는 영어로 제공한다.
+설치를 시작할 때 한국어 또는 영어를 선택할 수 있다. 설치 언어와 별도로 데스크톱 UI에서도 한국어·영어를 전환할 수 있으며 첫 실행 안내를 제공한다.
 
 ## 구성
 
@@ -35,4 +35,4 @@ Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux 
 
 ## v1.0 개발
 
-현재 소스는 v0.5.0 마일스톤(기획서 Commit 01~25)이다. Direct QUIC/Relay 경로에 더해 제한된 broadcast·multicast 검색, MTU/조각 처리, 중복·반사 방지와 게임별 진단을 포함한다. Linux에는 [선택적 TAP Ethernet 모드](docs/l2.md)를 제공하며 Windows/macOS L2는 지원하지 않는다. 공개 안정판 v0.2.2의 설정·장치 ID와 Relay 경로를 유지하며 개발 아티팩트는 공개 Release와 구분한다. [60개 커밋 로드맵](docs/v1-development.md), [P2P 설정](docs/p2p.md), [검증 범위](docs/verification-v0.5.md), [게임 호환성](docs/game-compatibility.md), [빌드 구성](docs/building.md)을 참고한다.
+현재 소스는 v0.6.0 마일스톤(기획서 Commit 01~32)이다. Direct QUIC/Relay, LAN 검색·게임 진단에 더해 선택 계정·기기 등록/폐기, 서명된 서버 목록, 비밀번호 가입, 만료 초대 링크와 한국어·영어 UI를 제공한다. 자체 서버의 기존 토큰 인증은 유지하며 공식 계정은 필수가 아니다. 공개 안정판은 v0.2.2이며 새 공식 인프라와 공개 Release는 이 작업에서 배포하지 않는다. [60개 커밋 로드맵](docs/v1-development.md), [v0.6 검증 범위](docs/verification-v0.6.md), [계정](docs/user-accounts.md), [서버 탐색](docs/directory.md), [비밀번호](docs/password-joining.md), [초대](docs/invitations.md), [P2P](docs/p2p.md), [게임 호환성](docs/game-compatibility.md), [선택적 Linux L2](docs/l2.md)를 참고한다.
