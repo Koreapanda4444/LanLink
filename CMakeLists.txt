@@ -142,7 +142,7 @@ target_link_libraries(lanlink_relay_domain
 
 lanlink_enable_warnings(lanlink_relay_domain)
 
-add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp src/network/virtual_network.cpp src/network/multicast.cpp src/network/lan_discovery.cpp)
+add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp src/network/virtual_network.cpp src/network/multicast.cpp src/network/lan_discovery.cpp src/network/packet_history.cpp)
 target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core PRIVATE OpenSSL::Crypto)
 lanlink_enable_warnings(lanlink_packet_engine)

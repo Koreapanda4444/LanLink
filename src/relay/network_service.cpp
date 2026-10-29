@@ -229,6 +229,7 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
     std::erase_if(sender_fanout_, [&](const auto& entry) {
         return entry.first.second == actor;
     });
+    std::erase_if(fanout_replay_, [&](const auto& entry) { return entry.first.second == actor; });
     const auto networks = store_.list_networks_for_device(actor);
     std::vector<RoutedPeerStateChange> changes;
     for (const auto& network : networks) {
@@ -272,6 +273,13 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
         if (packet.ciphertext.size() > 1400) {
             return {};
         }
+        auto& replay = fanout_replay_[{packet.network_id, actor}];
+        const auto& session_key = active_keys_.at(actor).signed_key.encryption_public_key;
+        if (replay.epoch != packet.key_epoch || replay.session_key != session_key)
+            replay = FanoutReplay{packet.key_epoch, session_key, {}, 0, 0};
+        if (replay.highest && (!std::equal(replay.nonce_prefix.begin(), replay.nonce_prefix.end(), packet.nonce.begin()) ||
+            (packet.sequence <= replay.highest && (replay.highest - packet.sequence >= 64 ||
+             (replay.seen & (std::uint64_t{1} << (replay.highest - packet.sequence))))))) return {};
         std::vector<RoutedEncryptedPacket> deliveries;
         for (const auto& lease : leases) {
             if (lease.device_id != actor && active_keys_.contains(lease.device_id)) {
@@ -306,6 +314,12 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
         }
         sender_bucket.tokens -= 1;
         network_bucket.tokens -= static_cast<double>(deliveries.size());
+        if (!replay.highest) std::copy_n(packet.nonce.begin(), replay.nonce_prefix.size(), replay.nonce_prefix.begin());
+        if (packet.sequence > replay.highest) {
+            const auto distance = packet.sequence - replay.highest;
+            replay.seen = distance >= 64 ? 1 : (replay.seen << distance) | 1;
+            replay.highest = packet.sequence;
+        } else replay.seen |= std::uint64_t{1} << (replay.highest - packet.sequence);
         return deliveries;
     }
     const auto destination = std::find_if(leases.begin(), leases.end(),

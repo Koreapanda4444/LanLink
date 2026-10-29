@@ -159,6 +159,9 @@ void test_fanout(const std::filesystem::path& directory) {
             "directed subnet broadcast is replicated");
     require(first_cipher.decrypt(directed_packet, owner.device_id()) == directed,
             "directed broadcast keeps its IPv4 destination");
+    for (int index = 0; index < 20; ++index)
+        require(service.route_encrypted_packet(owner.device_id(), directed_packet).empty(),
+                "replayed fanout is rejected before amplification and consumes no fresh budget");
 
     auto tampered = directed_packet;
     tampered.destination_ipv4 = 0xffffffffU;

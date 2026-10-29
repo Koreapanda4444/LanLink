@@ -146,7 +146,13 @@ void test_bridge(const std::filesystem::path& directory) {
         member_bridge.inbound({owner.device_id(), sent.back()});
         require(delivered.back() == discovery,
                 "relay discovery packet returns to Wintun unchanged");
+        const auto before = sent.size();
+        member_bridge.outbound(discovery);
+        auto reflected = discovery; reflected[8] = std::byte{63}; protocol::update_ipv4_checksum(reflected);
+        member_bridge.outbound(reflected);
+        require(sent.size() == before, "injected fanout cannot re-enter the encrypted path");
     }
+    require(member_bridge.reflected_packets() == 4, "fanout reflections are counted across TTL changes");
 
     member_bridge.synchronize(std::nullopt, {});
     member_bridge.inbound({owner.device_id(), sent[1]});

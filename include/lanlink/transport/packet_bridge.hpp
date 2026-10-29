@@ -4,6 +4,7 @@
 #include "lanlink/session/network_state.hpp"
 #include "lanlink/network/multicast.hpp"
 #include "lanlink/network/lan_discovery.hpp"
+#include "lanlink/network/packet_history.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -30,6 +31,7 @@ public:
     void clear() noexcept;
     void synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups);
     void set_mtu(std::uint16_t mtu);
+    [[nodiscard]] std::uint64_t reflected_packets() const;
 
 private:
     struct Session {
@@ -40,11 +42,13 @@ private:
         network::MulticastMembership multicast;
         network::LanDiscoveryGuard outbound_discovery;
         std::map<auth::DeviceId, network::LanDiscoveryGuard> inbound_discovery;
+        network::PacketHistory injected_fanout;
+        std::uint64_t reflected = 0;
     };
 
     SendHandler send_;
     InjectHandler inject_;
-    std::mutex mutex_;
+    mutable std::recursive_mutex mutex_;
     std::map<protocol::NetworkId, std::shared_ptr<Session>> sessions_;
     std::uint16_t mtu_ = 65535;
 };

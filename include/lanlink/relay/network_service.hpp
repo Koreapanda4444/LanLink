@@ -6,6 +6,7 @@
 #include "lanlink/p2p/candidates.hpp"
 
 #include <chrono>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -157,6 +158,14 @@ private:
         bool initialized = false;
     };
 
+    struct FanoutReplay {
+        std::uint64_t epoch = 0;
+        auth::EncryptionPublicKey session_key{};
+        std::array<std::byte, 8> nonce_prefix{};
+        std::uint32_t highest = 0;
+        std::uint64_t seen = 0;
+    };
+
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;
     TimeSource time_source_;
@@ -166,6 +175,7 @@ private:
     std::map<auth::DeviceId, ActiveKey> active_keys_;
     std::map<std::pair<storage::NetworkId, auth::DeviceId>, FanoutBucket> sender_fanout_;
     std::map<storage::NetworkId, FanoutBucket> network_fanout_;
+    std::map<std::pair<storage::NetworkId, auth::DeviceId>, FanoutReplay> fanout_replay_;
 };
 
 }

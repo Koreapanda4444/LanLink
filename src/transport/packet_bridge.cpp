@@ -79,7 +79,7 @@ void VirtualPacketBridge::synchronize(
             state, network.key, identity->signed_key,
             std::make_shared<auth::NetworkPacketCipher>(
                 state.network_id, state.key_epoch, network.key.key,
-                identity->device_id, identity->signed_key, state.own_address), {}, {}, {}});
+                identity->device_id, identity->signed_key, state.own_address), {}, {}, {}, {}, 0});
         session->cipher->update_peers(state);
         if (!updated.emplace(state.network_id, std::move(session)).second) {
             throw std::invalid_argument("duplicate virtual packet network");
@@ -102,6 +102,10 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
         for (const auto& [id, candidate] : sessions_) {
             static_cast<void>(id);
             const auto& state = candidate->peers;
+            if (protocol::is_ipv4_fanout_destination(destination, state.subnet_address, state.prefix_length) &&
+                candidate->injected_fanout.contains(ipv4_packet, network::PacketHistory::Clock::now())) {
+                ++candidate->reflected; return;
+            }
             const auto mask = 0xffffffffU << (32U - state.prefix_length);
             if (source == state.own_address &&
                 (ipv4_packet[9] == std::byte{2} || (destination & mask) == state.subnet_address ||
@@ -130,6 +134,7 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
 
 void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delivery) {
     std::shared_ptr<Session> session;
+    protocol::NetworkPeerState peers;
     std::uint16_t mtu = 0;
     {
         std::lock_guard lock(mutex_);
@@ -138,27 +143,48 @@ void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delive
             return;
         }
         session = found->second;
+        peers = session->peers;
         mtu = mtu_;
     }
     const auto plaintext = session->cipher->decrypt(delivery.packet,
                                                      delivery.sender_device_id);
     const auto header = protocol::inspect_ipv4(plaintext);
+    const auto current = [&] {
+        const auto found = sessions_.find(delivery.packet.network_id);
+        if (found == sessions_.end() || found->second != session) return false;
+        const auto before = std::find_if(peers.peers.begin(), peers.peers.end(),
+            [&](const auto& peer) { return peer.device_id == delivery.sender_device_id; });
+        return before != peers.peers.end() && std::find(session->peers.peers.begin(), session->peers.peers.end(), *before) != session->peers.peers.end();
+    };
     if (protocol::is_ipv4_fanout_destination(delivery.packet.destination_ipv4,
-                                            session->peers.subnet_address, session->peers.prefix_length)) {
+                                            peers.subnet_address, peers.prefix_length)) {
         std::lock_guard lock(mutex_);
+        if (!current()) return;
         if (plaintext.size() > std::min<std::uint16_t>(mtu, 1400)) return;
         if (protocol::is_ipv4_multicast(delivery.packet.destination_ipv4) &&
             !session->multicast.receives(delivery.packet.destination_ipv4, read_ipv4(plaintext, 12),
                                         network::MulticastMembership::Clock::now())) return;
         if (!session->inbound_discovery[delivery.sender_device_id].permit(plaintext,
                 network::LanDiscoveryGuard::Clock::now())) return;
+        session->injected_fanout.remember(plaintext, network::PacketHistory::Clock::now());
     }
     if (plaintext.size() > mtu && header.dont_fragment) {
-        if (const auto error = protocol::ipv4_fragmentation_needed(plaintext, session->peers.own_address, mtu))
+        if (const auto error = protocol::ipv4_fragmentation_needed(plaintext, peers.own_address, mtu))
             send_(session->cipher->encrypt(*error));
         return;
     }
-    for (const auto& fragment : protocol::fragment_ipv4(plaintext, mtu)) inject_(fragment);
+    for (const auto& fragment : protocol::fragment_ipv4(plaintext, mtu)) {
+        std::lock_guard lock(mutex_);
+        if (!current()) return;
+        inject_(fragment);
+    }
+}
+
+std::uint64_t VirtualPacketBridge::reflected_packets() const {
+    std::lock_guard lock(mutex_);
+    std::uint64_t count = 0;
+    for (const auto& [id, session] : sessions_) { static_cast<void>(id); count += session->reflected; }
+    return count;
 }
 
 void VirtualPacketBridge::set_mtu(const std::uint16_t mtu) {
