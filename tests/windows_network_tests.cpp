@@ -391,6 +391,7 @@ void gateway_probe() {
     protocol::NetworkId id{};id[0]=std::byte{0x71};auto lan_id=id;lan_id[0]=std::byte{0x72};
     constexpr std::uint32_t vpn=0x0a7efe01U,member=vpn+1,lan_ip=0xc0a8fb01U,lan_peer=lan_ip+1;
     tunnel.configure({id,vpn,vpn&0xffffff00U,24});lan.configure({lan_id,lan_ip,lan_ip&0xffffff00U,24});
+    wait_for([&]{return address_luid(vpn).has_value() && address_luid(lan_ip).has_value();},"gateway probe addresses did not become usable");
     const auto tunnel_luid=*address_luid(vpn),lan_luid=*address_luid(lan_ip);
     const auto interface=[&](NET_LUID luid){MIB_IPINTERFACE_ROW row;InitializeIpInterfaceEntry(&row);row.Family=AF_INET;row.InterfaceLuid=luid;require(GetIpInterfaceEntry(&row)==NO_ERROR,"read gateway interface");return row;};
     const auto original=interface(tunnel_luid);

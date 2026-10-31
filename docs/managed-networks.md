@@ -109,3 +109,12 @@ The Audit and approvals tab shows bounded history and persisted join requests to
 `lanlink-ui-cli manage NETWORK_ID` prints policy counts and available audit metadata.
 `lanlink-ui-cli routing status|off|routes|gateway|both` reads/changes the current service
 session's local route opt-ins. `lanlink-ui --management` opens the management dialog.
+
+Managed authority also has a six-second monotonic lease, renewed by authenticated
+peer-state requests. New/changed managed states remain inactive until the exact policy
+is confirmed. Renewal uses request send time, so delayed responses and unsolicited
+duplicates cannot extend old authority. Missing confirmations remove managed snapshots,
+direct authorization and adapter routing even while the Relay transport still reports
+authenticated. Renewal is paced to stay below control-request limits; very large or
+slow sets of managed networks may expire safely if confirmations cannot keep up.
+TCP/UDP fragments are supported; fragmented ICMP and IP options are excluded.

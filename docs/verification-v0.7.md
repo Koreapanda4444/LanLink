@@ -21,7 +21,7 @@
 - 이번 Phase: 5 / v0.7.0 / 33~41 구현. 운영 서버·DNS·공개 Release 변경 없음.
 - 실제 기능 커밋: [번호별 기록](v1-development.md#기능별-커밋-sha). `main`에만 반영한다.
 - 기존 기능 유지 검증: Linux native 전체 42/42, 기존 네트워크·저장소 마이그레이션·QUIC/TLS·P2P·검색·릴리스 자산 검사 통과.
-- 새 기능 검증: 정책/역할/Gateway/Audit/미리보기 테스트와 실제 QUIC·TLS 정책 변경 및 Direct 재수립 테스트 통과.
+- 새 기능 검증: 정책/역할/Gateway/Audit/미리보기 테스트와 실제 QUIC·TLS 정책 변경 및 Direct 재수립 테스트 통과. Relay 인증을 유지한 채 정책 갱신만 멈춰 권한 만료·복구도 검증했다. 관리형 권한은 6초 이내에 만료하며 최신 정책 확인이 필요하다.
 - GitHub Actions: 해당 커밋의 [워크플로우 실행](https://github.com/Koreapanda4444/LanLink/actions)에서 Windows·Linux·macOS 결과를 확인한다.
 - 실행하지 못한 실기기 테스트: 여러 물리 PC·실제 LAN router/NAT의 Gateway 배포. 전체 Linux/macOS 클라이언트는 다음 Phase다.
 - 보안·안정성 주의: 관리형 정책은 기본 차단, owner online 키 배포 필요, 사설 경로·Gateway는 로컬 opt-in. 물리 LAN의 forwarding·반환 경로는 관리자 사전 구성 필요.

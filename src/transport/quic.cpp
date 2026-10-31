@@ -1154,8 +1154,10 @@ public:
             auth_token_ = std::make_unique<auth::AuthToken>(
                 auth::AuthToken::load(options_.auth_token_file));
             initialize();
+            policy_worker_=std::jthread([this](std::stop_token stop){renew_policy_leases(stop);});
             event_worker_ = std::thread([this] { dispatch_network_events(); });
         } catch (...) {
+            policy_worker_.request_stop();if(policy_worker_.joinable())policy_worker_.join();
             release();
             throw;
         }
@@ -1163,6 +1165,7 @@ public:
 
     ~Impl() {
         stop();
+        policy_worker_.request_stop();if(policy_worker_.joinable())policy_worker_.join();
 
         {
             std::unique_lock lock(run_mutex_);
@@ -1417,6 +1420,7 @@ public:
 
     [[nodiscard]] NetworkPeerStateReply fetch_peer_state(
         const protocol::NetworkId& id, const std::chrono::milliseconds timeout) {
+        const auto requested=std::chrono::steady_clock::now();
         const auto frame = request_control(
             protocol::MessageType::network_peer_state_request,
             protocol::encode_network_selection_request({id}),
@@ -1424,6 +1428,14 @@ public:
         if (frame.type == protocol::MessageType::network_peer_state_result) {
             auto state = protocol::decode_network_peer_state(frame.payload);
             verify_peer_keys(state);
+            {
+                std::lock_guard lock(peer_state_mutex_);
+                const auto cached=peer_states_.find(id);
+                // Bind renewal to the exact cached policy and request send time. A queued,
+                // delayed response or unsolicited duplicate cannot extend stale authority.
+                if(cached!=peer_states_.end() && cached->second==state && state.policy)
+                    policy_leases_[id]=std::max(policy_leases_[id],requested);
+            }
             return {protocol::NetworkResultCode::success, std::move(state)};
         }
         return {protocol::decode_network_operation_result(frame.payload).code, std::nullopt};
@@ -1433,7 +1445,7 @@ public:
         const protocol::NetworkId& id) const {
         std::lock_guard lock(peer_state_mutex_);
         const auto found = peer_states_.find(id);
-        return found == peer_states_.end() ? std::nullopt
+        return found == peer_states_.end() || !policy_current_locked(found->second) ? std::nullopt
                                            : std::optional{found->second};
     }
 
@@ -1443,7 +1455,7 @@ public:
         result.reserve(peer_states_.size());
         for (const auto& [id, state] : peer_states_) {
             static_cast<void>(id);
-            result.push_back(state);
+            if(policy_current_locked(state))result.push_back(state);
         }
         return result;
     }
@@ -1452,6 +1464,8 @@ public:
         const protocol::NetworkId& id) const {
         std::lock_guard lock(peer_state_mutex_);
         const auto found = network_keys_.find(id);
+        const auto peers=peer_states_.find(id);
+        if(peers!=peer_states_.end() && !policy_current_locked(peers->second))return std::nullopt;
         return found == network_keys_.end() ? std::nullopt
                                             : std::optional{found->second};
     }
@@ -1493,7 +1507,7 @@ public:
             std::lock_guard lock(peer_state_mutex_);
             const auto state = peer_states_.find(packet.network_id);
             const auto key = network_keys_.find(packet.network_id);
-            if (state == peer_states_.end() || key == network_keys_.end() ||
+            if (state == peer_states_.end() || !policy_current_locked(state->second) || key == network_keys_.end() ||
                 state->second.key_epoch != packet.key_epoch ||
                 key->second.epoch != packet.key_epoch ||
                 state->second.own_address == packet.destination_ipv4) {
@@ -1562,6 +1576,7 @@ private:
         candidate_inbox_.clear();
         network_keys_.clear();
         peer_states_.clear();
+        policy_leases_.clear();
         peer_revisions_.clear();
     }
 
@@ -1601,6 +1616,8 @@ private:
             if (owner) {
                 key = network_keys_.at(state.network_id).key;
             }
+            const auto previous=peer_states_.find(state.network_id);
+            if(state.policy && (previous==peer_states_.end() || previous->second!=state))policy_leases_.erase(state.network_id);
             peer_revisions_[state.network_id] = state.revision;
             peer_states_[state.network_id] = state;
         }
@@ -1690,6 +1707,7 @@ private:
         peer_revisions_[revocation.network_id] = revocation.revision;
         network_keys_.erase(revocation.network_id);
         peer_states_.erase(revocation.network_id);
+        policy_leases_.erase(revocation.network_id);
     }
 
     void dispatch_network_events() noexcept {
@@ -2633,7 +2651,7 @@ private:
         {
             std::lock_guard lock(peer_state_mutex_);
             const auto found = peer_states_.find(delivery.packet.network_id);
-            if (found == peer_states_.end() ||
+            if (found == peer_states_.end() || !policy_current_locked(found->second) ||
                 found->second.key_epoch != delivery.packet.key_epoch ||
                 (found->second.own_address != delivery.packet.destination_ipv4 &&
                  !protocol::is_ipv4_fanout_destination(
@@ -2858,6 +2876,31 @@ private:
     mutable std::mutex peer_state_mutex_;
     std::optional<auth::SignedDeviceKey> own_signed_key_;
     std::map<protocol::NetworkId, protocol::NetworkPeerState> peer_states_;
+    std::map<protocol::NetworkId,std::chrono::steady_clock::time_point> policy_leases_;
+    [[nodiscard]] bool policy_current_locked(const protocol::NetworkPeerState& state) const {
+        if(!state.policy)return true;
+        const auto lease=policy_leases_.find(state.network_id);
+        return lease!=policy_leases_.end() && std::chrono::steady_clock::now()-lease->second<std::chrono::seconds(6);
+    }
+    void renew_policy_leases(std::stop_token stop) noexcept {
+        std::size_t cursor=0;
+        while(!stop.stop_requested()) {
+            try {
+                std::vector<protocol::NetworkId> networks;
+                if(options_.enable_policy_refresh && authenticated_.load() && !stop_requested_.load()) {
+                    std::lock_guard lock(peer_state_mutex_);
+                    for(const auto& [id,state]:peer_states_)if(state.policy)networks.push_back(id);
+                }
+                if(!networks.empty()) {
+                    const auto id=networks[cursor++%networks.size()];bool due=true;
+                    {std::lock_guard lock(peer_state_mutex_);const auto last=policy_leases_.find(id);due=last==policy_leases_.end() || std::chrono::steady_clock::now()-last->second>=std::chrono::seconds(2);}
+                    if(due)static_cast<void>(fetch_peer_state(id,std::chrono::milliseconds(500)));
+                }
+            }catch(...){} // Failure leaves the lease to expire; data never falls back around it.
+            for(unsigned i=0;i<3 && !stop.stop_requested();++i)std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        }
+    }
+    std::jthread policy_worker_;
     std::map<protocol::NetworkId, NetworkKeySnapshot> network_keys_;
     std::map<protocol::NetworkId, std::uint64_t> peer_revisions_;
     std::function<void(const protocol::NetworkEvent&)> event_handler_;

@@ -50,6 +50,7 @@ struct QuicServerOptions {
 
 struct QuicClientOptions {
     bool enable_capability_negotiation = true;
+    bool enable_policy_refresh = true; // Disabling renewal never disables managed lease expiry.
     std::string relay_host = "127.0.0.1";
     std::uint16_t port = 4433;
     std::filesystem::path identity_file;

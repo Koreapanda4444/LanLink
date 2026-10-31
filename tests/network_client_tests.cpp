@@ -832,6 +832,7 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     client_options.handshake_timeout=200ms;client_options.reconnect_initial_delay=100ms;client_options.reconnect_maximum_delay=250ms;
     const auto a_file=client_options.identity_file;lanlink::session::RelaySession a_session(client_options,logger);
     client_options.identity_file=directory/(tls?"b-tls.identity":"b-direct.identity");const auto b_file=client_options.identity_file;
+    client_options.enable_policy_refresh=tls;
     lanlink::session::RelaySession b_session(client_options,logger);
     lanlink::session::PeerPathOptions options;options.allow_loopback=true;
     auto interface_index=std::make_shared<std::atomic<std::uint32_t>>(1);
@@ -880,6 +881,7 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     protocol::ManagementRequest managed;managed.network_id=id;managed.action=protocol::ManagementAction::replace_policy;managed.policy.managed=true;
     const auto denied=ca.manage_network(managed);
     expect(denied.code==protocol::NetworkResultCode::success,"managed RPC over selected Relay transport");
+    if(!tls)static_cast<void>(cb.fetch_peer_state(id));
     wait_until([&]{const auto x=ca.cached_peer_state(id),y=cb.cached_peer_state(id);const auto k=ca.cached_network_key(id),l=cb.cached_network_key(id);return x && y && x->policy && y->policy && x->policy->revision==denied.policy.revision && y->policy->revision==denied.policy.revision && k && l && k->epoch==x->key_epoch && k->epoch==l->epoch && k->epoch!=key.epoch && a.peer_status().empty() && b.peer_status().empty();},"policy denial did not rotate keys and close direct sessions");
     auto unauthorized=*ca.cached_peer_state(id);unauthorized.policy.reset();const auto denied_key=*ca.cached_network_key(id);
     auth::NetworkPacketCipher modified(id,denied_key.epoch,denied_key.key,a_id,ca.cached_packet_identity()->signed_key,a_state.own_address);modified.update_peers(unauthorized);
@@ -889,6 +891,7 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     expect(delivered.load()==delivered_before && replayed.load()==replayed_before,"Relay delivered a denied packet from a modified client");
     managed.policy=denied.policy;managed.policy.rules.push_back({{}, {}, true});const auto allowed=ca.manage_network(managed);
     expect(allowed.code==protocol::NetworkResultCode::success,"managed allow update");
+    if(!tls)static_cast<void>(cb.fetch_peer_state(id));
     wait_until([&]{const auto x=ca.cached_peer_state(id),y=cb.cached_peer_state(id);const auto k=ca.cached_network_key(id),l=cb.cached_network_key(id);return x && y && x->policy && y->policy && x->policy->revision==allowed.policy.revision && y->policy->revision==allowed.policy.revision && k && l && k->epoch==x->key_epoch && k->epoch==l->epoch && k->epoch!=denied_key.epoch;},"allowed policy keys failed to synchronize");
     const auto allowed_key=*ca.cached_network_key(id);
     auth::NetworkPacketCipher permitted(id,allowed_key.epoch,allowed_key.key,a_id,ca.cached_packet_identity()->signed_key,a_state.own_address);permitted.update_peers(*ca.cached_peer_state(id));
@@ -897,6 +900,14 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     if(!tls)wait_until([&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;},"managed allow did not reestablish direct path",30s);
     expect(a.send(permitted.encrypt(plain))==transport::PacketSendResult::accepted,"managed allowed path send failed");
     wait_until([&]{return delivered.load()==delivered_before+1;},"managed allowed packet did not arrive");
+    if(!tls) {
+        wait_until([&]{return !cb.cached_peer_state(id) && b_session.snapshot().networks.empty() && b.peer_status().empty();},"silent policy renewal failure retained Direct authority",9s);
+        expect(ca.authenticated() && cb.authenticated() && !a_session.snapshot().networks.empty(),"policy expiry must be independent of Relay transport loss; healthy renewals must remain active");
+        static_cast<void>(cb.fetch_peer_state(id));
+        wait_until([&]{return !b_session.snapshot().networks.empty();},"fresh authenticated policy did not restore the lease");
+        expect(a.send(permitted.encrypt(plain))==transport::PacketSendResult::accepted,"lease recovery send failed");
+        wait_until([&]{return delivered.load()==delivered_before+2;},"lease recovery did not restore approved traffic");
+    }
     a.stop();b.stop();server.stop();
 }
 
