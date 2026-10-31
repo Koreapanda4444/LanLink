@@ -632,9 +632,10 @@ private:
                                 if(peer.network_id==selected->network_id && peer.device_id==device_id){path=&peer;break;}
                             const auto kind=path && path->path.lifecycle==protocol::PathLifecycle::authenticated ? path->path.kind : protocol::PathKind::none;
                             const bool blocked=!own_device && peers.policy && !protocol::policy_allows(*peers.policy,state.activity.device_id,device_id);
-                            const char* label=blocked?tr("Blocked by policy"):own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
+                            const char* label=blocked?tr("Blocked"):own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
                             ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.35f,.87f,.65f,1):ImVec4(.65f,.75f,.9f,1),"%s",label);
-                            if(path && ImGui::IsItemHovered()) {
+                            if(blocked && ImGui::IsItemHovered())ImGui::SetTooltip("%s",tr("Blocked by policy"));
+                            if(!blocked && path && ImGui::IsItemHovered()) {
                                 ImGui::BeginTooltip();ImGui::TextUnformatted(tr(protocol::path_reason_name(path->path.reason).data()));
                                 if(path->path.rtt_us)ImGui::Text("RTT: %.1f ms",*path->path.rtt_us/1000.0);
                                 ImGui::Text(tr("Packets: %llu sent / %llu received"),static_cast<unsigned long long>(path->path.sent_packets),static_cast<unsigned long long>(path->path.received_packets));

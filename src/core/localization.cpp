@@ -3,6 +3,7 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Blocked","차단됨"},
     Translation{"Network management","네트워크 관리"},
     Translation{"Topology","연결 구조"},
     Translation{"Mesh","Mesh"},

@@ -1434,7 +1434,7 @@ public:
                 // Bind renewal to the exact cached policy and request send time. A queued,
                 // delayed response or unsolicited duplicate cannot extend stale authority.
                 if(cached!=peer_states_.end() && cached->second==state && state.policy)
-                    policy_leases_[id]=std::max(policy_leases_[id],requested);
+                    policy_leases_[id]=(std::max)(policy_leases_[id],requested);
             }
             return {protocol::NetworkResultCode::success, std::move(state)};
         }

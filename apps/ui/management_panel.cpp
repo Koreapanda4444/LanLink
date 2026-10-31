@@ -26,7 +26,7 @@ void ManagementPanel::draw(NetworkModel& model,const NetworkSnapshot& state,cons
     if(ImGui::Button(tr("Network management")))open_=true;
     if(open_){ImGui::OpenPopup("Network management###management");open_=false;refresh_={};}
     const auto size=ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowSize(ImVec2(std::min(820.0f,size.x-40),std::min(650.0f,size.y-60)),ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2((std::min)(820.0f,size.x-40),(std::min)(650.0f,size.y-60)),ImGuiCond_FirstUseEver);
     const auto title=std::string(tr("Network management"))+"###management";
     if(!ImGui::BeginPopupModal(title.c_str(),nullptr,ImGuiWindowFlags_NoSavedSettings))return;
     if(network_!=selected.network_id){network_=selected.network_id;draft_={};dirty_=false;generation_=0;refresh_={};route_gateway_={};error_.clear();}
