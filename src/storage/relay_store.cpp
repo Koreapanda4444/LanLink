@@ -1136,13 +1136,36 @@ public:
         q.bind_blob(1,network.data(),network.size());
         return q.step_row()?protocol::decode_network_policy(q.column_bytes(0)):protocol::NetworkPolicy{};
     }
-    [[nodiscard]] bool save_network_policy(const NetworkId& network,const protocol::NetworkPolicy& policy,std::uint64_t expected) {
+    [[nodiscard]] bool save_network_policy(const NetworkId& network,const protocol::NetworkPolicy& policy,std::uint64_t expected,const std::optional<protocol::AuditEvent>& audit) {
         const auto bytes=protocol::encode_network_policy(policy);
         if(expected==std::numeric_limits<std::uint64_t>::max() || policy.revision!=expected+1)throw std::invalid_argument("invalid policy revision");
         std::lock_guard lock(mutex_);Transaction t(database_,true);
         if(read_policy(network).revision!=expected)return false;
         Statement q(database_,"INSERT INTO network_policies(network_id,document) VALUES(?,?) ON CONFLICT(network_id) DO UPDATE SET document=excluded.document;");
-        q.bind_blob(1,network.data(),network.size());q.bind_blob(2,bytes.data(),bytes.size());q.step_done();t.commit();return true;
+        q.bind_blob(1,network.data(),network.size());q.bind_blob(2,bytes.data(),bytes.size());q.step_done();if(audit)append_audit_locked(*audit);t.commit();return true;
+    }
+    void append_audit_locked(const protocol::AuditEvent& e) {
+        static_cast<void>(protocol::encode_audit_event(e));
+        Statement q(database_,"INSERT INTO network_audit(timestamp_ms,network_id,actor,target,kind,result,revision) VALUES(?,?,?,?,?,?,?);");
+        q.bind_integer(1,static_cast<std::int64_t>(e.timestamp_ms));q.bind_blob(2,e.network_id.data(),e.network_id.size());q.bind_blob(3,e.actor.data(),e.actor.size());q.bind_blob(4,e.target.data(),e.target.size());
+        q.bind_integer(5,static_cast<std::int64_t>(e.kind));q.bind_integer(6,static_cast<std::int64_t>(e.result));q.bind_integer(7,static_cast<std::int64_t>(e.policy_revision));q.step_done();
+        Statement per_network(database_,"DELETE FROM network_audit WHERE network_id=? AND sequence NOT IN (SELECT sequence FROM network_audit WHERE network_id=? ORDER BY sequence DESC LIMIT 256);");
+        per_network.bind_blob(1,e.network_id.data(),e.network_id.size());per_network.bind_blob(2,e.network_id.data(),e.network_id.size());per_network.step_done();
+        Statement age(database_,"DELETE FROM network_audit WHERE timestamp_ms < ?;");
+        constexpr std::int64_t age_limit=30LL*24*60*60*1000;
+        age.bind_integer(1,std::max<std::int64_t>(0,static_cast<std::int64_t>(e.timestamp_ms)-age_limit));age.step_done();
+        execute(database_,"DELETE FROM network_audit WHERE sequence NOT IN (SELECT sequence FROM network_audit ORDER BY sequence DESC LIMIT 10000);");
+    }
+    void append_audit(const protocol::AuditEvent& event) {
+        std::lock_guard lock(mutex_);Transaction t(database_,true);append_audit_locked(event);t.commit();
+    }
+    [[nodiscard]] std::vector<protocol::AuditEvent> audit_events(const NetworkId& network,std::int64_t now_ms,std::size_t limit) const {
+        if(now_ms<0 || limit>256)throw std::invalid_argument("invalid audit query");
+        std::lock_guard lock(mutex_);
+        Statement q(database_,"SELECT sequence,timestamp_ms,network_id,actor,target,kind,result,revision FROM network_audit WHERE network_id=? AND timestamp_ms>=? ORDER BY sequence DESC LIMIT ?;");
+        q.bind_blob(1,network.data(),network.size());q.bind_integer(2,std::max<std::int64_t>(0,now_ms-30LL*24*60*60*1000));q.bind_integer(3,static_cast<std::int64_t>(limit));
+        std::vector<protocol::AuditEvent> out;
+        while(q.step_row()){protocol::AuditEvent e;e.sequence=static_cast<std::uint64_t>(q.column_integer(0));e.timestamp_ms=static_cast<std::uint64_t>(q.column_integer(1));e.network_id=q.column_blob<16>(2);e.actor=q.column_blob<32>(3);e.target=q.column_blob<32>(4);e.kind=static_cast<protocol::AuditKind>(q.column_integer(5));e.result=static_cast<protocol::NetworkResultCode>(q.column_integer(6));e.policy_revision=static_cast<std::uint64_t>(q.column_integer(7));static_cast<void>(protocol::encode_audit_event(e));out.push_back(e);}return out;
     }
     [[nodiscard]] RelayState load_state() const {
         std::lock_guard lock(mutex_);
@@ -1277,6 +1300,12 @@ private:
             Transaction transaction(database_,true);
             execute(database_,"CREATE TABLE network_policies(network_id BLOB PRIMARY KEY NOT NULL REFERENCES networks(network_id) ON DELETE CASCADE,document BLOB NOT NULL CHECK(length(document) BETWEEN 1 AND 32768));PRAGMA user_version=7;");
             transaction.commit();version=7;
+        }
+        if(version==7) {
+            Transaction transaction(database_,true);
+            execute(database_,"CREATE TABLE network_audit(sequence INTEGER PRIMARY KEY AUTOINCREMENT,timestamp_ms INTEGER NOT NULL,network_id BLOB NOT NULL CHECK(length(network_id)=16),actor BLOB NOT NULL CHECK(length(actor)=32),target BLOB NOT NULL CHECK(length(target)=32),kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 15),result INTEGER NOT NULL,revision INTEGER NOT NULL);"
+                "CREATE INDEX network_audit_network_idx ON network_audit(network_id,sequence);CREATE INDEX network_audit_time_idx ON network_audit(timestamp_ms);PRAGMA user_version=8;");
+            transaction.commit();version=8;
         }
         if (version != current_schema_version) {
             throw std::runtime_error("relay database has an unsupported schema version");
@@ -1504,6 +1533,7 @@ private:
     }
 
     void validate_schema() {
+        if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN ('network_policies','network_audit');")!=2)throw std::runtime_error("relay policy/audit schema is incomplete");
         if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='invitation_links';")!=1)
             throw std::runtime_error("relay invitation schema is incomplete");
         if (query_integer(database_, "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN('accounts','account_devices','device_enrollment');")!=3)
@@ -1676,7 +1706,9 @@ bool RelayStore::enroll_device(const auth::DeviceId& h, const auth::DeviceId& d,
 void RelayStore::revoke_account_device(const auth::DeviceId& a, const auth::DeviceId& d) { impl_->revoke_account_device(a,d); }
 
 protocol::NetworkPolicy RelayStore::network_policy(const NetworkId& n) const { return impl_->network_policy(n); }
-bool RelayStore::save_network_policy(const NetworkId& n,const protocol::NetworkPolicy& p,std::uint64_t revision) { return impl_->save_network_policy(n,p,revision); }
+bool RelayStore::save_network_policy(const NetworkId& n,const protocol::NetworkPolicy& p,std::uint64_t revision,const std::optional<protocol::AuditEvent>& audit) { return impl_->save_network_policy(n,p,revision,audit); }
+void RelayStore::append_audit(const protocol::AuditEvent& event){impl_->append_audit(event);}
+std::vector<protocol::AuditEvent> RelayStore::audit_events(const NetworkId& network,std::int64_t now_ms,std::size_t limit) const{return impl_->audit_events(network,now_ms,limit);}
 RelayState RelayStore::load_state() const {
     return impl_->load_state();
 }

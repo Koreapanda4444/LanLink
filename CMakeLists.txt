@@ -63,6 +63,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/audit_event.cpp
     src/protocol/network_policy.cpp
     src/protocol/network_management.cpp
     src/protocol/network_overview.cpp
@@ -291,6 +292,11 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_audit_tests tests/audit_tests.cpp)
+    target_link_libraries(lanlink_audit_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_audit_tests)
+    add_test(NAME lanlink-audit COMMAND lanlink_audit_tests)
+
     add_executable(lanlink_access_roles_tests tests/access_roles_tests.cpp)
     target_link_libraries(lanlink_access_roles_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_access_roles_tests)

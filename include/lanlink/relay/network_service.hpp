@@ -187,6 +187,11 @@ private:
 
     [[nodiscard]] bool traffic_allowed(const storage::NetworkId& network,const auth::DeviceId& first,const auth::DeviceId& second,bool fanout=false) const;
     [[nodiscard]] bool can_manage_network(const storage::NetworkId& network,const auth::DeviceId& actor) const;
+    void audit_network_outcome(const auth::DeviceId& actor,const NetworkOperationOutcome& outcome,std::int64_t now_ms) noexcept;
+    void audit_locked(protocol::AuditKind kind,const auth::DeviceId& actor,const auth::DeviceId& target,
+        const storage::NetworkId& network,protocol::NetworkResultCode result,std::int64_t now_ms,std::uint64_t revision=0) noexcept;
+    std::map<auth::DeviceId,Clock::time_point> audit_denials_;
+    std::uint64_t audit_write_failures_=0;
     std::set<auth::DeviceId> management_capable_;
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;

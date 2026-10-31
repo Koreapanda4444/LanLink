@@ -3,6 +3,7 @@
 #include "lanlink/auth/identity.hpp"
 #include "lanlink/auth/access_secret.hpp"
 #include "lanlink/protocol/user_access.hpp"
+#include "lanlink/protocol/audit_event.hpp"
 
 #include <array>
 #include <cstddef>
@@ -16,7 +17,7 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 7;
+inline constexpr int current_schema_version = 8;
 inline constexpr std::uint32_t virtual_ipv4_pool_first = 0x0a400000U;
 inline constexpr std::uint32_t virtual_ipv4_pool_end = 0x0a800000U;
 inline constexpr std::uint32_t virtual_ipv4_subnet_size = 256;
@@ -188,7 +189,9 @@ public:
     void revoke_account_device(const auth::DeviceId& account, const auth::DeviceId& device);
 
     [[nodiscard]] protocol::NetworkPolicy network_policy(const NetworkId& network) const;
-    [[nodiscard]] bool save_network_policy(const NetworkId& network, const protocol::NetworkPolicy& policy, std::uint64_t expected_revision);
+    [[nodiscard]] bool save_network_policy(const NetworkId& network, const protocol::NetworkPolicy& policy, std::uint64_t expected_revision, const std::optional<protocol::AuditEvent>& audit = std::nullopt);
+    void append_audit(const protocol::AuditEvent& event);
+    [[nodiscard]] std::vector<protocol::AuditEvent> audit_events(const NetworkId& network, std::int64_t now_ms, std::size_t limit=64) const;
     [[nodiscard]] RelayState load_state() const;
 
 private:

@@ -84,3 +84,17 @@ Privileged role assignments are revoked on membership removal. Restricted assign
 are retained as rejoin restrictions until the owner clears them, so leaving and rejoining
 cannot escalate a restricted member. Pending approvals are returned only to authorized
 managers, including after a manager/service reconnect.
+
+Administrative audit records contain only a fixed event kind/result, relay timestamp,
+actor/target IDs, network ID and policy revision. Passwords, enrollment codes, tokens,
+invitation URLs, network/account labels and packet data are never copied into audit.
+Policy changes and their audit evidence commit atomically. Admission/account events
+are appended after their existing operations; audit write failures do not undo a
+successful admission and are exposed as a manager troubleshooting counter. Failed
+access/policy events are limited to one per second per actor, with bounded tracking.
+
+SQLite schema 8 keeps at most 256 events per network, 10,000 overall and 30 days.
+Authorized managers can retrieve the newest 64 events; ordinary/restricted members
+cannot read them. Age filtering also applies when reading an inactive network. This is
+a bounded operational history, not a tamper-proof compliance ledger. Relay operators
+retain administrative control of the database.

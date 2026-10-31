@@ -44,6 +44,6 @@ int main(){const auto file=std::filesystem::temp_directory_path()/auth::random_a
     bool bad=false;try{static_cast<void>(protocol::encode_network_policy(invalid));}catch(const std::exception&){bad=true;}check(bad,"default route rejected");
     q.policy=routed.policy;q.policy.routes.clear();q.policy.gateways.clear();
     check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::success,"owner can revoke gateway");
-  }{storage::RelayStore reopened(file);check(reopened.schema_version()==7,"schema migration");}
+  }{storage::RelayStore reopened(file);check(reopened.schema_version()==8,"schema migration");}
   std::filesystem::remove(file);std::cout<<"managed policy passed\n";return 0;
 }catch(const std::exception& e){std::filesystem::remove(file);std::cerr<<e.what()<<'\n';return 1;}}

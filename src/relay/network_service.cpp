@@ -21,6 +21,7 @@ namespace lanlink::relay {
 namespace {
 
 constexpr std::size_t network_id_generation_attempts = 32;
+struct AuditAtExit { std::function<void()> write; ~AuditAtExit(){write();} };
 
 template <std::size_t Size>
 bool is_zero(const std::array<std::byte, Size>& value) noexcept {
@@ -185,6 +186,31 @@ NetworkService::NetworkService(storage::RelayStore& store,
                                : TimeSource{[] { return Clock::now(); }}) {
 }
 
+void NetworkService::audit_locked(protocol::AuditKind kind,const auth::DeviceId& actor,const auth::DeviceId& target,const storage::NetworkId& network,
+    protocol::NetworkResultCode result,std::int64_t now_ms,std::uint64_t revision) noexcept {
+    try {
+        if(result!=protocol::NetworkResultCode::success && result!=protocol::NetworkResultCode::pending_approval) {
+            const auto now=time_source_();std::erase_if(audit_denials_,[&](const auto& e){return now-e.second>=std::chrono::minutes(1);});
+            const auto prior=audit_denials_.find(actor);if(prior!=audit_denials_.end() && now-prior->second<std::chrono::seconds(1))return;
+            if(prior==audit_denials_.end() && audit_denials_.size()>=256)return;
+            audit_denials_[actor]=now;
+        }
+        protocol::AuditEvent event;event.timestamp_ms=static_cast<std::uint64_t>(now_ms);event.actor=actor;event.target=target;event.network_id=network;event.kind=kind;event.result=result;event.policy_revision=revision;store_.append_audit(event);
+    }catch(...){++audit_write_failures_;}
+}
+void NetworkService::audit_network_outcome(const auth::DeviceId& actor,const NetworkOperationOutcome& out,std::int64_t now_ms) noexcept {
+    std::optional<protocol::AuditKind> kind;
+    switch(out.result.operation) {
+    case protocol::NetworkOperation::create:kind=protocol::AuditKind::network_create;break;
+    case protocol::NetworkOperation::join:kind=protocol::AuditKind::network_join;break;
+    case protocol::NetworkOperation::leave:kind=protocol::AuditKind::network_leave;break;
+    case protocol::NetworkOperation::invite:kind=protocol::AuditKind::member_invite;break;
+    case protocol::NetworkOperation::approve:kind=protocol::AuditKind::member_approve;break;
+    case protocol::NetworkOperation::kick:kind=protocol::AuditKind::member_kick;break;
+    default:break;
+    }
+    if(kind)audit_locked(*kind,actor,out.events.empty()?actor:out.events.front().event.device_id,out.result.network_id,out.result.code,now_ms);
+}
 bool NetworkService::can_manage_network(const storage::NetworkId& n,const auth::DeviceId& actor) const {
     const auto network=store_.find_network(n);
     if(!network || !device_allowed(actor))return false;
@@ -210,6 +236,8 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
     require_actor_and_time(actor,now_ms);static_cast<void>(protocol::encode_management_request(request));
     std::lock_guard lock(mutex_);
     protocol::ManagementResult out;out.action=request.action;out.network_id=request.network_id;
+    const AuditAtExit denied{[&]{if(request.action!=protocol::ManagementAction::inspect && out.code!=protocol::NetworkResultCode::success)
+        audit_locked(request.action==protocol::ManagementAction::request_gateway?protocol::AuditKind::gateway_request:protocol::AuditKind::policy_change,actor,actor,request.network_id,out.code,now_ms,out.policy.revision);}};
     const auto network=store_.find_network(request.network_id);
     if(!network){out.code=protocol::NetworkResultCode::not_found;return out;}
     if(!device_allowed(actor) || !store_.find_virtual_ipv4_lease(request.network_id,actor)) {out.code=protocol::NetworkResultCode::not_member;return out;}
@@ -219,6 +247,7 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
             if(out.pending_requests.size()==protocol::max_network_peer_entries)break;
             out.pending_requests.push_back(pending.device_id);
         }
+        if(can_manage_network(request.network_id,actor)){out.audit_events=store_.audit_events(request.network_id,now_ms);out.audit_write_failures=audit_write_failures_;}
         return out;
     }
     if(!management_capable_.contains(actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
@@ -265,7 +294,8 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
     }
     if(next.revision!=out.policy.revision || next.revision==std::numeric_limits<std::uint64_t>::max()) {out.code=protocol::NetworkResultCode::conflict;return out;}
     ++next.revision;
-    if(!store_.save_network_policy(request.network_id,next,out.policy.revision)) {out.code=protocol::NetworkResultCode::conflict;return out;}
+    protocol::AuditEvent event;event.timestamp_ms=static_cast<std::uint64_t>(now_ms);event.actor=event.target=actor;event.network_id=request.network_id;event.policy_revision=next.revision;event.kind=request.action==protocol::ManagementAction::request_gateway?protocol::AuditKind::gateway_request:protocol::AuditKind::policy_change;
+    if(!store_.save_network_policy(request.network_id,next,out.policy.revision,event)) {out.code=protocol::NetworkResultCode::conflict;return out;}
     advance_key_epoch(request.network_id);const auto revision=advance_revision(request.network_id);
     if(changes)*changes=changes_for_members(request.network_id,revision);
     out.policy=next;return out;
@@ -297,6 +327,20 @@ protocol::AccessResult NetworkService::access_request(const auth::DeviceId& acto
     static_cast<void>(protocol::encode_access_request(request));
     std::lock_guard lock(mutex_);
     protocol::AccessResult result; result.action=request.action;
+    const AuditAtExit audit{[&]{
+        std::optional<protocol::AuditKind> kind;
+        switch(request.action) {
+        case protocol::AccessAction::account_create:kind=protocol::AuditKind::account_create;break;
+        case protocol::AccessAction::enrollment_issue:kind=protocol::AuditKind::enrollment_issue;break;
+        case protocol::AccessAction::device_enroll:kind=protocol::AuditKind::device_enroll;break;
+        case protocol::AccessAction::device_revoke:kind=protocol::AuditKind::device_revoke;break;
+        case protocol::AccessAction::password_set:kind=protocol::AuditKind::password_change;break;
+        case protocol::AccessAction::invite_issue:kind=protocol::AuditKind::invite_issue;break;
+        case protocol::AccessAction::invite_revoke:kind=protocol::AuditKind::invite_revoke;break;
+        default:break;
+        }
+        if(kind)audit_locked(*kind,actor,request.device_id==auth::DeviceId{}?actor:request.device_id,request.network_id,result.code,now_ms);
+    }};
     if (!device_allowed(actor)) { result.code=protocol::NetworkResultCode::permission_denied; return result; }
     store_.record_device(actor,now_ms);
     if (request.action==protocol::AccessAction::device_revoke) {
@@ -611,7 +655,7 @@ NetworkOperationOutcome NetworkService::create_network_locked(const auth::Device
             advance_key_epoch(network_id);
             outcome.peer_changes = changes_for_members(network_id,
                                                        advance_revision(network_id));
-            return outcome;
+            audit_network_outcome(actor,outcome,now_ms);return outcome;
         }
 
         return operation_outcome(protocol::NetworkOperation::create,
@@ -711,7 +755,7 @@ NetworkOperationOutcome NetworkService::join_network_locked(const auth::DeviceId
                                                 actor);
             outcome.peer_changes = changes_for_members(
                 request.network_id, advance_revision(request.network_id));
-            return outcome;
+            audit_network_outcome(actor,outcome,now_ms);return outcome;
         }
 
         if (store_.find_join_request(request.network_id, actor)) {
@@ -733,7 +777,7 @@ NetworkOperationOutcome NetworkService::join_network_locked(const auth::DeviceId
                                               protocol::NetworkEventKind::join_requested,
                                               request.network_id,
                                               actor));
-        return outcome;
+        audit_network_outcome(actor,outcome,now_ms);return outcome;
     } catch (const std::length_error&) {
         return operation_outcome(protocol::NetworkOperation::join,
                                  protocol::NetworkResultCode::limit_reached,
@@ -793,7 +837,7 @@ NetworkOperationOutcome NetworkService::leave_network(
         const auto revision = advance_revision(request.network_id);
         outcome.peer_changes = changes_for_members(request.network_id, revision);
         outcome.peer_changes.push_back({actor, std::nullopt, {request.network_id, revision}});
-        return outcome;
+        audit_network_outcome(actor,outcome,now_ms);return outcome;
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::leave,
                                  protocol::NetworkResultCode::internal_error,
@@ -866,7 +910,7 @@ NetworkOperationOutcome NetworkService::invite_member(
                                               protocol::NetworkEventKind::invited,
                                               request.network_id,
                                               request.device_id));
-        return outcome;
+        audit_network_outcome(actor,outcome,now_ms);return outcome;
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::invite,
                                  protocol::NetworkResultCode::internal_error,
@@ -942,7 +986,7 @@ NetworkOperationOutcome NetworkService::approve_member(
                                             request.device_id);
         outcome.peer_changes = changes_for_members(
             request.network_id, advance_revision(request.network_id));
-        return outcome;
+        audit_network_outcome(actor,outcome,now_ms);return outcome;
     } catch (const std::length_error&) {
         return operation_outcome(protocol::NetworkOperation::approve,
                                  protocol::NetworkResultCode::limit_reached,
@@ -1027,7 +1071,7 @@ NetworkOperationOutcome NetworkService::kick_member(
         outcome.peer_changes = changes_for_members(request.network_id, revision);
         outcome.peer_changes.push_back(
             {request.device_id, std::nullopt, {request.network_id, revision}});
-        return outcome;
+        audit_network_outcome(actor,outcome,now_ms);return outcome;
     } catch (const std::exception&) {
         return operation_outcome(protocol::NetworkOperation::kick,
                                  protocol::NetworkResultCode::internal_error,

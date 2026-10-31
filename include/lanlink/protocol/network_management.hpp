@@ -1,5 +1,6 @@
 #pragma once
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/audit_event.hpp"
 namespace lanlink::protocol {
 enum class ManagementAction : std::uint8_t { inspect = 1, replace_policy = 2, request_gateway = 3 };
 struct ManagementRequest {
@@ -13,6 +14,8 @@ struct ManagementResult {
     NetworkId network_id{};
     NetworkResultCode code = NetworkResultCode::success;
     std::vector<auth::DeviceId> pending_requests;
+    std::vector<AuditEvent> audit_events;
+    std::uint64_t audit_write_failures=0;
     NetworkPolicy policy;
     bool operator==(const ManagementResult&) const = default;
 };
