@@ -1,6 +1,6 @@
 # v1.0 개발 로드맵
 
-첨부 최종 기획서의 60개 커밋을 유지한다. 현재 작업 범위는 01~25이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
+첨부 최종 기획서의 60개 커밋을 유지한다. 현재 구현 범위는 01~41이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
 
 | 번호 | 목표 | 상태 |
 |---|---|---|
@@ -36,15 +36,15 @@
 | 30 | `feat(ui): simplify network creation and join workflows` — 방 생성·참여 최소 단계, 네트워크 상태 표시 | 구현 |
 | 31 | `feat(ui): add presence, path diagnostics and network overview` — 실시간 멤버 상태·가상 IP 복사·P2P/Relay 표시 | 구현 |
 | 32 | `feat(onboarding): implement first-run setup and UI localization` — 기존 설치 언어 기능 유지, 데스크톱 UI 한국어/영어 및 첫 실행 안내 | 구현 |
-| 33 | `feat(topology): support managed mesh policies` — 허용 멤버 간 네트워크 경로/권한 정책, P2P·Relay 일치 | 대기 |
-| 34 | `feat(topology): add hub-and-spoke restrictions` — spoke 간 통신 제한, hub 차단 시 우회 경로 방지 | 대기 |
-| 35 | `feat(gateway): register approved gateway nodes` — 관리자 승인된 gateway만 등록·공지 | 대기 |
-| 36 | `feat(gateway): add routed subnet advertisement` — 서브넷 충돌 검출·명시적 경로 설정·통신 및 원복 | 대기 |
-| 37 | `fix(gateway): enforce isolated and safe packet forwarding` — IP forwarding·ACL·DNS·라우팅 복구, 인터넷 전체 경로 기본 금지 | 대기 |
-| 38 | `feat(acl): enforce per-member and per-network policies` — 거부 기본값/권한 변경 즉시 반영, UI·Relay/P2P 우회 불가 | 대기 |
-| 39 | `feat(acl): implement device groups and role assignments` — 관리자·일반 멤버·제한 멤버 차등 권한 | 대기 |
-| 40 | `feat(admin): add bounded audit events and troubleshooting` — 주요 관리 작업 이벤트, 민감정보 비기록, 보존 제한 | 대기 |
-| 41 | `feat(ui): expose topology, gateway and access rules` — 설정 미리보기·위험 경고·권한별 제어 화면 | 대기 |
+| 33 | `feat(topology): support managed mesh policies` — 허용 멤버 간 네트워크 경로/권한 정책, P2P·Relay 일치 | 구현 |
+| 34 | `feat(topology): add hub-and-spoke restrictions` — spoke 간 통신 제한, hub 차단 시 우회 경로 방지 | 구현 |
+| 35 | `feat(gateway): register approved gateway nodes` — 관리자 승인된 gateway만 등록·공지 | 구현 |
+| 36 | `feat(gateway): add routed subnet advertisement` — 서브넷 충돌 검출·명시적 경로 설정·통신 및 원복 | 구현 |
+| 37 | `fix(gateway): enforce isolated and safe packet forwarding` — IP forwarding·ACL·DNS·라우팅 복구, 인터넷 전체 경로 기본 금지 | 구현 |
+| 38 | `feat(acl): enforce per-member and per-network policies` — 거부 기본값/권한 변경 즉시 반영, UI·Relay/P2P 우회 불가 | 구현 |
+| 39 | `feat(acl): implement device groups and role assignments` — 관리자·일반 멤버·제한 멤버 차등 권한 | 구현 |
+| 40 | `feat(admin): add bounded audit events and troubleshooting` — 주요 관리 작업 이벤트, 민감정보 비기록, 보존 제한 | 구현 |
+| 41 | `feat(ui): expose topology, gateway and access rules` — 설정 미리보기·위험 경고·권한별 제어 화면 | 구현 |
 | 42 | `refactor(platform): extract OS adapters and service abstractions` — Windows 기존 기능 보존, 네트워크/IPC/서비스 추상화 | 대기 |
 | 43 | `feat(linux): implement TUN adapter and IPv4 route management` — Linux TUN, interface up/down, MTU/라우트/정리 | 대기 |
 | 44 | `feat(linux): add daemon lifecycle and local IPC` — systemd, 최소 권한·재시작·로그 처리 | 대기 |
@@ -65,7 +65,7 @@
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
-01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
+01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 42~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
 
 ## 기능별 커밋 SHA
 
@@ -98,7 +98,6 @@
 | 23 | [76140a6](https://github.com/Koreapanda4444/LanLink/commit/76140a6632ce72c84eb461b8c6ea1d25a9a63ba8) |
 | 24 | [79dad74](https://github.com/Koreapanda4444/LanLink/commit/79dad74ddebb791c815381dd0cd9dc0d227e1ba5) |
 | 25 | 게임 진단 및 v0.5 메타데이터를 포함한 이 문서의 변경 커밋 |
-
 | 26 | [3935bfc](https://github.com/Koreapanda4444/LanLink/commit/3935bfcd21a7b4157b6e96fd58c0c29780596284) |
 | 27 | [857247b](https://github.com/Koreapanda4444/LanLink/commit/857247b7b46ce7cc3cf7773575a525cb3f632c25) |
 | 28 | [c1acd66](https://github.com/Koreapanda4444/LanLink/commit/c1acd664c4596ab9e902b836cab6b465f2869de3) |
@@ -106,3 +105,13 @@
 | 30 | [6aa28a9](https://github.com/Koreapanda4444/LanLink/commit/6aa28a98d55401135c89dd9c14f9d321b4254180) |
 | 31 | [c96a327](https://github.com/Koreapanda4444/LanLink/commit/c96a3277cd5540f4b7d650d62fae375454abf278) |
 | 32 | 첫 실행·UI 번역 및 v0.6.0 메타데이터를 포함한 이 문서의 변경 커밋 |
+
+| 33 | [157d02d](https://github.com/Koreapanda4444/LanLink/commit/157d02dff28c23cf2f6b77d066fb53164a1a1c40) |
+| 34 | [717df62](https://github.com/Koreapanda4444/LanLink/commit/717df62241415c7e87a7c9579dd612038696955d) |
+| 35 | [95632b3](https://github.com/Koreapanda4444/LanLink/commit/95632b3b94b32606fe585f550adacebe99336249) |
+| 36 | [67e39df](https://github.com/Koreapanda4444/LanLink/commit/67e39dfff6b8c849deab3a6fc0b38d8f9b8620d1) |
+| 37 | [2e55e7d](https://github.com/Koreapanda4444/LanLink/commit/2e55e7dd4c31332c169eeda8ab2d305b86b4e999) |
+| 38 | [fd74171](https://github.com/Koreapanda4444/LanLink/commit/fd741717b204d3ed0686845f576626ad3e7fab1b) |
+| 39 | [7af7a3d](https://github.com/Koreapanda4444/LanLink/commit/7af7a3d9c4bbe583c37d504038ed9eadeafad0e3) |
+| 40 | [b5ea684](https://github.com/Koreapanda4444/LanLink/commit/b5ea6841f00d77c13cba804adb2f6a8835437839) |
+| 41 | 관리 UI·정책 미리보기·v0.7.0 메타데이터를 포함한 이 문서의 변경 커밋 |

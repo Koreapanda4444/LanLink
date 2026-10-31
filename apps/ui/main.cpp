@@ -2,6 +2,7 @@
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/game_profiles.hpp"
 #include "network_model.hpp"
+#include "management_panel.hpp"
 #include "preferences.hpp"
 #include "lanlink/protocol/network_workflow.hpp"
 #include "lanlink/protocol/network_overview.hpp"
@@ -97,8 +98,9 @@ void require(const HRESULT result, const char* operation) {
 class DesktopWindow {
 public:
     explicit DesktopWindow(const HINSTANCE instance, std::filesystem::path screenshot = {},
-        std::optional<lanlink::core::UiLanguage> language = std::nullopt,bool skip_setup=false,bool force_setup=false)
+        std::optional<lanlink::core::UiLanguage> language = std::nullopt,bool skip_setup=false,bool force_setup=false,bool force_management=false)
         : instance_(instance), screenshot_(std::move(screenshot)) {
+        force_management_=force_management;
         preferences_=lanlink::ui::load_preferences();
         if(language)preferences_.language=*language;
         if(skip_setup)preferences_.setup_completed=true;
@@ -552,17 +554,18 @@ private:
             } else {
                 const auto id = hex_id(selected->network_id);
                 const bool owner = selected->role == protocol::NetworkRole::owner;
+                const bool administrator=owner || (state.peers && state.peers->network_id==selected->network_id && state.peers->policy && protocol::policy_role(*state.peers->policy,state.activity.device_id)==protocol::AccessRole::administrator);
                 ImGui::SeparatorText(selected->name.c_str());
-                ImGui::TextDisabled("%s", owner ? tr("You manage this network") : tr("Managed by the network owner"));
+                ImGui::TextDisabled("%s", administrator ? tr("You manage this network") : tr("Managed by the network owner"));
                 if (ImGui::Button(tr("Copy network ID"))) ImGui::SetClipboardText(id.c_str());
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!connected || state.busy);
-                if(owner && ImGui::Button(tr("Create invitation"))) attempt([&]{
+                if(administrator && ImGui::Button(tr("Create invitation"))) attempt([&]{
                     protocol::AccessRequest r;r.action=protocol::AccessAction::invite_issue;r.network_id=selected->network_id;
                     r.lifetime_seconds=900;r.max_uses=1;
                     networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));
                 });
-                if(owner)ImGui::SameLine();
+                if(administrator)ImGui::SameLine();
                 if (ImGui::Button(tr("Leave network"))) {
                     confirmation_ = protocol::LocalCommand::leave;
                     confirmation_payload_ = protocol::encode_network_selection_request({selected->network_id});
@@ -570,13 +573,13 @@ private:
                     confirm_dialog_ = true;
                 }
                 ImGui::EndDisabled();
-                if(owner && invitation_network_==selected->network_id && !invitation_link_.empty()) {
+                if(administrator && invitation_network_==selected->network_id && !invitation_link_.empty()) {
                     ImGui::TextWrapped(tr("Invitation: one use, expires in 15 minutes. Share it privately."));
                     if(ImGui::Button(tr("Copy invitation link")))ImGui::SetClipboardText(invitation_link_.c_str());
                     ImGui::SameLine();if(ImGui::Button(tr("Copy invitation code")))ImGui::SetClipboardText(invitation_code_.c_str());
                 }
                 ImGui::BeginDisabled(!connected || state.busy);
-                if(owner && ImGui::SmallButton(tr("Revoke invitation links"))) {
+                if(administrator && ImGui::SmallButton(tr("Revoke invitation links"))) {
                     protocol::AccessRequest r;r.action=protocol::AccessAction::invite_revoke;r.network_id=selected->network_id;
                     confirmation_=protocol::LocalCommand::user_access;confirmation_payload_=protocol::encode_access_request(r);
                     confirmation_text_=tr("Revoke all unused invitation links for this network?");confirm_dialog_=true;
@@ -587,9 +590,10 @@ private:
                     const auto& peers = *state.peers;
                     const auto own = ipv4(peers.own_address);
                     const auto* current_paths=state.paths && now-state.paths_updated_at<std::chrono::seconds(6) ? &*state.paths : nullptr;
-                    const auto overview=protocol::network_overview(peers,current_paths,connected);
+                    const auto overview=protocol::network_overview(peers,current_paths,connected,state.activity.device_id);
                     ImGui::Text(tr("Members: %u online / %u total"),overview.online,overview.total);
                     ImGui::Text(tr("Paths: %u Direct / %u Relay / %u connecting"),overview.direct,overview.relayed,overview.connecting);
+                    if(overview.blocked)ImGui::TextDisabled(tr("Blocked by policy: %u peers"),overview.blocked);
                     const auto age=std::chrono::duration_cast<std::chrono::seconds>(now-state.peers_updated_at).count();
                     ImGui::TextDisabled(tr("Updated %lld seconds ago"),static_cast<long long>(age));
                     if(ImGui::Button(tr("Copy network overview"))) {
@@ -627,7 +631,8 @@ private:
                             if(current_paths)for(const auto& peer:current_paths->peers)
                                 if(peer.network_id==selected->network_id && peer.device_id==device_id){path=&peer;break;}
                             const auto kind=path && path->path.lifecycle==protocol::PathLifecycle::authenticated ? path->path.kind : protocol::PathKind::none;
-                            const char* label=own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
+                            const bool blocked=!own_device && peers.policy && !protocol::policy_allows(*peers.policy,state.activity.device_id,device_id);
+                            const char* label=blocked?tr("Blocked by policy"):own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
                             ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.35f,.87f,.65f,1):ImVec4(.65f,.75f,.9f,1),"%s",label);
                             if(path && ImGui::IsItemHovered()) {
                                 ImGui::BeginTooltip();ImGui::TextUnformatted(tr(protocol::path_reason_name(path->path.reason).data()));
@@ -637,7 +642,7 @@ private:
                                 ImGui::EndTooltip();
                             }
                             ImGui::TableNextColumn();
-                            ImGui::BeginDisabled(!owner || own_device || !connected || state.busy);
+                            ImGui::BeginDisabled(!administrator || own_device || device_id==selected->owner_device_id || (!owner && peers.policy && protocol::policy_role(*peers.policy,device_id)==protocol::AccessRole::administrator) || !connected || state.busy);
                             if (ImGui::SmallButton(tr("Remove"))) {
                                 confirmation_ = protocol::LocalCommand::kick;
                                 confirmation_payload_ = protocol::encode_network_member_request({selected->network_id, device_id});
@@ -650,7 +655,7 @@ private:
                         for (const auto& peer : peers.peers) row(peer.device_id, peer.ipv4_address, connected && peer.signed_key.has_value(), false);
                         ImGui::EndTable();
                     }
-                    if (owner) {
+                    if (administrator) {
                         ImGui::SeparatorText(tr("Join requests"));
                         bool any_requests = false;
                         for (const auto& request : state.activity.requests) {
@@ -683,6 +688,7 @@ private:
                     }
                 } else ImGui::TextWrapped(tr("Waiting for an active network address. The owner may still need to approve this device."));
             }
+            if(selected!=state.networks.end())management_.draw(networks_,state,*selected,preferences_.language,force_management_);
             ImGui::Spacing();
             if (ImGui::CollapsingHeader(tr("Game network diagnostics"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (state.games) {
@@ -882,6 +888,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> logo_;
     lanlink::ui::NetworkModel networks_;
+    lanlink::ui::ManagementPanel management_;
+    bool force_management_=false;
     lanlink::ui::Preferences preferences_;
     unsigned setup_step_=0;
     std::optional<lanlink::protocol::NetworkId> selected_;
@@ -928,20 +936,21 @@ int WINAPI wWinMain(const HINSTANCE instance, HINSTANCE, PWSTR, int) {
         int count = 0;
         auto** arguments = CommandLineToArgvW(GetCommandLineW(), &count);
         std::optional<lanlink::core::UiLanguage> language;
-        bool skip_setup=false,force_setup=false;
+        bool skip_setup=false,force_setup=false,management=false;
         for(int i=1;i<count;++i) {
             const std::wstring_view argument=arguments[i];
             if(argument==L"--screenshot" && i+1<count)screenshot=arguments[++i];
+            else if(argument==L"--management")management=true;
             else if(argument==L"--skip-setup")skip_setup=true;
             else if(argument==L"--setup")force_setup=true;
             else if(argument==L"--language" && i+1<count) {
                 const std::wstring_view selected=arguments[++i];
                 if(selected!=L"en" && selected!=L"ko")throw std::invalid_argument("language must be en or ko");
                 language=selected==L"ko" ? lanlink::core::UiLanguage::korean : lanlink::core::UiLanguage::english;
-            } else throw std::invalid_argument("usage: lanlink-ui [--language en|ko] [--setup] [--skip-setup] [--screenshot FILE.png]");
+            } else throw std::invalid_argument("usage: lanlink-ui [--language en|ko] [--setup] [--skip-setup] [--management] [--screenshot FILE.png]");
         }
         LocalFree(arguments);
-        DesktopWindow window(instance, screenshot,language,skip_setup,force_setup);
+        DesktopWindow window(instance, screenshot,language,skip_setup,force_setup,management);
         window.run();
         return 0;
     } catch (const std::exception& error) {

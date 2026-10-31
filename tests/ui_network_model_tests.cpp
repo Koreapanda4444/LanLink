@@ -65,6 +65,11 @@ int main() {
                 metrics.networks.push_back({network.network_id, 0x0a4d0001U, 0x0a4d0000U, 24, 1, 7, 8});
                 return protocol::LocalMessage{request.command, true, false, protocol::encode_game_diagnostics(metrics)};
             }
+            if(request.command==protocol::LocalCommand::network_management) {
+                const auto query=protocol::decode_management_request(request.payload);protocol::ManagementResult result;result.action=query.action;result.network_id=query.network_id;result.policy.managed=true;result.policy.revision=7;
+                return protocol::LocalMessage{request.command,true,false,protocol::encode_management_result(result)};
+            }
+            if(request.command==protocol::LocalCommand::routing_options)return protocol::LocalMessage{request.command,true,false,{std::byte{1},std::byte{0}}};
             if(request.command==protocol::LocalCommand::user_access) {
                 const auto access=protocol::decode_access_request(request.payload);
                 protocol::AccessResult result;result.action=access.action;result.network_id=network.network_id;
@@ -136,6 +141,10 @@ int main() {
             const auto state = model.snapshot();
             return !state.busy && state.activity.requests.size() == 1 && state.peers && state.peers->own_address == 0x0a4d0001U;
         });
+        protocol::ManagementRequest settings;settings.network_id=network.network_id;
+        model.submit(protocol::LocalCommand::network_management,protocol::encode_management_request(settings));
+        model.submit(protocol::LocalCommand::routing_options);
+        wait_until("managed policy and local routing",[&]{const auto s=model.snapshot();return !s.busy && s.management && s.management->policy.revision==7 && s.routing_options && (*s.routing_options)[0] && !(*s.routing_options)[1];});
         model.submit(protocol::LocalCommand::create, protocol::encode_network_create_request({"denied"}));
         wait_until("operation denial", [&] {
             const auto state = model.snapshot();

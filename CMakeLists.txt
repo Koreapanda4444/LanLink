@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(LanLink VERSION 0.6.0 LANGUAGES CXX)
+project(LanLink VERSION 0.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +63,7 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/policy_preview.cpp
     src/protocol/audit_event.cpp
     src/protocol/network_policy.cpp
     src/protocol/network_management.cpp
@@ -270,6 +271,7 @@ if(WIN32)
     lanlink_enable_warnings(lanlink_service)
 
     add_executable(lanlink_ui WIN32
+        apps/ui/management_panel.cpp
         apps/ui/preferences.cpp
         apps/ui/main.cpp
         apps/ui/network_model.cpp
@@ -292,6 +294,11 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_policy_preview_tests tests/policy_preview_tests.cpp)
+    target_link_libraries(lanlink_policy_preview_tests PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_policy_preview_tests)
+    add_test(NAME lanlink-policy-preview COMMAND lanlink_policy_preview_tests)
+
     add_executable(lanlink_audit_tests tests/audit_tests.cpp)
     target_link_libraries(lanlink_audit_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_audit_tests)

@@ -2,6 +2,7 @@
 
 #include "lanlink/protocol/local_control.hpp"
 #include "lanlink/protocol/user_access.hpp"
+#include "lanlink/protocol/network_management.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/path_diagnostics.hpp"
 
@@ -29,6 +30,11 @@ struct NetworkSnapshot {
     std::optional<protocol::PathDiagnostics> paths;
     std::optional<protocol::GameDiagnostics> games;
     protocol::LocalActivity activity;
+    std::optional<protocol::ManagementResult> management;
+    std::uint64_t management_generation=0;
+    std::chrono::steady_clock::time_point management_updated_at{};
+    bool management_supported=true;
+    std::optional<std::array<bool,2>> routing_options;
     std::optional<protocol::AccessResult> access;
     std::uint64_t access_generation = 0;
     std::optional<protocol::NetworkOperationResult> last_operation;

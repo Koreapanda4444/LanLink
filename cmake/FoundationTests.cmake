@@ -10,6 +10,7 @@ function(lanlink_foundation_test name)
     add_test(NAME lanlink-${test_name} COMMAND lanlink_${name}_tests)
 endfunction()
 
+lanlink_foundation_test(policy_preview lanlink_protocol)
 lanlink_foundation_test(audit lanlink_relay_domain)
 lanlink_foundation_test(access_roles lanlink_relay_domain)
 lanlink_foundation_test(gateway lanlink_relay_domain lanlink_packet_engine)

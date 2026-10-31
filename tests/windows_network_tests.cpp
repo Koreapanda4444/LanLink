@@ -638,6 +638,9 @@ void scenario(const std::filesystem::path& root, std::uint16_t port, bool tcp, s
             });
     }, "service game diagnostics did not report the active Wintun network and bidirectional discovery traffic");
 
+    protocol::ManagementRequest managed;managed.network_id=id;managed.action=protocol::ManagementAction::replace_policy;managed.policy.managed=true;managed.policy.rules.push_back({{}, {}, true});
+    require(protocol::decode_management_result(local(protocol::LocalCommand::network_management,protocol::encode_management_request(managed))).code==protocol::NetworkResultCode::success,"installed service managed policy RPC");
+    require(local(protocol::LocalCommand::routing_options)==std::vector<std::byte>{std::byte{0},std::byte{0}},"routing must default off");
     command(root, 1, "service-stop");
     wait_for([&] { return !address_luid(owner_ip); }, "service stop did not remove its virtual address");
     command(root, 2, "service-start");

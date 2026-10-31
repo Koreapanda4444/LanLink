@@ -98,3 +98,14 @@ Authorized managers can retrieve the newest 64 events; ordinary/restricted membe
 cannot read them. Age filtering also applies when reading an inactive network. This is
 a bounded operational history, not a tamper-proof compliance ledger. Relay operators
 retain administrative control of the database.
+
+In the Windows desktop, choose **Network management**. Draft changes in Topology,
+Access rules, Groups and roles, or Gateways and routes, then use **Preview changes**
+and review allowed/blocked device-pair counts before applying. The desktop keeps a
+stale draft until it is explicitly reloaded; the relay rejects its old revision. Members
+see the same policy in read-only form. Local routing uses a separate confirmation.
+The Audit and approvals tab shows bounded history and persisted join requests to managers.
+
+`lanlink-ui-cli manage NETWORK_ID` prints policy counts and available audit metadata.
+`lanlink-ui-cli routing status|off|routes|gateway|both` reads/changes the current service
+session's local route opt-ins. `lanlink-ui --management` opens the management dialog.

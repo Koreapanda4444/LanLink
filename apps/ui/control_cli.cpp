@@ -1,6 +1,7 @@
 #include "lanlink/core/component.hpp"
 #include "lanlink/protocol/local_control.hpp"
 #include "lanlink/protocol/user_access.hpp"
+#include "lanlink/protocol/network_management.hpp"
 #include "lanlink/protocol/join_target.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/transport/local_pipe.hpp"
@@ -66,6 +67,8 @@ std::string hex_id(const std::span<const std::byte> id) {
 
 lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     using lanlink::protocol::LocalCommand;
+    if (action == L"manage") return LocalCommand::network_management;
+    if (action == L"routing") return LocalCommand::routing_options;
     if (action == L"invite-link" || action == L"revoke-links") return LocalCommand::user_access;
     if (action == L"password" || action == L"join-password") return LocalCommand::user_access;
     if (action == L"account") return LocalCommand::user_access;
@@ -106,6 +109,15 @@ int wmain(const int argc, wchar_t* argv[]) {
             if (argc != 2) throw std::invalid_argument("list takes no arguments");
             request.payload = protocol::encode_network_list_request();
             break;
+        case protocol::LocalCommand::network_management: {
+            if(argc!=3)throw std::invalid_argument("manage requires a network ID");protocol::ManagementRequest query;query.network_id=parse_id<16>(argv[2]);request.payload=protocol::encode_management_request(query);break;
+        }
+        case protocol::LocalCommand::routing_options: {
+            if(argc!=3)throw std::invalid_argument("routing requires status/off/routes/gateway/both");const std::wstring_view mode=argv[2];
+            if(mode==L"status")break;
+            if(mode!=L"off" && mode!=L"routes" && mode!=L"gateway" && mode!=L"both")throw std::invalid_argument("unknown routing option");
+            request.payload={mode==L"routes" || mode==L"both"?std::byte{1}:std::byte{0},mode==L"gateway" || mode==L"both"?std::byte{1}:std::byte{0}};break;
+        }
         case protocol::LocalCommand::user_access: {
             if (argc<3) throw std::invalid_argument("account requires status/create/issue/enroll/revoke");
             const std::wstring_view operation=argv[2];
@@ -169,7 +181,13 @@ int wmain(const int argc, wchar_t* argv[]) {
         const auto response = lanlink::transport::local_pipe_request(request);
         std::cout << "LanLink " << lanlink::core::component_name(
             lanlink::core::Component::ui) << " " << lanlink::core::project_version() << '\n';
-        if (request.command == protocol::LocalCommand::user_access) {
+        if(request.command==protocol::LocalCommand::network_management) {
+            const auto result=protocol::decode_management_result(response.payload);std::cout<<protocol::network_result_code_name(result.code)<<" revision="<<result.policy.revision<<" managed="<<result.policy.managed<<" hubs="<<result.policy.hubs.size()<<" rules="<<result.policy.rules.size()<<" routes="<<result.policy.routes.size()<<'\n';
+            for(const auto& e:result.audit_events)std::cout<<e.sequence<<" "<<protocol::audit_kind_name(e.kind)<<" "<<hex_id(e.actor)<<" "<<protocol::network_result_code_name(e.result)<<'\n';
+            if(result.code!=protocol::NetworkResultCode::success)return EXIT_FAILURE;
+        } else if(request.command==protocol::LocalCommand::routing_options) {
+            if(response.payload.size()!=2)throw std::runtime_error("invalid routing response");std::cout<<"accept routes: "<<(response.payload[0]==std::byte{1})<<"\ngateway forwarding: "<<(response.payload[1]==std::byte{1})<<"\nApplies until service restart; approved private subnets only.\n";
+        } else if (request.command == protocol::LocalCommand::user_access) {
             const auto result=protocol::decode_access_result(response.payload);
             std::cout << protocol::network_result_code_name(result.code) << '\n';
             if (result.code!=protocol::NetworkResultCode::success) return EXIT_FAILURE;

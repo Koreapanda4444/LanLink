@@ -168,7 +168,7 @@ try {
                         'service-stop' {
                             if ($mode -eq 'quic') {
                                 $capture = Join-Path $env:RUNNER_TEMP 'lanlink-desktop-connected.png'
-                                $ui = Start-Child (Join-Path $program 'bin\lanlink-ui.exe') @('--screenshot', $capture, '--language', 'en', '--skip-setup')
+                                $ui = Start-Child (Join-Path $program 'bin\lanlink-ui.exe') @('--screenshot', $capture, '--language', 'en', '--skip-setup', '--management')
                                 try {
                                     if (-not $ui.WaitForExit(20000)) { Stop-Child $ui; throw 'Desktop capture timed out.' }
                                     if ($ui.ExitCode -ne 0 -or -not (Test-Path $capture)) {
@@ -179,10 +179,12 @@ try {
                                     Write-Output ("LANLINK_DESKTOP_PNG=" + [Convert]::ToBase64String([IO.File]::ReadAllBytes($capture)))
                                     Write-Output '::endgroup::'
                                 } finally { $ui.Dispose() }
-                                foreach ($view in @('ko', 'setup')) {
+                                foreach ($view in @('ko', 'setup', 'management')) {
                                     $localizedCapture = Join-Path $env:RUNNER_TEMP "lanlink-desktop-$view.png"
                                     $viewOption = if ($view -eq 'setup') { '--setup' } else { '--skip-setup' }
-                                    $localizedUi = Start-Child (Join-Path $program 'bin\lanlink-ui.exe') @('--screenshot', $localizedCapture, '--language', 'ko', $viewOption)
+                                    $viewArgs = @('--screenshot', $localizedCapture, '--language', 'ko', $viewOption)
+                                    if ($view -eq 'management') { $viewArgs += '--management' }
+                                    $localizedUi = Start-Child (Join-Path $program 'bin\lanlink-ui.exe') $viewArgs
                                     try {
                                         if (-not $localizedUi.WaitForExit(20000)) { Stop-Child $localizedUi; throw 'Localized desktop capture timed out.' }
                                         if ($localizedUi.ExitCode -ne 0 -or -not (Test-Path $localizedCapture)) { throw "Localized desktop did not render: $view" }

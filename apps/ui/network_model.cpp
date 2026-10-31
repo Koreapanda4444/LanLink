@@ -30,12 +30,14 @@ void NetworkModel::submit(const protocol::LocalCommand command,
          command > protocol::LocalCommand::kick) &&
         command != protocol::LocalCommand::diagnostics && command != protocol::LocalCommand::path_diagnostics &&
         command != protocol::LocalCommand::game_diagnostics && command != protocol::LocalCommand::user_access &&
+        command != protocol::LocalCommand::network_management && command != protocol::LocalCommand::routing_options &&
         command != protocol::LocalCommand::peers && command != protocol::LocalCommand::activity) {
         throw std::invalid_argument("unsupported desktop network command");
     }
     std::lock_guard lock(mutex_);
     if (stopping_ || (command==protocol::LocalCommand::path_diagnostics && !paths_supported_)) return;
     if (command == protocol::LocalCommand::game_diagnostics && !games_supported_) return;
+    if(command==protocol::LocalCommand::network_management)state_.management_supported=true;
     if (command == protocol::LocalCommand::list ||
         command == protocol::LocalCommand::diagnostics || command == protocol::LocalCommand::peers ||
         command == protocol::LocalCommand::activity || command == protocol::LocalCommand::path_diagnostics ||
@@ -76,7 +78,7 @@ void NetworkModel::process() {
             } else if (request.command == protocol::LocalCommand::diagnostics) {
                 auto diagnostics = protocol::decode_local_diagnostics(response.payload);
                 std::lock_guard lock(mutex_);
-                if(!diagnostics.authenticated) { state_.peers.reset(); state_.paths.reset(); state_.games.reset(); }
+                if(!diagnostics.authenticated) { state_.peers.reset(); state_.paths.reset(); state_.games.reset(); state_.management.reset();state_.management_supported=true; }
                 state_.diagnostics = std::move(diagnostics);
                 ++state_.diagnostics_generation;
                 state_.service_online = true;
@@ -95,6 +97,15 @@ void NetworkModel::process() {
                 auto activity = protocol::decode_local_activity(response.payload);
                 std::lock_guard lock(mutex_);
                 state_.activity = std::move(activity);
+            } else if(request.command==protocol::LocalCommand::routing_options) {
+                if(response.payload.size()!=2 || response.payload[0]>std::byte{1} || response.payload[1]>std::byte{1})throw std::runtime_error("Invalid routing option response");
+                std::lock_guard lock(mutex_);state_.routing_options=std::array{response.payload[0]==std::byte{1},response.payload[1]==std::byte{1}};
+            } else if(request.command==protocol::LocalCommand::network_management) {
+                auto result=protocol::decode_management_result(response.payload);
+                std::lock_guard lock(mutex_);
+                if(result.code!=protocol::NetworkResultCode::success)state_.error=std::string(protocol::network_result_code_name(result.code));
+                else if(result.action!=protocol::ManagementAction::inspect){state_.error.clear();state_.message="Network updated.";}
+                state_.management=std::move(result);++state_.management_generation;state_.management_updated_at=std::chrono::steady_clock::now();
             } else if(request.command==protocol::LocalCommand::user_access) {
                 auto result=protocol::decode_access_result(response.payload);
                 std::lock_guard lock(mutex_);
@@ -146,6 +157,7 @@ void NetworkModel::process() {
             }
             if (request.command == protocol::LocalCommand::path_diagnostics) {state_.paths.reset();paths_supported_=false;}
             if (request.command == protocol::LocalCommand::game_diagnostics) { state_.games.reset(); games_supported_ = false; }
+            if (request.command == protocol::LocalCommand::network_management){state_.management.reset();state_.management_supported=false;}
             if (request.command == protocol::LocalCommand::peers) state_.peers.reset();
             if (request.command == protocol::LocalCommand::list) state_.networks.clear();
             if (request.command == protocol::LocalCommand::diagnostics ||

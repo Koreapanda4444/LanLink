@@ -877,6 +877,26 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
         expect(ca.diagnostics().sent_packets==old_port_metrics,"recovered Direct data used Relay");
     }
     expect(ca.cached_peer_state(id)->own_address==a_state.own_address && cb.cached_peer_state(id)->own_address==b_state.own_address,"path selection changed virtual IPv4 leases");
+    protocol::ManagementRequest managed;managed.network_id=id;managed.action=protocol::ManagementAction::replace_policy;managed.policy.managed=true;
+    const auto denied=ca.manage_network(managed);
+    expect(denied.code==protocol::NetworkResultCode::success,"managed RPC over selected Relay transport");
+    wait_until([&]{const auto x=ca.cached_peer_state(id),y=cb.cached_peer_state(id);const auto k=ca.cached_network_key(id),l=cb.cached_network_key(id);return x && y && x->policy && y->policy && x->policy->revision==denied.policy.revision && y->policy->revision==denied.policy.revision && k && l && k->epoch==x->key_epoch && k->epoch==l->epoch && k->epoch!=key.epoch && a.peer_status().empty() && b.peer_status().empty();},"policy denial did not rotate keys and close direct sessions");
+    auto unauthorized=*ca.cached_peer_state(id);unauthorized.policy.reset();const auto denied_key=*ca.cached_network_key(id);
+    auth::NetworkPacketCipher modified(id,denied_key.epoch,denied_key.key,a_id,ca.cached_packet_identity()->signed_key,a_state.own_address);modified.update_peers(unauthorized);
+    const auto delivered_before=delivered.load(),replayed_before=replayed.load();
+    expect(a.send(modified.encrypt(plain))==transport::PacketSendResult::accepted,"malicious fixture send was not queued");
+    std::this_thread::sleep_for(150ms);
+    expect(delivered.load()==delivered_before && replayed.load()==replayed_before,"Relay delivered a denied packet from a modified client");
+    managed.policy=denied.policy;managed.policy.rules.push_back({{}, {}, true});const auto allowed=ca.manage_network(managed);
+    expect(allowed.code==protocol::NetworkResultCode::success,"managed allow update");
+    wait_until([&]{const auto x=ca.cached_peer_state(id),y=cb.cached_peer_state(id);const auto k=ca.cached_network_key(id),l=cb.cached_network_key(id);return x && y && x->policy && y->policy && x->policy->revision==allowed.policy.revision && y->policy->revision==allowed.policy.revision && k && l && k->epoch==x->key_epoch && k->epoch==l->epoch && k->epoch!=denied_key.epoch;},"allowed policy keys failed to synchronize");
+    const auto allowed_key=*ca.cached_network_key(id);
+    auth::NetworkPacketCipher permitted(id,allowed_key.epoch,allowed_key.key,a_id,ca.cached_packet_identity()->signed_key,a_state.own_address);permitted.update_peers(*ca.cached_peer_state(id));
+    const auto receiver=std::make_shared<auth::NetworkPacketCipher>(id,allowed_key.epoch,allowed_key.key,b_id,cb.cached_packet_identity()->signed_key,b_state.own_address);receiver->update_peers(*cb.cached_peer_state(id));
+    b.set_receive_handler([&,receiver](const auto& d){expect(receiver->decrypt(d.packet,d.sender_device_id)==plain,"managed allowed plaintext changed");++delivered;});
+    if(!tls)wait_until([&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;},"managed allow did not reestablish direct path",30s);
+    expect(a.send(permitted.encrypt(plain))==transport::PacketSendResult::accepted,"managed allowed path send failed");
+    wait_until([&]{return delivered.load()==delivered_before+1;},"managed allowed packet did not arrive");
     a.stop();b.stop();server.stop();
 }
 
