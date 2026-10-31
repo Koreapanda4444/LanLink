@@ -25,6 +25,18 @@ int main(){const auto file=std::filesystem::temp_directory_path()/auth::random_a
     check(store.network_policy(network)==reply.policy,"persistent policy");
     q.policy=reply.policy;q.policy.rules.push_back({{}, {}, false});
     check(!protocol::policy_allows(q.policy,owner,a),"deny wins");
+    static_cast<void>(service.set_management_capable(a,true));
+    q.policy=reply.policy;q.policy.gateways.push_back({a,true});
+    check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::permission_denied,"gateway needs device consent");
+    protocol::ManagementRequest enrollment;enrollment.action=protocol::ManagementAction::request_gateway;enrollment.network_id=network;enrollment.policy.revision=1;
+    const auto pending=service.manage_network(a,enrollment,1000);
+    check(pending.code==protocol::NetworkResultCode::success && pending.policy.gateways.size()==1 && !pending.policy.gateways[0].approved,"member requests pending gateway");
+    q.policy=pending.policy;q.policy.gateways[0].approved=true;
+    check(service.manage_network(a,q,1000).code==protocol::NetworkResultCode::permission_denied,"gateway cannot self approve");
+    const auto approved=service.manage_network(owner,q,1000);
+    check(approved.code==protocol::NetworkResultCode::success && approved.policy.gateways[0].approved,"owner approves gateway");
+    q.policy=approved.policy;q.policy.gateways.clear();
+    check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::success,"owner can revoke gateway");
   }{storage::RelayStore reopened(file);check(reopened.schema_version()==7,"schema migration");}
   std::filesystem::remove(file);std::cout<<"managed policy passed\n";return 0;
 }catch(const std::exception& e){std::filesystem::remove(file);std::cerr<<e.what()<<'\n';return 1;}}

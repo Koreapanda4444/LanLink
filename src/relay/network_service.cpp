@@ -208,15 +208,28 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
     if(!device_allowed(actor) || !store_.find_virtual_ipv4_lease(request.network_id,actor)) {out.code=protocol::NetworkResultCode::not_member;return out;}
     out.policy=store_.network_policy(request.network_id);
     if(request.action==protocol::ManagementAction::inspect)return out;
-    if(actor!=network->owner_device_id || !management_capable_.contains(actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
-    if(request.action!=protocol::ManagementAction::replace_policy ||
-        (request.policy.topology==protocol::NetworkTopology::hub_spoke && request.policy.hubs.empty()) || !request.policy.gateways.empty() || !request.policy.routes.empty() || !request.policy.members.empty() || !request.policy.groups.empty()) {
+    if(!management_capable_.contains(actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+    auto next=request.policy;
+    if(request.action==protocol::ManagementAction::request_gateway) {
+        if(!out.policy.managed || protocol::policy_role(out.policy,actor)==protocol::AccessRole::restricted) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+        if(request.policy.revision!=out.policy.revision) {out.code=protocol::NetworkResultCode::conflict;return out;}
+        if(std::any_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& g){return g.device==actor;})) {out.code=protocol::NetworkResultCode::already_exists;return out;}
+        if(out.policy.gateways.size()>=16) {out.code=protocol::NetworkResultCode::limit_reached;return out;}
+        next=out.policy;next.gateways.push_back({actor,false});
+    } else if(actor!=network->owner_device_id) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+    if((request.action!=protocol::ManagementAction::replace_policy && request.action!=protocol::ManagementAction::request_gateway) ||
+        (next.topology==protocol::NetworkTopology::hub_spoke && next.hubs.empty()) || !next.routes.empty() || !next.members.empty() || !next.groups.empty()) {
         out.code=protocol::NetworkResultCode::invalid_request;return out;
     }
     const auto member=[&](const auth::DeviceId& d){return d==auth::DeviceId{} || store_.find_virtual_ipv4_lease(request.network_id,d).has_value();};
     for(const auto& hub:request.policy.hubs)if(!member(hub)){out.code=protocol::NetworkResultCode::target_not_found;return out;}
     for(const auto& rule:request.policy.rules)if(!member(rule.first.device) || !member(rule.second.device)) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
-    auto next=request.policy;
+    for(const auto& gateway:next.gateways) {
+        if(!member(gateway.device) || protocol::policy_role(next,gateway.device)==protocol::AccessRole::restricted) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
+        if(gateway.approved && std::none_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& old){return old.device==gateway.device;})) {
+            out.code=protocol::NetworkResultCode::permission_denied;return out;
+        }
+    }
     if(next.revision!=out.policy.revision || next.revision==std::numeric_limits<std::uint64_t>::max()) {out.code=protocol::NetworkResultCode::conflict;return out;}
     ++next.revision;
     if(!store_.save_network_policy(request.network_id,next,out.policy.revision)) {out.code=protocol::NetworkResultCode::conflict;return out;}

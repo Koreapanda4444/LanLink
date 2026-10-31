@@ -18,3 +18,8 @@ Hub-and-spoke adds an independent ceiling to the ACL: a pair must include a
 designated hub. Even a wildcard allow cannot connect two spokes. Broadcast fanout
 uses the same check. An unavailable hub does not authorize a spoke-to-spoke fallback.
 The hub is an endpoint, not an implicit packet router between spokes.
+
+Gateway registration requires two actions: the member requests gateway status, and the
+owner approves that pending device. A member cannot approve itself or name another
+device in its request. Approval alone does not enable routes or OS forwarding. Removing
+approval invalidates the policy epoch; routes may only refer to approved gateways.
