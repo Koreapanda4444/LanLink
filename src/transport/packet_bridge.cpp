@@ -205,7 +205,9 @@ bool VirtualPacketBridge::outbound_routed(std::span<const std::byte> packet) {
             }
             if(!destination)continue;
             if(!network::safe_routed_ipv4(packet))return true;
-            const auto inner_mtu=static_cast<std::uint16_t>(std::min<unsigned>(mtu_,65535)-20);
+            // This IPv4 envelope is serialized inside QUIC/TLS, never injected into
+            // the adapter. Its 20 bytes do not consume the adapter's inner MTU.
+            const auto inner_mtu=static_cast<std::uint16_t>(std::min<unsigned>(mtu_,65515));
             if(packet.size()>inner_mtu && h.dont_fragment) {
                 if(h.source==p.own_address)if(const auto error=protocol::ipv4_fragmentation_needed(packet,p.own_address,inner_mtu))inject_(*error);
                 return true;

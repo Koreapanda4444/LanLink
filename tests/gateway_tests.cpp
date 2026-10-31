@@ -38,8 +38,15 @@ int main(){const auto root=std::filesystem::temp_directory_path()/auth::random_a
     check(lan.size()==1 && lan.back()==outbound && wire.back().ciphertext!=outbound && wire.back().destination_ipv4==gp.own_address,"encrypted gateway request");
     const auto reply=ipv4(0xc0a8fb03U,ap.own_address);target=&ab;gb.outbound(reply);
     check(client.size()==1 && client.back()==reply,"gateway return packet");
-    target=&gb;ab.outbound(ipv4(ap.own_address,0xc0a8fb03U,3000));check(lan.size()==4,"inner MTU fragmentation");
-    for(std::size_t i=1;i<lan.size();++i)check(lan[i].size()<=1380 && protocol::inspect_ipv4(lan[i]).source==ap.own_address,"invalid routed fragment");
+    auto boundary=ipv4(ap.own_address,0xc0a8fb03U,1400);boundary[6]=std::byte{0x40};protocol::update_ipv4_checksum(boundary);
+    target=&gb;ab.outbound(boundary);
+    check(lan.size()==2 && lan.back()==boundary && wire.back().ciphertext.size()==1420,"configured MTU with DF must fit the routed frame");
+    auto boundary_reply=ipv4(0xc0a8fb03U,ap.own_address,1400);boundary_reply[6]=std::byte{0x40};protocol::update_ipv4_checksum(boundary_reply);
+    target=&ab;gb.outbound(boundary_reply);
+    check(client.size()==2 && client.back()==boundary_reply,"DF return packet at the adapter MTU was dropped");
+    const auto before_fragments=lan.size();
+    target=&gb;ab.outbound(ipv4(ap.own_address,0xc0a8fb03U,3000));check(lan.size()==before_fragments+3,"inner MTU fragmentation");
+    for(std::size_t i=before_fragments;i<lan.size();++i)check(lan[i].size()<=1400 && protocol::inspect_ipv4(lan[i]).source==ap.own_address,"invalid routed fragment");
     gb.clear();gb.synchronize(gs.identity,gs.networks);
     auth::NetworkPacketCipher attacker(id,ap.key_epoch,secret,a.device_id(),ak,ap.own_address);attacker.update_peers(ap);
     const auto attempt=[&](const auto& inner){const auto outer=network::encapsulate_routed_ipv4(inner,ap.own_address,gp.own_address);gb.inbound({a.device_id(),attacker.encrypt(outer)});};

@@ -6,7 +6,7 @@
 |---|---|
 | Mesh / Hub / ACL | 관리형 기본 차단, Relay 전달·수신 복호화·직접 연결 인증의 동일 정책, 방송 격리, epoch 갱신 |
 | 기존 직접 세션 | 실제 loopback QUIC 세션에 Hub 차단 정책을 적용해 송수신 권한 제거 |
-| Gateway | 장치 신청·관리자 승인, 사설 범위·중복·가상망 충돌, 암호화 왕복, 위조·중첩·TTL·ICMP redirect·broadcast 차단 |
+| Gateway | 장치 신청·관리자 승인, 사설 범위·중복·가상망 충돌, 암호화 왕복, 설정 MTU의 DF 패킷 양방향 전달, 위조·중첩·TTL·ICMP redirect·broadcast 차단 |
 | 경로 lifecycle | 로컬 opt-in, 권한 회수·disconnect 시 빈 경로 계획, Windows 실제 경로 추가·삭제 및 전달 flag 복구 |
 | Windows forwarding | 두 개의 격리 Wintun 인터페이스 사이의 WFP forward/return, 허용되지 않은 source 차단; DNS와 default route 전후 비교 |
 | 역할·그룹 | 관리자 승인·추방 권한, 역할 승격 거부·회수 즉시 반영, 제한 멤버의 재가입 제한 보존 |

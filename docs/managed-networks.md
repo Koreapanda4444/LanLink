@@ -32,7 +32,9 @@ specified, the member's group.
 
 Routed packets use authenticated encrypted IPv4-in-IPv4 between member and gateway.
 The inner source/destination is checked against the peer lease and approved route in
-both directions. Inner fragmentation accounts for the 20-byte tunnel header. The relay
+both directions. The configured adapter MTU applies to inner IPv4 packets. The 20-byte
+routing envelope travels inside QUIC/TLS frames, so packets at the adapter MTU (including
+DF packets) do not lose another 20 bytes of capacity. The relay
 continues to see ciphertext only. LAN return routes and firewall access must be set up
 by the LAN administrator; LanLink does not silently configure NAT.
 
