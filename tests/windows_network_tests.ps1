@@ -107,6 +107,13 @@ try {
         -Direction Inbound -Action Allow -Program $DriverExecutable -LocalAddress '10.254.253.2' `
         -RemoteAddress '10.254.253.1' -Protocol Any -Profile Any | Out-Null
 
+    $dnsBefore = @(Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -NotLike 'LlGateway*' | Sort-Object InterfaceIndex | ForEach-Object { "$($_.InterfaceIndex):$($_.ServerAddresses -join ',')" }) -join ';'
+    $defaultBefore = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' | Sort-Object InterfaceIndex,NextHop | ForEach-Object { "$($_.InterfaceIndex):$($_.NextHop):$($_.RouteMetric)" }) -join ';'
+    Invoke-Driver @('--gateway-probe')
+    $dnsAfter = @(Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -NotLike 'LlGateway*' | Sort-Object InterfaceIndex | ForEach-Object { "$($_.InterfaceIndex):$($_.ServerAddresses -join ',')" }) -join ';'
+    $defaultAfter = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' | Sort-Object InterfaceIndex,NextHop | ForEach-Object { "$($_.InterfaceIndex):$($_.NextHop):$($_.RouteMetric)" }) -join ';'
+    if ($dnsBefore -ne $dnsAfter -or $defaultBefore -ne $defaultAfter) { throw 'Gateway setup changed DNS or an Internet default route.' }
+
     foreach ($mode in 'quic', 'tcp') {
         $scenario = Join-Path $root $mode
         $program = Join-Path $scenario 'program files'

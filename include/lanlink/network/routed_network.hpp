@@ -20,6 +20,7 @@ struct RoutingConfiguration {
     bool operator==(const RoutingConfiguration&) const = default;
 };
 [[nodiscard]] RoutingConfiguration routing_configuration(const session::NetworkSnapshot& snapshot,bool accept_routes,bool forward);
+[[nodiscard]] bool safe_routed_ipv4(std::span<const std::byte> packet);
 [[nodiscard]] std::vector<std::byte> encapsulate_routed_ipv4(std::span<const std::byte> inner,std::uint32_t source,std::uint32_t gateway);
 [[nodiscard]] std::span<const std::byte> decapsulate_routed_ipv4(std::span<const std::byte> outer);
 }

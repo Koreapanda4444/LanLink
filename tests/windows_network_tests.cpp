@@ -385,6 +385,39 @@ std::optional<NET_LUID> address_luid(std::uint32_t address) {
     return result;
 }
 
+void gateway_probe() {
+    const auto suffix=std::to_wstring(GetCurrentProcessId());
+    transport::WintunAdapter tunnel(L"LlGateway-"+suffix),lan(L"LlGatewayLAN-"+suffix);
+    protocol::NetworkId id{};id[0]=std::byte{0x71};auto lan_id=id;lan_id[0]=std::byte{0x72};
+    constexpr std::uint32_t vpn=0x0a7efe01U,member=vpn+1,lan_ip=0xc0a8fb01U,lan_peer=lan_ip+1;
+    tunnel.configure({id,vpn,vpn&0xffffff00U,24});lan.configure({lan_id,lan_ip,lan_ip&0xffffff00U,24});
+    const auto tunnel_luid=*address_luid(vpn),lan_luid=*address_luid(lan_ip);
+    const auto interface=[&](NET_LUID luid){MIB_IPINTERFACE_ROW row;InitializeIpInterfaceEntry(&row);row.Family=AF_INET;row.InterfaceLuid=luid;require(GetIpInterfaceEntry(&row)==NO_ERROR,"read gateway interface");return row;};
+    const auto original=interface(tunnel_luid);
+    auto lan_original=interface(lan_luid);
+    struct Restore { MIB_IPINTERFACE_ROW row;~Restore(){row.SitePrefixLength=0;static_cast<void>(SetIpInterfaceEntry(&row));} } restore{lan_original};
+    lan_original.ForwardingEnabled=TRUE;lan_original.SitePrefixLength=0;require(SetIpInterfaceEntry(&lan_original)==NO_ERROR,"enable isolated test LAN forwarding");
+    lanlink::network::RoutingConfiguration client;client.routes.push_back({id,0xc0a8fa00U,24});
+    const auto has_route=[&]{MIB_IPFORWARD_TABLE2* table=nullptr;require(GetIpForwardTable2(AF_INET,&table)==NO_ERROR,"read gateway routes");bool found=false;
+        for(ULONG i=0;i<table->NumEntries;++i){const auto& row=table->Table[i];found|=row.InterfaceLuid.Value==tunnel_luid.Value && row.DestinationPrefix.PrefixLength==24 && ntohl(row.DestinationPrefix.Prefix.Ipv4.sin_addr.s_addr)==0xc0a8fa00U;}FreeMibTable(table);return found;};
+    tunnel.configure_routing(client);require(has_route(),"explicit client route was not installed");
+    tunnel.configure_routing({});require(!has_route(),"client route survived withdrawal");
+    std::atomic<unsigned> requests=0,replies=0;
+    tunnel.start([&](auto bytes){if(bytes.size()>=28 && bytes[9]==std::byte{17} && address_at(bytes,12)==lan_peer && address_at(bytes,16)==member)++replies;});
+    lan.start([&](auto bytes){if(bytes.size()>=28 && bytes[9]==std::byte{17} && address_at(bytes,16)==lan_peer)++requests;});
+    lanlink::network::RoutingConfiguration forwarding;forwarding.forwards.push_back({id,lan_ip&0xffffff00U,24,member});
+    tunnel.configure_routing(forwarding);require(interface(tunnel_luid).ForwardingEnabled,"LanLink forwarding was not enabled");
+    const auto packet=[&](std::uint32_t source,std::uint32_t destination){std::vector<std::byte> bytes(60);bytes[0]=std::byte{0x45};bytes[3]=std::byte{60};bytes[8]=std::byte{64};bytes[9]=std::byte{17};set_address(bytes,12,source);set_address(bytes,16,destination);bytes[20]=std::byte{0xa0};bytes[21]=std::byte{1};bytes[22]=std::byte{0xa0};bytes[23]=std::byte{2};bytes[25]=std::byte{40};set_checksum(std::span(bytes).first(20),10);return bytes;};
+    tunnel.inject(packet(member,lan_peer));wait_for([&]{return requests.load()==1;},"WFP did not permit approved LAN forwarding");
+    lan.inject(packet(lan_peer,member));wait_for([&]{return replies.load()==1;},"WFP did not permit the scoped LAN return path");
+    tunnel.inject(packet(member+1,lan_peer));std::this_thread::sleep_for(250ms);
+    require(requests.load()==1,"WFP permitted an unapproved member address");
+    tunnel.configure_routing({});require(interface(tunnel_luid).ForwardingEnabled==original.ForwardingEnabled,"forwarding flag was not restored");
+    require(interface(lan_luid).ForwardingEnabled,"LanLink changed physical/LAN forwarding");
+    tunnel.stop();lan.stop();
+    std::cout<<"Windows routed-subnet add/remove, WFP forward/return, default deny and forwarding restore passed\n";
+}
+
 std::vector<std::byte> local(protocol::LocalCommand command, std::vector<std::byte> payload = {}) {
     auto response = transport::local_pipe_request({command, false, false, std::move(payload)});
     require(!response.error, "Windows service rejected the local control request");
@@ -669,6 +702,7 @@ int main(int argc, char* argv[]) {
             tls_probe(argv[2], static_cast<std::uint16_t>(std::stoul(argv[3])), std::string(argv[4]) == "accept");
             return 0;
         }
+        if(argc==2 && std::string(argv[1])=="--gateway-probe"){gateway_probe();return 0;}
         require(argc == 5, "usage: windows-network-tests fixture port quic|tcp relay-port");
         scenario(argv[1], static_cast<std::uint16_t>(std::stoul(argv[2])), std::string(argv[3]) == "tcp",
                  static_cast<std::uint16_t>(std::stoul(argv[4])));

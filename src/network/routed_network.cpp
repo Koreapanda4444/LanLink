@@ -9,6 +9,7 @@ RoutingConfiguration routing_configuration(const session::NetworkSnapshot& snaps
     const auto own=snapshot.identity->device_id;
     for(const auto& n:snapshot.networks)if(n.peers.policy)for(const auto& route:n.peers.policy->routes) {
         const auto& policy=*n.peers.policy;
+        if(!protocol::private_routed_subnet(route.address,route.prefix) || protocol::subnets_overlap(route.address,route.prefix,0x0a400000U,10))throw std::invalid_argument("unsafe gateway subnet");
         if(route.gateway==own && forward) {
             for(const auto& peer:n.peers.peers)if(peer.signed_key && protocol::route_allows(policy,route,peer.device_id))
                 result.forwards.push_back({n.peers.network_id,route.address,route.prefix,peer.ipv4_address});
@@ -25,6 +26,14 @@ RoutingConfiguration routing_configuration(const session::NetworkSnapshot& snaps
         for(std::size_t j=0;j<i;++j)if(protocol::subnets_overlap(route.address,route.prefix,result.routes[j].address,result.routes[j].prefix))throw std::invalid_argument("routed subnets overlap");
     }
     return result;
+}
+bool safe_routed_ipv4(std::span<const std::byte> packet) {
+    const auto h=protocol::inspect_ipv4(packet);
+    if(h.header_size!=20 || std::to_integer<unsigned>(packet[8])<=1)return false;
+    if(packet[9]==std::byte{6} || packet[9]==std::byte{17})return true;
+    if(packet[9]!=std::byte{1} || h.fragment_offset || h.more_fragments || packet.size()<28)return false;
+    const auto type=std::to_integer<unsigned>(packet[20]);
+    return type==0 || type==3 || type==8 || type==11 || type==12;
 }
 std::vector<std::byte> encapsulate_routed_ipv4(std::span<const std::byte> inner,std::uint32_t source,std::uint32_t destination) {
     static_cast<void>(protocol::inspect_ipv4(inner));

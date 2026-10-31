@@ -218,8 +218,8 @@ target_link_libraries(lanlink_transport
 if(WIN32)
     target_link_libraries(lanlink_transport PRIVATE ntdll ws2_32 winhttp)
 
-    target_sources(lanlink_transport PRIVATE src/transport/wintun_adapter.cpp src/transport/windows_certificate.cpp)
-    target_link_libraries(lanlink_transport PRIVATE iphlpapi Crypt32 ncrypt)
+    target_sources(lanlink_transport PRIVATE src/transport/windows_gateway.cpp src/transport/wintun_adapter.cpp src/transport/windows_certificate.cpp)
+    target_link_libraries(lanlink_transport PRIVATE iphlpapi Crypt32 ncrypt fwpuclnt rpcrt4 uuid)
 endif()
 
 lanlink_enable_warnings(lanlink_transport)

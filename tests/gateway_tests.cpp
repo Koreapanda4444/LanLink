@@ -45,6 +45,11 @@ int main(){const auto root=std::filesystem::temp_directory_path()/auth::random_a
     const auto attempt=[&](const auto& inner){const auto outer=network::encapsulate_routed_ipv4(inner,ap.own_address,gp.own_address);gb.inbound({a.device_id(),attacker.encrypt(outer)});};
     const auto before=lan.size();attempt(ipv4(ap.own_address+9,0xc0a8fb03U));attempt(ipv4(ap.own_address,0x08080808U));
     check(lan.size()==before,"spoofed source or unauthorized subnet injected");
+    auto nested=outbound;nested[9]=std::byte{4};protocol::update_ipv4_checksum(nested);attempt(nested);
+    auto ttl=outbound;ttl[8]=std::byte{1};protocol::update_ipv4_checksum(ttl);attempt(ttl);
+    auto redirect=outbound;redirect[9]=std::byte{1};redirect[20]=std::byte{5};protocol::update_ipv4_checksum(redirect);attempt(redirect);
+    attempt(ipv4(ap.own_address,0xc0a8fbffU));
+    check(lan.size()==before,"nested tunnel, expired TTL, ICMP redirect or broadcast forwarded");
     gb.set_routing_options(false,false);attempt(outbound);check(lan.size()==before,"forwarding consent bypass");
     ab.set_routing_options(false,false);const auto count=wire.size();ab.outbound(outbound);check(wire.size()==count,"client route consent bypass");
     auto disconnected=as;disconnected.networks.clear();check(network::routing_configuration(disconnected,true,true).routes.empty(),"disconnect keeps route");

@@ -80,6 +80,7 @@ void VirtualNetwork::set_routing_options(bool accept_routes,bool forward) {
 void VirtualNetwork::synchronize(const session::NetworkSnapshot& snapshot) {
     std::lock_guard lock(lifecycle_mutex_);
     if (!started_) throw std::logic_error("virtual network is stopped");
+    try {
     std::map<protocol::NetworkId, VirtualNetworkAddress> desired;
     if (snapshot.identity) for (const auto& network : snapshot.networks) {
         const auto& p = network.peers;
@@ -101,6 +102,11 @@ void VirtualNetwork::synchronize(const session::NetworkSnapshot& snapshot) {
             state_->adapter->remove(it->first);
             it = installed_.erase(it);
         } else ++it;
+    }
+    } catch(...) {
+        state_->bridge->clear();
+        try{state_->adapter->configure_routing({});}catch(...){}
+        throw;
     }
 }
 

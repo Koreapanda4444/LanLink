@@ -41,3 +41,25 @@ Remote approval cannot enable either option on a host. Windows client routes are
 by LanLink and removed on policy withdrawal, disconnect and clean shutdown. DNS and
 the Internet default route are never changed. The optional Linux TAP backend does not
 install routed subnets; full Linux/macOS L3 adapters belong to the next milestone.
+
+Windows gateway forwarding uses a dynamic Windows Filtering Platform session at the
+IPv4 forwarding layer. The LanLink interface is blocked in both directions except for
+explicit (member lease, approved private subnet, LAN interface) pairs. Filter replacement
+is transactional. The original forwarding flag is restored before filters are removed.
+LanLink does not enable forwarding on physical LAN interfaces: an administrator must
+already have configured those and the return route. This avoids enabling general LAN
+routing as a side effect, including after a service crash. Client routes have a 15-second
+lifetime, renewed every five seconds while authorized.
+
+Only TCP, UDP and ordinary ICMP echo/error traffic can traverse the routed tunnel.
+IP options, nested tunnels, exhausted TTL, ICMP redirects/router advertisements, routed
+broadcasts and multicast are denied. Each IPv4 fragment retains checked source and
+destination scope. DNS servers, DNS search suffixes, NAT, Internet default routes and
+physical interface forwarding flags are never modified.
+
+The local `routing_options` IPC reads or changes the two opt-ins for the current service
+session. A service restart uses the config defaults. Remote policy cannot invoke it.
+
+Windows API references: [forwarding layer conditions](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-conditions-available-at-each-filtering-layer),
+[interface settings](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-setipinterfaceentry),
+[route creation](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-createipforwardentry2).

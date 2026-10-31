@@ -204,6 +204,7 @@ bool VirtualPacketBridge::outbound_routed(std::span<const std::byte> packet) {
                 destination=peer->ipv4_address;
             }
             if(!destination)continue;
+            if(!network::safe_routed_ipv4(packet))return true;
             const auto inner_mtu=static_cast<std::uint16_t>(std::min<unsigned>(mtu_,65535)-20);
             if(packet.size()>inner_mtu && h.dont_fragment) {
                 if(h.source==p.own_address)if(const auto error=protocol::ipv4_fragmentation_needed(packet,p.own_address,inner_mtu))inject_(*error);
@@ -220,14 +221,15 @@ bool VirtualPacketBridge::outbound_routed(std::span<const std::byte> packet) {
 bool VirtualPacketBridge::inbound_routed(const protocol::ForwardedNetworkPacket& delivery,std::span<const std::byte> outer) {
     const auto inner=network::decapsulate_routed_ipv4(outer);const auto h=protocol::inspect_ipv4(inner);
     std::lock_guard lock(mutex_);const auto found=sessions_.find(delivery.packet.network_id);if(found==sessions_.end())return false;
-    const auto& session=found->second;const auto& p=session->peers;if(!p.policy)return false;
+    const auto& session=found->second;const auto& p=session->peers;
+    if(!p.policy || p.key_epoch!=delivery.packet.key_epoch || !network::safe_routed_ipv4(inner))return false;
     const auto sender=std::find_if(p.peers.begin(),p.peers.end(),[&](const auto& peer){return peer.device_id==delivery.sender_device_id && peer.signed_key;});
     if(sender==p.peers.end() || !protocol::policy_allows(*p.policy,session->own_device_id,delivery.sender_device_id))return false;
     for(const auto& route:p.policy->routes) {
         const bool request=forward_ && route.gateway==session->own_device_id && h.source==sender->ipv4_address &&
-            protocol::subnet_contains(route.address,route.prefix,h.destination) && protocol::route_allows(*p.policy,route,delivery.sender_device_id);
+            protocol::is_ipv4_host(h.destination,route.address,route.prefix) && protocol::route_allows(*p.policy,route,delivery.sender_device_id);
         const bool reply=accept_routes_ && route.gateway==delivery.sender_device_id && h.destination==p.own_address &&
-            protocol::subnet_contains(route.address,route.prefix,h.source) && protocol::route_allows(*p.policy,route,session->own_device_id);
+            protocol::is_ipv4_host(h.source,route.address,route.prefix) && protocol::route_allows(*p.policy,route,session->own_device_id);
         if(request || reply){for(const auto& fragment:protocol::fragment_ipv4(inner,mtu_))inject_(fragment);return true;}
     }
     return false;

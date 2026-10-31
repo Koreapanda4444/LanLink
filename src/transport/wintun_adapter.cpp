@@ -1,4 +1,6 @@
 #include "lanlink/transport/wintun_adapter.hpp"
+#include "lanlink/transport/windows_gateway.hpp"
+#include <chrono>
 
 #include <winsock2.h>
 #include <windows.h>
@@ -191,6 +193,7 @@ public:
             }
         }
         functions_.get_adapter_luid(adapter_, &luid_);
+        gateway_=std::make_unique<WindowsGateway>(luid_.Value);
 
         MIB_IPINTERFACE_ROW row;
         InitializeIpInterfaceEntry(&row);
@@ -303,14 +306,22 @@ public:
         }
     }
 
+    void checked_route_create(const MIB_IPFORWARD_ROW2& row) { check_windows(CreateIpForwardEntry2(&row),"CreateIpForwardEntry2(routed subnet)"); }
     void configure_routing(const network::RoutingConfiguration& configuration) {
-        if(!configuration.forwards.empty())throw std::runtime_error("gateway forwarding is not configured on this adapter");
-        if(configuration==routing_)return;
+        if(configuration==routing_) {
+            // Short route lifetimes bound stale routes even after an unclean process exit.
+            if(std::chrono::steady_clock::now()>=renew_routes_) {
+                for(const auto& route:routing_.routes){auto row=route_row(luid_,{route.network_id,0,route.address,route.prefix});row.ValidLifetime=row.PreferredLifetime=15;
+                    const auto status=SetIpForwardEntry2(&row);if(status==ERROR_NOT_FOUND)checked_route_create(row);else check_windows(status,"renew routed subnet");}
+                renew_routes_=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+            }
+            return;
+        }
         MIB_IPFORWARD_TABLE2* table=nullptr;
         check_windows(GetIpForwardTable2(AF_INET,&table),"GetIpForwardTable2");
         const auto release=std::unique_ptr<MIB_IPFORWARD_TABLE2,decltype(&FreeMibTable)>(table,FreeMibTable);
         for(const auto& requested:configuration.routes) {
-            if(!protocol::private_routed_subnet(requested.address,requested.prefix))throw std::invalid_argument("unsafe routed subnet");
+            if(!protocol::private_routed_subnet(requested.address,requested.prefix) || protocol::subnets_overlap(requested.address,requested.prefix,0x0a400000U,10))throw std::invalid_argument("unsafe routed subnet");
             for(ULONG i=0;i<table->NumEntries;++i){const auto& row=table->Table[i];const auto prefix=row.DestinationPrefix.PrefixLength;
                 if(prefix && row.InterfaceLuid.Value!=luid_.Value && protocol::subnets_overlap(requested.address,requested.prefix,ntohl(row.DestinationPrefix.Prefix.Ipv4.sin_addr.S_un.S_addr),prefix))
                     throw std::runtime_error("routed subnet conflicts with an existing OS route");
@@ -321,13 +332,15 @@ public:
             for(const auto& requested:configuration.routes) {
                 if(std::find(routing_.routes.begin(),routing_.routes.end(),requested)!=routing_.routes.end())continue;
                 auto row=route_row(luid_,{requested.network_id,0,requested.address,requested.prefix});
-                check_windows(CreateIpForwardEntry2(&row),"CreateIpForwardEntry2(routed subnet)");added.push_back(row);
+                row.ValidLifetime=row.PreferredLifetime=15;
+                checked_route_create(row);added.push_back(row);
             }
+            gateway_->configure(configuration.forwards);
         }catch(...){for(auto& row:added)static_cast<void>(DeleteIpForwardEntry2(&row));throw;}
         for(const auto& previous:routing_.routes)if(std::find(configuration.routes.begin(),configuration.routes.end(),previous)==configuration.routes.end()) {
             auto row=route_row(luid_,{previous.network_id,0,previous.address,previous.prefix});static_cast<void>(DeleteIpForwardEntry2(&row));
         }
-        routing_=configuration;
+        routing_=configuration;renew_routes_=std::chrono::steady_clock::now()+std::chrono::seconds(5);
     }
     void start(PacketHandler handler) {
         if (!handler || session_) {
@@ -386,6 +399,7 @@ public:
     }
 
     void stop() noexcept {
+        try{configure_routing({});}catch(...){}
         if (stop_event_) {
             SetEvent(stop_event_);
         }
@@ -470,6 +484,8 @@ private:
     std::uint32_t original_mtu_ = 0;
     std::optional<ULONG> original_dad_transmits_;
     bool owns_multicast_route_ = false;
+    std::unique_ptr<WindowsGateway> gateway_;
+    std::chrono::steady_clock::time_point renew_routes_{};
     network::RoutingConfiguration routing_;
     std::map<protocol::NetworkId, InstalledAddress> addresses_;
     SessionHandle session_ = nullptr;

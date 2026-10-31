@@ -33,6 +33,7 @@ enum class LocalCommand : std::uint8_t {
     game_diagnostics = 14,
     user_access = 15,
     network_management = 16,
+    routing_options = 17,
 };
 
 struct LocalActivity {

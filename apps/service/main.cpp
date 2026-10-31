@@ -104,6 +104,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     lanlink::network::VirtualNetwork network(adapter, path, logger);
     network.start();
     network.set_routing_options(config.accept_routed_subnets,config.gateway_forwarding);
+    std::atomic_bool accept_routes=config.accept_routed_subnets,forward=config.gateway_forwarding;
 
     std::exception_ptr adapter_error;
 
@@ -137,6 +138,14 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 }
                 payload = protocol::encode_network_list_result(result.result);
                 break;
+            }
+            case protocol::LocalCommand::routing_options: {
+                if(!request.payload.empty()) {
+                    if(request.payload.size()!=2 || request.payload[0]>std::byte{1} || request.payload[1]>std::byte{1})throw std::invalid_argument("invalid local routing options");
+                    const bool routes=request.payload[0]==std::byte{1},gateway=request.payload[1]==std::byte{1};
+                    network.set_routing_options(routes,gateway);accept_routes=routes;forward=gateway;
+                }
+                payload={accept_routes.load()?std::byte{1}:std::byte{0},forward.load()?std::byte{1}:std::byte{0}};break;
             }
             case protocol::LocalCommand::network_management: {
                 payload=protocol::encode_management_result(client.manage_network(protocol::decode_management_request(request.payload)));
