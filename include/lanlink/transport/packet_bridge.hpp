@@ -32,6 +32,7 @@ public:
     void clear() noexcept;
     void synchronize_multicast(const std::optional<std::vector<std::uint32_t>>& groups);
     void set_mtu(std::uint16_t mtu);
+    void set_routing_options(bool accept_routes,bool forward);
     [[nodiscard]] std::uint64_t reflected_packets() const;
     [[nodiscard]] protocol::GameDiagnostics game_diagnostics() const;
 
@@ -40,6 +41,7 @@ private:
         protocol::NetworkPeerState peers;
         NetworkKeySnapshot key;
         auth::SignedDeviceKey own_signed_key;
+        auth::DeviceId own_device_id{};
         std::shared_ptr<auth::NetworkPacketCipher> cipher;
         network::MulticastMembership multicast;
         network::LanDiscoveryGuard outbound_discovery;
@@ -52,6 +54,9 @@ private:
     InjectHandler inject_;
     mutable std::recursive_mutex mutex_;
     std::map<protocol::NetworkId, std::shared_ptr<Session>> sessions_;
+    bool accept_routes_ = false, forward_ = false;
+    [[nodiscard]] bool outbound_routed(std::span<const std::byte> packet);
+    [[nodiscard]] bool inbound_routed(const protocol::ForwardedNetworkPacket& delivery,std::span<const std::byte> packet);
     std::uint16_t mtu_ = 65535;
 };
 

@@ -22,6 +22,7 @@ public:
     VirtualNetwork& operator=(const VirtualNetwork&) = delete;
     void start();
     void synchronize(const session::NetworkSnapshot& snapshot);
+    void set_routing_options(bool accept_routes,bool forward);
     void stop() noexcept;
     [[nodiscard]] std::exception_ptr pump_error() const noexcept;
     [[nodiscard]] std::uint64_t rejected_packets() const noexcept;
@@ -33,6 +34,7 @@ private:
     transport::PacketPath& path_;
     std::mutex lifecycle_mutex_;
     bool started_ = false;
+    bool accept_routes_ = false, forward_ = false;
     std::map<protocol::NetworkId, VirtualNetworkAddress> installed_;
 };
 

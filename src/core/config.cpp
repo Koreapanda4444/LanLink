@@ -112,6 +112,9 @@ RuntimeConfig parse_config(const std::string_view content) {
                 const auto mtu = parse_unsigned(value, key_view, line_number);
                 if (mtu < 576 || mtu > 9000) fail(line_number, "virtual_mtu must be between 576 and 9000");
                 config.virtual_mtu = static_cast<std::uint16_t>(mtu);
+            } else if(key=="accept_routed_subnets" || key=="gateway_forwarding") {
+                if(value!="true" && value!="false")fail(line_number,"routing option must be true or false");
+                if(key=="accept_routed_subnets")config.accept_routed_subnets=value=="true";else config.gateway_forwarding=value=="true";
             } else if(key=="p2p_enabled") {
                 if(value!="true" && value!="false")fail(line_number,"p2p_enabled must be true or false");
                 config.p2p_enabled=value=="true";

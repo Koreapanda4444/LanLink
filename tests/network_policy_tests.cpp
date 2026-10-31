@@ -35,7 +35,14 @@ int main(){const auto file=std::filesystem::temp_directory_path()/auth::random_a
     check(service.manage_network(a,q,1000).code==protocol::NetworkResultCode::permission_denied,"gateway cannot self approve");
     const auto approved=service.manage_network(owner,q,1000);
     check(approved.code==protocol::NetworkResultCode::success && approved.policy.gateways[0].approved,"owner approves gateway");
-    q.policy=approved.policy;q.policy.gateways.clear();
+    q.policy=approved.policy;q.policy.routes.push_back({a,0xc0a8fb00U,24,{}});
+    const auto routed=service.manage_network(owner,q,1000);
+    check(routed.code==protocol::NetworkResultCode::success && routed.policy.routes.size()==1,"approved routed subnet");
+    q.policy=routed.policy;q.policy.routes[0].address=0x0a400000U;
+    check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::conflict,"overlay conflict denied");
+    auto invalid=routed.policy;invalid.routes[0].address=0;invalid.routes[0].prefix=0;
+    bool bad=false;try{static_cast<void>(protocol::encode_network_policy(invalid));}catch(const std::exception&){bad=true;}check(bad,"default route rejected");
+    q.policy=routed.policy;q.policy.routes.clear();q.policy.gateways.clear();
     check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::success,"owner can revoke gateway");
   }{storage::RelayStore reopened(file);check(reopened.schema_version()==7,"schema migration");}
   std::filesystem::remove(file);std::cout<<"managed policy passed\n";return 0;

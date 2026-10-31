@@ -1,6 +1,7 @@
 #include "lanlink/transport/packet_bridge.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 #include "lanlink/protocol/ipv4.hpp"
+#include "lanlink/network/routed_network.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -76,7 +77,7 @@ void VirtualPacketBridge::synchronize(
         }
 
         auto session = std::make_shared<Session>(Session{
-            state, network.key, identity->signed_key,
+            state, network.key, identity->signed_key, identity->device_id,
             std::make_shared<auth::NetworkPacketCipher>(
                 state.network_id, state.key_epoch, network.key.key,
                 identity->device_id, identity->signed_key, state.own_address), {}, {}, {}, {}, 0});
@@ -92,6 +93,7 @@ void VirtualPacketBridge::outbound(const std::span<const std::byte> ipv4_packet)
     if (ipv4_packet.size() < protocol::min_virtual_ipv4_packet_size) {
         return;
     }
+    if(outbound_routed(ipv4_packet))return;
     const auto source = read_ipv4(ipv4_packet, 12);
     const auto destination = read_ipv4(ipv4_packet, 16);
     const auto header = protocol::inspect_ipv4(ipv4_packet);
@@ -148,6 +150,7 @@ void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delive
     }
     const auto plaintext = session->cipher->decrypt(delivery.packet,
                                                      delivery.sender_device_id);
+    if(plaintext[9]==std::byte{4} && peers.policy) {static_cast<void>(inbound_routed(delivery,plaintext));return;}
     const auto header = protocol::inspect_ipv4(plaintext);
     const auto current = [&] {
         const auto found = sessions_.find(delivery.packet.network_id);
@@ -180,6 +183,55 @@ void VirtualPacketBridge::inbound(const protocol::ForwardedNetworkPacket& delive
     }
 }
 
+void VirtualPacketBridge::set_routing_options(bool routes,bool forward) {
+    std::lock_guard lock(mutex_);accept_routes_=routes;forward_=forward;
+}
+bool VirtualPacketBridge::outbound_routed(std::span<const std::byte> packet) {
+    const auto h=protocol::inspect_ipv4(packet);
+    std::lock_guard lock(mutex_);
+    for(const auto& [id,session]:sessions_) {
+        static_cast<void>(id);const auto& p=session->peers;if(!p.policy)continue;
+        for(const auto& route:p.policy->routes) {
+            std::uint32_t destination=0;
+            if(h.source==p.own_address && protocol::subnet_contains(route.address,route.prefix,h.destination)) {
+                if(!accept_routes_ || !protocol::route_allows(*p.policy,route,session->own_device_id))return true;
+                const auto peer=std::find_if(p.peers.begin(),p.peers.end(),[&](const auto& v){return v.device_id==route.gateway && v.signed_key;});
+                if(peer==p.peers.end())return true;
+                destination=peer->ipv4_address;
+            } else if(route.gateway==session->own_device_id && protocol::subnet_contains(route.address,route.prefix,h.source)) {
+                const auto peer=std::find_if(p.peers.begin(),p.peers.end(),[&](const auto& v){return v.ipv4_address==h.destination && v.signed_key;});
+                if(!forward_ || peer==p.peers.end() || !protocol::route_allows(*p.policy,route,peer->device_id))return true;
+                destination=peer->ipv4_address;
+            }
+            if(!destination)continue;
+            const auto inner_mtu=static_cast<std::uint16_t>(std::min<unsigned>(mtu_,65535)-20);
+            if(packet.size()>inner_mtu && h.dont_fragment) {
+                if(h.source==p.own_address)if(const auto error=protocol::ipv4_fragmentation_needed(packet,p.own_address,inner_mtu))inject_(*error);
+                return true;
+            }
+            for(const auto& fragment:protocol::fragment_ipv4(packet,inner_mtu)) {
+                const auto outer=network::encapsulate_routed_ipv4(fragment,p.own_address,destination);send_(session->cipher->encrypt(outer));
+            }
+            return true;
+        }
+    }
+    return false;
+}
+bool VirtualPacketBridge::inbound_routed(const protocol::ForwardedNetworkPacket& delivery,std::span<const std::byte> outer) {
+    const auto inner=network::decapsulate_routed_ipv4(outer);const auto h=protocol::inspect_ipv4(inner);
+    std::lock_guard lock(mutex_);const auto found=sessions_.find(delivery.packet.network_id);if(found==sessions_.end())return false;
+    const auto& session=found->second;const auto& p=session->peers;if(!p.policy)return false;
+    const auto sender=std::find_if(p.peers.begin(),p.peers.end(),[&](const auto& peer){return peer.device_id==delivery.sender_device_id && peer.signed_key;});
+    if(sender==p.peers.end() || !protocol::policy_allows(*p.policy,session->own_device_id,delivery.sender_device_id))return false;
+    for(const auto& route:p.policy->routes) {
+        const bool request=forward_ && route.gateway==session->own_device_id && h.source==sender->ipv4_address &&
+            protocol::subnet_contains(route.address,route.prefix,h.destination) && protocol::route_allows(*p.policy,route,delivery.sender_device_id);
+        const bool reply=accept_routes_ && route.gateway==delivery.sender_device_id && h.destination==p.own_address &&
+            protocol::subnet_contains(route.address,route.prefix,h.source) && protocol::route_allows(*p.policy,route,session->own_device_id);
+        if(request || reply){for(const auto& fragment:protocol::fragment_ipv4(inner,mtu_))inject_(fragment);return true;}
+    }
+    return false;
+}
 std::uint64_t VirtualPacketBridge::reflected_packets() const {
     std::lock_guard lock(mutex_);
     std::uint64_t count = 0;

@@ -218,7 +218,7 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
         next=out.policy;next.gateways.push_back({actor,false});
     } else if(actor!=network->owner_device_id) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
     if((request.action!=protocol::ManagementAction::replace_policy && request.action!=protocol::ManagementAction::request_gateway) ||
-        (next.topology==protocol::NetworkTopology::hub_spoke && next.hubs.empty()) || !next.routes.empty() || !next.members.empty() || !next.groups.empty()) {
+        (next.topology==protocol::NetworkTopology::hub_spoke && next.hubs.empty()) || !next.members.empty() || !next.groups.empty()) {
         out.code=protocol::NetworkResultCode::invalid_request;return out;
     }
     const auto member=[&](const auth::DeviceId& d){return d==auth::DeviceId{} || store_.find_virtual_ipv4_lease(request.network_id,d).has_value();};
@@ -229,6 +229,16 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
         if(gateway.approved && std::none_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& old){return old.device==gateway.device;})) {
             out.code=protocol::NetworkResultCode::permission_denied;return out;
         }
+    }
+    const auto subnet=store_.find_subnet(request.network_id);
+    for(const auto& route:next.routes) {
+        // The entire reserved overlay pool, and every other routed subnet, is excluded.
+        if(protocol::subnets_overlap(route.address,route.prefix,storage::virtual_ipv4_pool_first,10)) {out.code=protocol::NetworkResultCode::conflict;return out;}
+        if(!member(route.gateway)) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
+        if(subnet && protocol::subnets_overlap(route.address,route.prefix,subnet->network_address,subnet->prefix_length)) {out.code=protocol::NetworkResultCode::conflict;return out;}
+        const auto all=store_.load_state();
+        for(const auto& other:all.networks)if(other.id!=request.network_id)for(const auto& existing:store_.network_policy(other.id).routes)
+            if(protocol::subnets_overlap(route.address,route.prefix,existing.address,existing.prefix)) {out.code=protocol::NetworkResultCode::conflict;return out;}
     }
     if(next.revision!=out.policy.revision || next.revision==std::numeric_limits<std::uint64_t>::max()) {out.code=protocol::NetworkResultCode::conflict;return out;}
     ++next.revision;

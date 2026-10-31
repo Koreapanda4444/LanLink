@@ -31,6 +31,7 @@ public:
 
     void configure(const WintunNetworkAddress& address) override;
     void remove(const protocol::NetworkId& network_id) noexcept override;
+    void configure_routing(const network::RoutingConfiguration& configuration) override;
     void start(PacketHandler handler) override;
     void inject(std::span<const std::byte> packet) override;
     void stop() noexcept override;

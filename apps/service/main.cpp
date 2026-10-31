@@ -103,6 +103,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     auto adapter = std::make_shared<lanlink::transport::WintunAdapter>(L"LanLink", config.virtual_mtu);
     lanlink::network::VirtualNetwork network(adapter, path, logger);
     network.start();
+    network.set_routing_options(config.accept_routed_subnets,config.gateway_forwarding);
 
     std::exception_ptr adapter_error;
 

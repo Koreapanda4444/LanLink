@@ -72,6 +72,11 @@ void VirtualNetwork::start() {
     }
 }
 
+void VirtualNetwork::set_routing_options(bool accept_routes,bool forward) {
+    std::lock_guard lock(lifecycle_mutex_);accept_routes_=accept_routes;forward_=forward;
+    state_->bridge->set_routing_options(accept_routes,forward);
+    if(!accept_routes && !forward)state_->adapter->configure_routing({});
+}
 void VirtualNetwork::synchronize(const session::NetworkSnapshot& snapshot) {
     std::lock_guard lock(lifecycle_mutex_);
     if (!started_) throw std::logic_error("virtual network is stopped");
@@ -86,6 +91,9 @@ void VirtualNetwork::synchronize(const session::NetworkSnapshot& snapshot) {
         state_->adapter->configure(address);
         installed_.insert_or_assign(id, address);
     }
+    const auto routing=routing_configuration(snapshot,accept_routes_,forward_);
+    try {state_->adapter->configure_routing(routing);}
+    catch(...) {state_->bridge->clear();try{state_->adapter->configure_routing({});}catch(...){}throw;}
     state_->bridge->synchronize(snapshot.identity, snapshot.networks);
     state_->bridge->synchronize_multicast(state_->adapter->multicast_groups());
     for (auto it = installed_.begin(); it != installed_.end();) {
@@ -99,8 +107,10 @@ void VirtualNetwork::synchronize(const session::NetworkSnapshot& snapshot) {
 void VirtualNetwork::stop() noexcept {
     std::lock_guard lock(lifecycle_mutex_);
     if (!started_) return;
-    state_->adapter->stop();
     state_->bridge->clear();
+    try {state_->adapter->configure_routing({});}catch(...){}
+    for(const auto& [id,address]:installed_){static_cast<void>(address);state_->adapter->remove(id);}
+    state_->adapter->stop();
     try { path_.set_receive_handler({}); } catch (...) {}
     path_.stop();
     installed_.clear();

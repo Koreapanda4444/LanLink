@@ -1,6 +1,8 @@
 #pragma once
 
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/network/routed_network.hpp"
+#include <stdexcept>
 
 #include <cstddef>
 #include <exception>
@@ -25,6 +27,9 @@ public:
     virtual ~VirtualAdapter() = default;
     virtual void configure(const VirtualNetworkAddress& address) = 0;
     virtual void remove(const protocol::NetworkId& network_id) noexcept = 0;
+    virtual void configure_routing(const RoutingConfiguration& configuration) {
+        if(!configuration.routes.empty() || !configuration.forwards.empty())throw std::runtime_error("adapter does not support routed subnets");
+    }
     virtual void start(PacketHandler handler) = 0;
     virtual void inject(std::span<const std::byte> packet) = 0;
     virtual void stop() noexcept = 0;

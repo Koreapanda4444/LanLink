@@ -123,6 +123,7 @@ public:
 
     ~Impl() {
         stop();
+        try{configure_routing({});}catch(...){}
         while (!addresses_.empty()) {
             remove(addresses_.begin()->first);
         }
@@ -302,6 +303,32 @@ public:
         }
     }
 
+    void configure_routing(const network::RoutingConfiguration& configuration) {
+        if(!configuration.forwards.empty())throw std::runtime_error("gateway forwarding is not configured on this adapter");
+        if(configuration==routing_)return;
+        MIB_IPFORWARD_TABLE2* table=nullptr;
+        check_windows(GetIpForwardTable2(AF_INET,&table),"GetIpForwardTable2");
+        const auto release=std::unique_ptr<MIB_IPFORWARD_TABLE2,decltype(&FreeMibTable)>(table,FreeMibTable);
+        for(const auto& requested:configuration.routes) {
+            if(!protocol::private_routed_subnet(requested.address,requested.prefix))throw std::invalid_argument("unsafe routed subnet");
+            for(ULONG i=0;i<table->NumEntries;++i){const auto& row=table->Table[i];const auto prefix=row.DestinationPrefix.PrefixLength;
+                if(prefix && row.InterfaceLuid.Value!=luid_.Value && protocol::subnets_overlap(requested.address,requested.prefix,ntohl(row.DestinationPrefix.Prefix.Ipv4.sin_addr.S_un.S_addr),prefix))
+                    throw std::runtime_error("routed subnet conflicts with an existing OS route");
+            }
+        }
+        std::vector<MIB_IPFORWARD_ROW2> added;
+        try {
+            for(const auto& requested:configuration.routes) {
+                if(std::find(routing_.routes.begin(),routing_.routes.end(),requested)!=routing_.routes.end())continue;
+                auto row=route_row(luid_,{requested.network_id,0,requested.address,requested.prefix});
+                check_windows(CreateIpForwardEntry2(&row),"CreateIpForwardEntry2(routed subnet)");added.push_back(row);
+            }
+        }catch(...){for(auto& row:added)static_cast<void>(DeleteIpForwardEntry2(&row));throw;}
+        for(const auto& previous:routing_.routes)if(std::find(configuration.routes.begin(),configuration.routes.end(),previous)==configuration.routes.end()) {
+            auto row=route_row(luid_,{previous.network_id,0,previous.address,previous.prefix});static_cast<void>(DeleteIpForwardEntry2(&row));
+        }
+        routing_=configuration;
+    }
     void start(PacketHandler handler) {
         if (!handler || session_) {
             throw std::invalid_argument("Wintun packet pump is already running or has no handler");
@@ -443,6 +470,7 @@ private:
     std::uint32_t original_mtu_ = 0;
     std::optional<ULONG> original_dad_transmits_;
     bool owns_multicast_route_ = false;
+    network::RoutingConfiguration routing_;
     std::map<protocol::NetworkId, InstalledAddress> addresses_;
     SessionHandle session_ = nullptr;
     HANDLE stop_event_ = nullptr;
@@ -468,6 +496,8 @@ void WintunAdapter::configure(const WintunNetworkAddress& address) {
 void WintunAdapter::remove(const protocol::NetworkId& network_id) noexcept {
     impl_->remove(network_id);
 }
+
+void WintunAdapter::configure_routing(const network::RoutingConfiguration& configuration) { impl_->configure_routing(configuration); }
 
 void WintunAdapter::start(PacketHandler handler) {
     impl_->start(std::move(handler));

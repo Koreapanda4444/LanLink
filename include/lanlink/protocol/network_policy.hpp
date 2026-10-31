@@ -54,6 +54,7 @@ struct NetworkPolicy {
 [[nodiscard]] AccessRole policy_role(const NetworkPolicy& policy, const auth::DeviceId& device);
 [[nodiscard]] std::string_view policy_group(const NetworkPolicy& policy, const auth::DeviceId& device);
 [[nodiscard]] bool policy_allows(const NetworkPolicy& policy, const auth::DeviceId& first, const auth::DeviceId& second);
+[[nodiscard]] bool route_allows(const NetworkPolicy& policy, const RoutedSubnet& route, const auth::DeviceId& member);
 [[nodiscard]] bool private_routed_subnet(std::uint32_t address, std::uint8_t prefix) noexcept;
 [[nodiscard]] bool subnet_contains(std::uint32_t subnet, std::uint8_t prefix, std::uint32_t address) noexcept;
 [[nodiscard]] bool subnets_overlap(std::uint32_t first, std::uint8_t first_prefix, std::uint32_t second, std::uint8_t second_prefix) noexcept;

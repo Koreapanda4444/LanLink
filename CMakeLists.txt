@@ -153,7 +153,7 @@ target_link_libraries(lanlink_relay_domain
 
 lanlink_enable_warnings(lanlink_relay_domain)
 
-add_library(lanlink_packet_engine STATIC src/transport/packet_bridge.cpp src/network/virtual_network.cpp src/network/multicast.cpp src/network/lan_discovery.cpp src/network/packet_history.cpp)
+add_library(lanlink_packet_engine STATIC src/network/routed_network.cpp src/transport/packet_bridge.cpp src/network/virtual_network.cpp src/network/multicast.cpp src/network/lan_discovery.cpp src/network/packet_history.cpp)
 target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core PRIVATE OpenSSL::Crypto)
 lanlink_enable_warnings(lanlink_packet_engine)
@@ -291,6 +291,11 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_gateway_tests tests/gateway_tests.cpp)
+    target_link_libraries(lanlink_gateway_tests PRIVATE lanlink_relay_domain lanlink_packet_engine)
+    lanlink_enable_warnings(lanlink_gateway_tests)
+    add_test(NAME lanlink-gateway COMMAND lanlink_gateway_tests)
+
     add_executable(lanlink_managed_routing_tests tests/managed_routing_tests.cpp)
     target_link_libraries(lanlink_managed_routing_tests PRIVATE lanlink_relay_domain lanlink_p2p)
     lanlink_enable_warnings(lanlink_managed_routing_tests)
