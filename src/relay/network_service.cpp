@@ -268,7 +268,8 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
     for(const auto& rule:request.policy.rules)if(!member(rule.first.device) || !member(rule.second.device)) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
     for(const auto& gateway:next.gateways) {
         if(!member(gateway.device) || protocol::policy_role(next,gateway.device)==protocol::AccessRole::restricted) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
-        if(gateway.approved && std::none_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& old){return old.device==gateway.device;})) {
+        const bool requested=std::any_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& old){return old.device==gateway.device;});
+        if(!requested && (request.action!=protocol::ManagementAction::request_gateway || gateway.device!=actor || gateway.approved)) {
             out.code=protocol::NetworkResultCode::permission_denied;return out;
         }
     }

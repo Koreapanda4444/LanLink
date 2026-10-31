@@ -26,3 +26,5 @@
 - 실행하지 못한 실기기 테스트: 여러 물리 PC·실제 LAN router/NAT의 Gateway 배포. 전체 Linux/macOS 클라이언트는 다음 Phase다.
 - 보안·안정성 주의: 관리형 정책은 기본 차단, owner online 키 배포 필요, 사설 경로·Gateway는 로컬 opt-in. 물리 LAN의 forwarding·반환 경로는 관리자 사전 구성 필요.
 - 다음 작업 번호: 42.
+
+UI 검증은 CI의 자동 렌더링·PNG 생성·프로세스 정상 종료 검사다. 캡처의 수동 시각 검토와 여러 물리 PC를 사용한 Gateway 배포 검증은 미수행이다.

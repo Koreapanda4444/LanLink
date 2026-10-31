@@ -26,7 +26,9 @@ int main(){const auto file=std::filesystem::temp_directory_path()/auth::random_a
     q.policy=reply.policy;q.policy.rules.push_back({{}, {}, false});
     check(!protocol::policy_allows(q.policy,owner,a),"deny wins");
     static_cast<void>(service.set_management_capable(a,true));
-    q.policy=reply.policy;q.policy.gateways.push_back({a,true});
+    q.policy=reply.policy;q.policy.gateways.push_back({a,false});
+    check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::permission_denied,"owner cannot fabricate a device gateway request");
+    q.policy.gateways[0].approved=true;
     check(service.manage_network(owner,q,1000).code==protocol::NetworkResultCode::permission_denied,"gateway needs device consent");
     protocol::ManagementRequest enrollment;enrollment.action=protocol::ManagementAction::request_gateway;enrollment.network_id=network;enrollment.policy.revision=1;
     const auto pending=service.manage_network(a,enrollment,1000);

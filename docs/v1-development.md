@@ -104,8 +104,7 @@
 | 29 | [d5e8edc](https://github.com/Koreapanda4444/LanLink/commit/d5e8edc7443d2ec6cfdec4b3c3e1532d00c92d79) |
 | 30 | [6aa28a9](https://github.com/Koreapanda4444/LanLink/commit/6aa28a98d55401135c89dd9c14f9d321b4254180) |
 | 31 | [c96a327](https://github.com/Koreapanda4444/LanLink/commit/c96a3277cd5540f4b7d650d62fae375454abf278) |
-| 32 | 첫 실행·UI 번역 및 v0.6.0 메타데이터를 포함한 이 문서의 변경 커밋 |
-
+| 32 | [781abc3](https://github.com/Koreapanda4444/LanLink/commit/781abc388ebc65f811ed9ef67bddfa5ae10f6ef1) |
 | 33 | [157d02d](https://github.com/Koreapanda4444/LanLink/commit/157d02dff28c23cf2f6b77d066fb53164a1a1c40) |
 | 34 | [717df62](https://github.com/Koreapanda4444/LanLink/commit/717df62241415c7e87a7c9579dd612038696955d) |
 | 35 | [95632b3](https://github.com/Koreapanda4444/LanLink/commit/95632b3b94b32606fe585f550adacebe99336249) |
@@ -114,4 +113,4 @@
 | 38 | [fd74171](https://github.com/Koreapanda4444/LanLink/commit/fd741717b204d3ed0686845f576626ad3e7fab1b) |
 | 39 | [7af7a3d](https://github.com/Koreapanda4444/LanLink/commit/7af7a3d9c4bbe583c37d504038ed9eadeafad0e3) |
 | 40 | [b5ea684](https://github.com/Koreapanda4444/LanLink/commit/b5ea6841f00d77c13cba804adb2f6a8835437839) |
-| 41 | 관리 UI·정책 미리보기·v0.7.0 메타데이터를 포함한 이 문서의 변경 커밋 |
+| 41 | [3b4eeb0](https://github.com/Koreapanda4444/LanLink/commit/3b4eeb05b42c64231581c132a252ed048601f3d6) |
