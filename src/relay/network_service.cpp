@@ -209,11 +209,12 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
     out.policy=store_.network_policy(request.network_id);
     if(request.action==protocol::ManagementAction::inspect)return out;
     if(actor!=network->owner_device_id || !management_capable_.contains(actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
-    if(request.action!=protocol::ManagementAction::replace_policy || request.policy.topology!=protocol::NetworkTopology::mesh ||
-        !request.policy.hubs.empty() || !request.policy.gateways.empty() || !request.policy.routes.empty() || !request.policy.members.empty() || !request.policy.groups.empty()) {
+    if(request.action!=protocol::ManagementAction::replace_policy ||
+        (request.policy.topology==protocol::NetworkTopology::hub_spoke && request.policy.hubs.empty()) || !request.policy.gateways.empty() || !request.policy.routes.empty() || !request.policy.members.empty() || !request.policy.groups.empty()) {
         out.code=protocol::NetworkResultCode::invalid_request;return out;
     }
     const auto member=[&](const auth::DeviceId& d){return d==auth::DeviceId{} || store_.find_virtual_ipv4_lease(request.network_id,d).has_value();};
+    for(const auto& hub:request.policy.hubs)if(!member(hub)){out.code=protocol::NetworkResultCode::target_not_found;return out;}
     for(const auto& rule:request.policy.rules)if(!member(rule.first.device) || !member(rule.second.device)) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
     auto next=request.policy;
     if(next.revision!=out.policy.revision || next.revision==std::numeric_limits<std::uint64_t>::max()) {out.code=protocol::NetworkResultCode::conflict;return out;}

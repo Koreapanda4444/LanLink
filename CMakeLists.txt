@@ -291,6 +291,11 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_managed_routing_tests tests/managed_routing_tests.cpp)
+    target_link_libraries(lanlink_managed_routing_tests PRIVATE lanlink_relay_domain lanlink_p2p)
+    lanlink_enable_warnings(lanlink_managed_routing_tests)
+    add_test(NAME lanlink-managed-routing COMMAND lanlink_managed_routing_tests)
+
     add_executable(lanlink_network_policy_tests tests/network_policy_tests.cpp)
     target_link_libraries(lanlink_network_policy_tests PRIVATE lanlink_relay_domain)
     lanlink_enable_warnings(lanlink_network_policy_tests)

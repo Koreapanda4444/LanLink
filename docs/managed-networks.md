@@ -13,3 +13,8 @@ managed peer states and cannot receive managed network keys or relay traffic.
 
 The authenticated `network_management` RPC is also available through local service IPC.
 No arbitrary shell commands or operating-system settings are accepted by the policy API.
+
+Hub-and-spoke adds an independent ceiling to the ACL: a pair must include a
+designated hub. Even a wildcard allow cannot connect two spokes. Broadcast fanout
+uses the same check. An unavailable hub does not authorize a spoke-to-spoke fallback.
+The hub is an endpoint, not an implicit packet router between spokes.

@@ -49,6 +49,9 @@ std::string_view policy_group(const NetworkPolicy& p,const auth::DeviceId& d) {
 bool policy_allows(const NetworkPolicy& p,const auth::DeviceId& a,const auth::DeviceId& b) {
     if(a==b || a==auth::DeviceId{} || b==auth::DeviceId{})return false;
     if(!p.managed)return true;
+    if(p.topology==NetworkTopology::hub_spoke &&
+        std::find(p.hubs.begin(),p.hubs.end(),a)==p.hubs.end() &&
+        std::find(p.hubs.begin(),p.hubs.end(),b)==p.hubs.end())return false;
     bool allowed=false;
     for(const auto& rule:p.rules) {
         if((matches(p,rule.first,a) && matches(p,rule.second,b)) ||

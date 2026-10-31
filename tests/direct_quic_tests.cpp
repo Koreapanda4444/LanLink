@@ -60,7 +60,8 @@ int main(){const auto root=std::filesystem::temp_directory_path()/("lanlink-dire
     require(first.send(packet)==transport::PacketSendResult::accepted,"duplicate fixture send failed");
     wait([&]{std::lock_guard lock(mutex);return replay_drops==1;},"direct packet replay was not rejected");
     const auto stats=first.status();require(stats.kind==transport::PathKind::direct_quic && stats.rtt_us && stats.sent_packets==3 && stats.received_packets==1,"direct telemetry is not measured");
-    auto revoked=own;revoked.networks[0].peers.peers.clear();first.synchronize(revoked);
+    auto revoked=own;protocol::NetworkPolicy denied;denied.managed=true;denied.topology=protocol::NetworkTopology::hub_spoke;
+    denied.hubs={auth::random_nonce()};denied.rules.push_back({{}, {}, true});revoked.networks[0].peers.policy=denied;first.synchronize(revoked);
     require(!first.authenticated() && first.send(packet)==transport::PacketSendResult::unavailable,"revocation left direct send enabled");
     ++remote.networks[0].key.epoch;second.synchronize(remote);
     require(!second.authenticated(),"key rotation retained a stale direct session");
