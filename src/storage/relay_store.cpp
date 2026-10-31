@@ -730,7 +730,7 @@ public:
         if(sqlite3_changes(database_)!=1)return false;
         auto policy=read_policy(network_id);const auto previous=policy;
         std::erase(policy.hubs,device_id);
-        std::erase_if(policy.members,[&](const auto& m){return m.device==device_id;});
+        std::erase_if(policy.members,[&](const auto& m){return m.device==device_id && m.role!=protocol::AccessRole::restricted;});
         std::erase_if(policy.gateways,[&](const auto& g){return g.device==device_id;});
         std::erase_if(policy.routes,[&](const auto& r){return r.gateway==device_id;});
         std::erase_if(policy.rules,[&](const auto& r){return r.first.device==device_id || r.second.device==device_id;});

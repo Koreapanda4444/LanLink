@@ -46,6 +46,9 @@ std::string_view policy_group(const NetworkPolicy& p,const auth::DeviceId& d) {
     for(const auto& m:p.members)if(m.device==d)return m.group;
     return "members";
 }
+bool policy_fanout_allows(const NetworkPolicy& p,const auth::DeviceId& a,const auth::DeviceId& b) {
+    return policy_allows(p,a,b) && (!p.managed || (policy_role(p,a)!=AccessRole::restricted && policy_role(p,b)!=AccessRole::restricted));
+}
 bool route_allows(const NetworkPolicy& p,const RoutedSubnet& r,const auth::DeviceId& member) {
     return p.managed && policy_role(p,member)!=AccessRole::restricted &&
         (r.group.empty() || policy_group(p,member)==r.group) && policy_allows(p,member,r.gateway) &&

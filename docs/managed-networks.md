@@ -70,3 +70,17 @@ direct session checks and the receiver's active peer cipher. Every edit rotates 
 Membership removal also prunes device-specific rules, hub/gateway assignments, routed
 subnets and roles in the membership transaction. Rejoining does not restore former
 privileges. An empty hub set after removal is fail-closed until an authorized edit.
+
+Groups are named sets (one group per assignment, otherwise `members`). Rules can
+match a device, a group, or all members. Deny wins across all matching rules. The
+owner alone grants/removes roles. Administrators manage ACL/topology/routes and
+ordinary membership, but cannot change roles, disable managed mode, remove another
+administrator or the owner, delete the network, or publish owner key envelopes.
+Ordinary members can inspect policy and request gateway status. Restricted members
+cannot manage, use gateway routes, become gateways, or send/receive discovery fanout;
+explicitly allowed unicast remains available.
+
+Privileged role assignments are revoked on membership removal. Restricted assignments
+are retained as rejoin restrictions until the owner clears them, so leaving and rejoining
+cannot escalate a restricted member. Pending approvals are returned only to authorized
+managers, including after a manager/service reconnect.

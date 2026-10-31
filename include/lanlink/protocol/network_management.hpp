@@ -12,6 +12,7 @@ struct ManagementResult {
     ManagementAction action = ManagementAction::inspect;
     NetworkId network_id{};
     NetworkResultCode code = NetworkResultCode::success;
+    std::vector<auth::DeviceId> pending_requests;
     NetworkPolicy policy;
     bool operator==(const ManagementResult&) const = default;
 };

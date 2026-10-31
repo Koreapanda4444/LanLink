@@ -185,9 +185,16 @@ NetworkService::NetworkService(storage::RelayStore& store,
                                : TimeSource{[] { return Clock::now(); }}) {
 }
 
-bool NetworkService::traffic_allowed(const storage::NetworkId& n,const auth::DeviceId& a,const auth::DeviceId& b) const {
+bool NetworkService::can_manage_network(const storage::NetworkId& n,const auth::DeviceId& actor) const {
+    const auto network=store_.find_network(n);
+    if(!network || !device_allowed(actor))return false;
+    if(network->owner_device_id==actor)return true;
     const auto policy=store_.network_policy(n);
-    return (!policy.managed || (management_capable_.contains(a) && management_capable_.contains(b))) && protocol::policy_allows(policy,a,b);
+    return policy.managed && management_capable_.contains(actor) && store_.find_virtual_ipv4_lease(n,actor) && protocol::policy_role(policy,actor)==protocol::AccessRole::administrator;
+}
+bool NetworkService::traffic_allowed(const storage::NetworkId& n,const auth::DeviceId& a,const auth::DeviceId& b,bool fanout) const {
+    const auto policy=store_.network_policy(n);
+    return (!policy.managed || (management_capable_.contains(a) && management_capable_.contains(b))) && (fanout?protocol::policy_fanout_allows(policy,a,b):protocol::policy_allows(policy,a,b));
 }
 std::vector<RoutedPeerStateChange> NetworkService::set_management_capable(const auth::DeviceId& actor,bool capable) {
     std::lock_guard lock(mutex_);
@@ -207,7 +214,13 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
     if(!network){out.code=protocol::NetworkResultCode::not_found;return out;}
     if(!device_allowed(actor) || !store_.find_virtual_ipv4_lease(request.network_id,actor)) {out.code=protocol::NetworkResultCode::not_member;return out;}
     out.policy=store_.network_policy(request.network_id);
-    if(request.action==protocol::ManagementAction::inspect)return out;
+    if(request.action==protocol::ManagementAction::inspect) {
+        if(can_manage_network(request.network_id,actor))for(const auto& pending:store_.list_join_requests_for_network(request.network_id)) {
+            if(out.pending_requests.size()==protocol::max_network_peer_entries)break;
+            out.pending_requests.push_back(pending.device_id);
+        }
+        return out;
+    }
     if(!management_capable_.contains(actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
     auto next=request.policy;
     if(request.action==protocol::ManagementAction::request_gateway) {
@@ -216,9 +229,9 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
         if(std::any_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& g){return g.device==actor;})) {out.code=protocol::NetworkResultCode::already_exists;return out;}
         if(out.policy.gateways.size()>=16) {out.code=protocol::NetworkResultCode::limit_reached;return out;}
         next=out.policy;next.gateways.push_back({actor,false});
-    } else if(actor!=network->owner_device_id) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+    } else if(!can_manage_network(request.network_id,actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
     if((request.action!=protocol::ManagementAction::replace_policy && request.action!=protocol::ManagementAction::request_gateway) ||
-        (next.topology==protocol::NetworkTopology::hub_spoke && next.hubs.empty()) || !next.members.empty() || !next.groups.empty()) {
+        (next.topology==protocol::NetworkTopology::hub_spoke && next.hubs.empty())) {
         out.code=protocol::NetworkResultCode::invalid_request;return out;
     }
     const auto member=[&](const auth::DeviceId& d){return d==auth::DeviceId{} || store_.find_virtual_ipv4_lease(request.network_id,d).has_value();};
@@ -229,6 +242,16 @@ protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& 
         if(gateway.approved && std::none_of(out.policy.gateways.begin(),out.policy.gateways.end(),[&](const auto& old){return old.device==gateway.device;})) {
             out.code=protocol::NetworkResultCode::permission_denied;return out;
         }
+    }
+    for(const auto& assignment:next.members) {
+        if((!member(assignment.device) && !(assignment.role==protocol::AccessRole::restricted && store_.find_device(assignment.device))) ||
+            (assignment.device==network->owner_device_id && assignment.role!=protocol::AccessRole::member)) {out.code=protocol::NetworkResultCode::invalid_request;return out;}
+    }
+    if(actor!=network->owner_device_id && request.action==protocol::ManagementAction::replace_policy) {
+        // An administrator cannot change, remove or grant roles, including its own.
+        if(!next.managed) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+        for(const auto& assignment:next.members)if(assignment.role!=protocol::policy_role(out.policy,assignment.device)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+        for(const auto& assignment:out.policy.members)if(assignment.role!=protocol::policy_role(next,assignment.device)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
     }
     const auto subnet=store_.find_subnet(request.network_id);
     for(const auto& route:next.routes) {
@@ -314,7 +337,7 @@ protocol::AccessResult NetworkService::access_request(const auth::DeviceId& acto
         if(!allow_access_attempt(actor,request.network_id)){result.code=protocol::NetworkResultCode::limit_reached;return result;}
         const auto network=store_.find_network(request.network_id);
         if(request.action!=protocol::AccessAction::invite_redeem) {
-            if(!network || network->owner_device_id!=actor){result.code=protocol::NetworkResultCode::permission_denied;return result;}
+            if(!network || !can_manage_network(request.network_id,actor)){result.code=protocol::NetworkResultCode::permission_denied;return result;}
             if(request.action==protocol::AccessAction::invite_revoke){store_.revoke_invite_links(request.network_id);return result;}
             if(request.lifetime_seconds<60 || request.lifetime_seconds>86400 || !request.max_uses || request.max_uses>100) {
                 result.code=protocol::NetworkResultCode::invalid_request;return result;
@@ -344,7 +367,7 @@ protocol::AccessResult NetworkService::access_request(const auth::DeviceId& acto
         if(!allow_access_attempt(actor,request.network_id)) { result.code=protocol::NetworkResultCode::limit_reached; return result; }
         const auto network=store_.find_network(request.network_id);
         if(request.action==protocol::AccessAction::password_set) {
-            if(!network || network->owner_device_id!=actor) { result.code=protocol::NetworkResultCode::permission_denied; return result; }
+            if(!network || !can_manage_network(request.network_id,actor)) { result.code=protocol::NetworkResultCode::permission_denied; return result; }
             if(request.secret.empty()) store_.set_network_password(request.network_id,std::nullopt);
             else store_.set_network_password(request.network_id,auth::protect_password(request.secret,request.require_approval));
             return result;
@@ -486,7 +509,7 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
              (replay.seen & (std::uint64_t{1} << (replay.highest - packet.sequence))))))) return {};
         std::vector<RoutedEncryptedPacket> deliveries;
         for (const auto& lease : leases) {
-            if (lease.device_id != actor && active_keys_.contains(lease.device_id) && traffic_allowed(packet.network_id,actor,lease.device_id)) {
+            if (lease.device_id != actor && active_keys_.contains(lease.device_id) && traffic_allowed(packet.network_id,actor,lease.device_id,true)) {
                 deliveries.push_back({lease.device_id, {actor, packet}});
             }
         }
@@ -801,7 +824,7 @@ NetworkOperationOutcome NetworkService::invite_member(
                                      protocol::NetworkResultCode::not_found,
                                      request.network_id);
         }
-        if (network->owner_device_id != actor) {
+        if (!can_manage_network(request.network_id,actor)) {
             return operation_outcome(protocol::NetworkOperation::invite,
                                      protocol::NetworkResultCode::permission_denied,
                                      request.network_id);
@@ -874,7 +897,7 @@ NetworkOperationOutcome NetworkService::approve_member(
                                      protocol::NetworkResultCode::not_found,
                                      request.network_id);
         }
-        if (network->owner_device_id != actor) {
+        if (!can_manage_network(request.network_id,actor)) {
             return operation_outcome(protocol::NetworkOperation::approve,
                                      protocol::NetworkResultCode::permission_denied,
                                      request.network_id);
@@ -954,7 +977,7 @@ NetworkOperationOutcome NetworkService::kick_member(
                                      protocol::NetworkResultCode::not_found,
                                      request.network_id);
         }
-        if (network->owner_device_id != actor) {
+        if (!can_manage_network(request.network_id,actor)) {
             return operation_outcome(protocol::NetworkOperation::kick,
                                      protocol::NetworkResultCode::permission_denied,
                                      request.network_id);
@@ -964,7 +987,8 @@ NetworkOperationOutcome NetworkService::kick_member(
                                      protocol::NetworkResultCode::target_not_found,
                                      request.network_id);
         }
-        if (request.device_id == network->owner_device_id) {
+        if (request.device_id == network->owner_device_id ||
+            (actor!=network->owner_device_id && protocol::policy_role(store_.network_policy(request.network_id),request.device_id)==protocol::AccessRole::administrator)) {
             return operation_outcome(protocol::NetworkOperation::kick,
                                      protocol::NetworkResultCode::permission_denied,
                                      request.network_id);

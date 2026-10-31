@@ -274,6 +274,7 @@ void NetworkPacketCipher::update_peers(const protocol::NetworkPeerState& state) 
                                   peer.device_id, session_public_key)});
         }
     }
+    for(auto& [id,receiver]:updated)receiver.fanout_allowed=!state.policy || protocol::policy_fanout_allows(*state.policy,own_device_id_,id);
     peers_.swap(updated);
     managed_=state.policy && state.policy->managed;
     subnet_address_ = state.subnet_address;
@@ -291,7 +292,7 @@ protocol::EncryptedNetworkPacket NetworkPacketCipher::encrypt(
     std::lock_guard lock(mutex_);
     const bool fanout = protocol::is_ipv4_fanout_destination(
         destination, subnet_address_, prefix_length_);
-    if(managed_ && ((!fanout && std::none_of(peers_.begin(),peers_.end(),[&](const auto& p){return p.second.ipv4_address==destination;})) || (fanout && peers_.empty())))
+    if(managed_ && ((!fanout && std::none_of(peers_.begin(),peers_.end(),[&](const auto& p){return p.second.ipv4_address==destination;})) || (fanout && std::none_of(peers_.begin(),peers_.end(),[](const auto& p){return p.second.fanout_allowed;}))))
         throw std::invalid_argument("network policy denies this destination");
     if ((!fanout && !protocol::is_ipv4_host(destination, subnet_address_, prefix_length_)) ||
         (fanout && ipv4_packet[8] == std::byte{0})) {
@@ -337,6 +338,8 @@ std::vector<std::byte> NetworkPacketCipher::decrypt(
         throw std::runtime_error("virtual packet sender is not an active peer");
     }
     auto& receiver = peer->second;
+    if(protocol::is_ipv4_fanout_destination(packet.destination_ipv4,subnet_address_,prefix_length_) && !receiver.fanout_allowed)
+        throw std::runtime_error("network policy denies fanout for this member");
     if (receiver.initialized &&
         (!std::equal(receiver.nonce_prefix.begin(), receiver.nonce_prefix.end(),
                      packet.nonce.begin()) ||

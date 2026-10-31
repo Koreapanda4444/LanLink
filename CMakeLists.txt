@@ -291,6 +291,11 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_access_roles_tests tests/access_roles_tests.cpp)
+    target_link_libraries(lanlink_access_roles_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_access_roles_tests)
+    add_test(NAME lanlink-access-roles COMMAND lanlink_access_roles_tests)
+
     add_executable(lanlink_gateway_tests tests/gateway_tests.cpp)
     target_link_libraries(lanlink_gateway_tests PRIVATE lanlink_relay_domain lanlink_packet_engine)
     lanlink_enable_warnings(lanlink_gateway_tests)

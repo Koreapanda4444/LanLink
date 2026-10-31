@@ -185,7 +185,8 @@ private:
         std::uint64_t seen = 0;
     };
 
-    [[nodiscard]] bool traffic_allowed(const storage::NetworkId& network,const auth::DeviceId& first,const auth::DeviceId& second) const;
+    [[nodiscard]] bool traffic_allowed(const storage::NetworkId& network,const auth::DeviceId& first,const auth::DeviceId& second,bool fanout=false) const;
+    [[nodiscard]] bool can_manage_network(const storage::NetworkId& network,const auth::DeviceId& actor) const;
     std::set<auth::DeviceId> management_capable_;
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;

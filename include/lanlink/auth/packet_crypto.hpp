@@ -41,6 +41,7 @@ private:
         std::uint32_t highest_sequence = 0;
         std::uint64_t seen_sequences = 0;
         bool initialized = false;
+        bool fanout_allowed = true;
     };
 
     protocol::NetworkId network_id_;
