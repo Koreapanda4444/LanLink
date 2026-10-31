@@ -38,6 +38,8 @@ enum class MessageType : std::uint16_t {
     network_key_publish_request = 0x0108,
     peer_candidates_send = 0x010a,
     user_access_request = 0x010b,
+    network_management_request = 0x010c,
+    network_management_result = 0x018b,
     user_access_result = 0x018a,
     peer_candidates_forward = 0x0188,
     peer_candidates_ack = 0x0189,

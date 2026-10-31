@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/protocol/network_management.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/p2p/candidates.hpp"
@@ -11,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <optional>
 #include <vector>
 
@@ -83,6 +85,10 @@ public:
     NetworkService(NetworkService&&) = delete;
     NetworkService& operator=(NetworkService&&) = delete;
 
+    [[nodiscard]] protocol::ManagementResult manage_network(const auth::DeviceId& actor,
+        const protocol::ManagementRequest& request, std::int64_t now_ms,
+        std::vector<RoutedPeerStateChange>* changes = nullptr);
+    [[nodiscard]] std::vector<RoutedPeerStateChange> set_management_capable(const auth::DeviceId& actor, bool capable);
     [[nodiscard]] protocol::AccessResult access_request(const auth::DeviceId& actor,
         const protocol::AccessRequest& request, std::int64_t now_ms,
         std::vector<RoutedPeerStateChange>* changes = nullptr,
@@ -179,6 +185,8 @@ private:
         std::uint64_t seen = 0;
     };
 
+    [[nodiscard]] bool traffic_allowed(const storage::NetworkId& network,const auth::DeviceId& first,const auth::DeviceId& second) const;
+    std::set<auth::DeviceId> management_capable_;
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;
     TimeSource time_source_;

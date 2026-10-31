@@ -63,6 +63,8 @@ target_link_libraries(lanlink_core PUBLIC Threads::Threads)
 lanlink_enable_warnings(lanlink_core)
 
 add_library(lanlink_protocol STATIC
+    src/protocol/network_policy.cpp
+    src/protocol/network_management.cpp
     src/protocol/network_overview.cpp
     src/protocol/network_workflow.cpp
     src/protocol/join_target.cpp
@@ -126,7 +128,7 @@ target_include_directories(lanlink_storage
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET})
+target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET} PUBLIC lanlink_protocol)
 
 lanlink_enable_warnings(lanlink_storage)
 
@@ -289,6 +291,11 @@ include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 
 if(BUILD_TESTING)
+    add_executable(lanlink_network_policy_tests tests/network_policy_tests.cpp)
+    target_link_libraries(lanlink_network_policy_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_network_policy_tests)
+    add_test(NAME lanlink-network-policy COMMAND lanlink_network_policy_tests)
+
     add_executable(lanlink_localization_tests tests/localization_tests.cpp)
     target_link_libraries(lanlink_localization_tests PRIVATE lanlink_core)
     lanlink_enable_warnings(lanlink_localization_tests)

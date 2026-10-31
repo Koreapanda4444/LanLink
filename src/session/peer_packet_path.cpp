@@ -124,7 +124,7 @@ struct PeerPacketPath::Impl {
         for(const auto& p:entries())if(p->retry.due(now))prepare(p,snapshot);
         unsigned created=0;
         for(const auto& n:snapshot.networks)for(const auto& member:n.peers.peers) {
-            if(!member.signed_key)continue;
+            if(!member.signed_key || (n.peers.policy && !protocol::policy_allows(*n.peers.policy,identity.device_id(),member.device_id)))continue;
             bool exists=false;{std::lock_guard lock(mutex);exists=peers.contains({n.peers.network_id,member.device_id}) || peers.size()>=64;}
             if(!exists && created++<2)create(snapshot,n,member);
         }

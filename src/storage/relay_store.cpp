@@ -150,6 +150,13 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::vector<std::byte> column_bytes(const int column) const {
+        const auto size=sqlite3_column_bytes(statement_,column);
+        const auto* data=static_cast<const std::byte*>(sqlite3_column_blob(statement_,column));
+        if (!data || size<=0 || size>32768) throw std::runtime_error("invalid policy document");
+        return {data,data+size};
+    }
+
     [[nodiscard]] std::string column_text(const int column) const {
         if (sqlite3_column_type(statement_, column) != SQLITE_TEXT) {
             throw std::runtime_error("SQLite row contains invalid text");
@@ -1107,6 +1114,22 @@ public:
         q.bind_blob(1,account.data(),account.size()); q.bind_blob(2,device.data(),device.size()); q.step_done();
     }
 
+    [[nodiscard]] protocol::NetworkPolicy network_policy(const NetworkId& network) const {
+        std::lock_guard lock(mutex_);return read_policy(network);
+    }
+    [[nodiscard]] protocol::NetworkPolicy read_policy(const NetworkId& network) const {
+        Statement q(database_,"SELECT document FROM network_policies WHERE network_id=?;");
+        q.bind_blob(1,network.data(),network.size());
+        return q.step_row()?protocol::decode_network_policy(q.column_bytes(0)):protocol::NetworkPolicy{};
+    }
+    [[nodiscard]] bool save_network_policy(const NetworkId& network,const protocol::NetworkPolicy& policy,std::uint64_t expected) {
+        const auto bytes=protocol::encode_network_policy(policy);
+        if(expected==std::numeric_limits<std::uint64_t>::max() || policy.revision!=expected+1)throw std::invalid_argument("invalid policy revision");
+        std::lock_guard lock(mutex_);Transaction t(database_,true);
+        if(read_policy(network).revision!=expected)return false;
+        Statement q(database_,"INSERT INTO network_policies(network_id,document) VALUES(?,?) ON CONFLICT(network_id) DO UPDATE SET document=excluded.document;");
+        q.bind_blob(1,network.data(),network.size());q.bind_blob(2,bytes.data(),bytes.size());q.step_done();t.commit();return true;
+    }
     [[nodiscard]] RelayState load_state() const {
         std::lock_guard lock(mutex_);
         Transaction transaction(database_, false);
@@ -1235,6 +1258,11 @@ private:
                 "expires_ms INTEGER NOT NULL,remaining INTEGER NOT NULL CHECK(remaining BETWEEN 0 AND 100));"
                 "CREATE INDEX invitation_links_network_idx ON invitation_links(network_id);PRAGMA user_version=6;");
             transaction.commit();version=6;
+        }
+        if(version==6) {
+            Transaction transaction(database_,true);
+            execute(database_,"CREATE TABLE network_policies(network_id BLOB PRIMARY KEY NOT NULL REFERENCES networks(network_id) ON DELETE CASCADE,document BLOB NOT NULL CHECK(length(document) BETWEEN 1 AND 32768));PRAGMA user_version=7;");
+            transaction.commit();version=7;
         }
         if (version != current_schema_version) {
             throw std::runtime_error("relay database has an unsupported schema version");
@@ -1633,6 +1661,8 @@ void RelayStore::issue_enrollment(const auth::DeviceId& a, const auth::DeviceId&
 bool RelayStore::enroll_device(const auth::DeviceId& h, const auth::DeviceId& d, std::string_view l, std::int64_t n) { return impl_->enroll_device(h,d,l,n); }
 void RelayStore::revoke_account_device(const auth::DeviceId& a, const auth::DeviceId& d) { impl_->revoke_account_device(a,d); }
 
+protocol::NetworkPolicy RelayStore::network_policy(const NetworkId& n) const { return impl_->network_policy(n); }
+bool RelayStore::save_network_policy(const NetworkId& n,const protocol::NetworkPolicy& p,std::uint64_t revision) { return impl_->save_network_policy(n,p,revision); }
 RelayState RelayStore::load_state() const {
     return impl_->load_state();
 }

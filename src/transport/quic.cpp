@@ -1333,6 +1333,13 @@ public:
         return negotiated_capabilities_;
     }
 
+    [[nodiscard]] protocol::ManagementResult manage_network(const protocol::ManagementRequest& request,const std::chrono::milliseconds timeout) {
+        if(!capabilities().supports(protocol::Capability::managed_networks))throw std::runtime_error("Relay does not support managed networks");
+        const auto frame=request_control(protocol::MessageType::network_management_request,protocol::encode_management_request(request),protocol::NetworkOperation::list,timeout);
+        const auto result=protocol::decode_management_result(frame.payload);
+        if(result.action!=request.action || result.network_id!=request.network_id)throw std::runtime_error("management response mismatch");
+        return result;
+    }
     [[nodiscard]] protocol::AccessResult access_request(const protocol::AccessRequest& request,
         const std::chrono::milliseconds timeout) {
         const auto required=(request.action>=protocol::AccessAction::invite_issue && request.action<=protocol::AccessAction::invite_revoke) ? protocol::Capability::invitation_codes :
@@ -2781,11 +2788,13 @@ private:
         }
 
         const auto expected = found->second->operation;
-        if (found->second->request_type == protocol::MessageType::user_access_request &&
+        if (found->second->request_type == protocol::MessageType::network_management_request && frame.type == protocol::MessageType::network_management_result) {
+            static_cast<void>(protocol::decode_management_result(frame.payload));
+        } else if (found->second->request_type == protocol::MessageType::user_access_request &&
             frame.type == protocol::MessageType::user_access_result) {
             static_cast<void>(protocol::decode_access_result(frame.payload));
         } else if (frame.type == protocol::MessageType::network_operation_result &&
-                   found->second->request_type != protocol::MessageType::user_access_request) {
+                   found->second->request_type != protocol::MessageType::user_access_request && found->second->request_type != protocol::MessageType::network_management_request) {
             const auto result = protocol::decode_network_operation_result(frame.payload);
             if (result.operation != expected) {
                 throw std::runtime_error("network control response operation mismatch");
@@ -2942,6 +2951,8 @@ protocol::NegotiatedCapabilities QuicRelayClient::capabilities() const {
 ClientDiagnostics QuicRelayClient::diagnostics() const {
     return impl_->diagnostics();
 }
+
+protocol::ManagementResult QuicRelayClient::manage_network(const protocol::ManagementRequest& request,const std::chrono::milliseconds timeout) { return impl_->manage_network(request,timeout); }
 
 protocol::AccessResult QuicRelayClient::access_request(const protocol::AccessRequest& request,
     const std::chrono::milliseconds timeout) { return impl_->access_request(request,timeout); }

@@ -254,7 +254,7 @@ void NetworkPacketCipher::update_peers(const protocol::NetworkPeerState& state) 
     std::lock_guard lock(mutex_);
     std::map<DeviceId, PeerReceiver> updated;
     for (const auto& peer : state.peers) {
-        if (!peer.signed_key) {
+        if (!peer.signed_key || (state.policy && !protocol::policy_allows(*state.policy,own_device_id_,peer.device_id))) {
             continue;
         }
         if (peer.device_id == own_device_id_ ||

@@ -185,6 +185,45 @@ NetworkService::NetworkService(storage::RelayStore& store,
                                : TimeSource{[] { return Clock::now(); }}) {
 }
 
+bool NetworkService::traffic_allowed(const storage::NetworkId& n,const auth::DeviceId& a,const auth::DeviceId& b) const {
+    const auto policy=store_.network_policy(n);
+    return (!policy.managed || (management_capable_.contains(a) && management_capable_.contains(b))) && protocol::policy_allows(policy,a,b);
+}
+std::vector<RoutedPeerStateChange> NetworkService::set_management_capable(const auth::DeviceId& actor,bool capable) {
+    std::lock_guard lock(mutex_);
+    if(capable)management_capable_.insert(actor);else management_capable_.erase(actor);
+    std::vector<RoutedPeerStateChange> out;
+    for(const auto& n:store_.list_networks_for_device(actor))if(store_.network_policy(n.id).managed){
+        auto changes=changes_for_members(n.id,advance_revision(n.id));out.insert(out.end(),changes.begin(),changes.end());
+    }
+    return out;
+}
+protocol::ManagementResult NetworkService::manage_network(const auth::DeviceId& actor,const protocol::ManagementRequest& request,
+    std::int64_t now_ms,std::vector<RoutedPeerStateChange>* changes) {
+    require_actor_and_time(actor,now_ms);static_cast<void>(protocol::encode_management_request(request));
+    std::lock_guard lock(mutex_);
+    protocol::ManagementResult out;out.action=request.action;out.network_id=request.network_id;
+    const auto network=store_.find_network(request.network_id);
+    if(!network){out.code=protocol::NetworkResultCode::not_found;return out;}
+    if(!device_allowed(actor) || !store_.find_virtual_ipv4_lease(request.network_id,actor)) {out.code=protocol::NetworkResultCode::not_member;return out;}
+    out.policy=store_.network_policy(request.network_id);
+    if(request.action==protocol::ManagementAction::inspect)return out;
+    if(actor!=network->owner_device_id || !management_capable_.contains(actor)) {out.code=protocol::NetworkResultCode::permission_denied;return out;}
+    if(request.action!=protocol::ManagementAction::replace_policy || request.policy.topology!=protocol::NetworkTopology::mesh ||
+        !request.policy.hubs.empty() || !request.policy.gateways.empty() || !request.policy.routes.empty() || !request.policy.members.empty() || !request.policy.groups.empty()) {
+        out.code=protocol::NetworkResultCode::invalid_request;return out;
+    }
+    const auto member=[&](const auth::DeviceId& d){return d==auth::DeviceId{} || store_.find_virtual_ipv4_lease(request.network_id,d).has_value();};
+    for(const auto& rule:request.policy.rules)if(!member(rule.first.device) || !member(rule.second.device)) {out.code=protocol::NetworkResultCode::target_not_found;return out;}
+    auto next=request.policy;
+    if(next.revision!=out.policy.revision || next.revision==std::numeric_limits<std::uint64_t>::max()) {out.code=protocol::NetworkResultCode::conflict;return out;}
+    ++next.revision;
+    if(!store_.save_network_policy(request.network_id,next,out.policy.revision)) {out.code=protocol::NetworkResultCode::conflict;return out;}
+    advance_key_epoch(request.network_id);const auto revision=advance_revision(request.network_id);
+    if(changes)*changes=changes_for_members(request.network_id,revision);
+    out.policy=next;return out;
+}
+
 bool NetworkService::allow_access_attempt(const auth::DeviceId& actor, const storage::NetworkId& network) {
     const auto now=time_source_();
     std::erase_if(access_attempts_,[&](const auto& item){return now-item.second.start>=std::chrono::minutes(1);});
@@ -422,7 +461,7 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
              (replay.seen & (std::uint64_t{1} << (replay.highest - packet.sequence))))))) return {};
         std::vector<RoutedEncryptedPacket> deliveries;
         for (const auto& lease : leases) {
-            if (lease.device_id != actor && active_keys_.contains(lease.device_id)) {
+            if (lease.device_id != actor && active_keys_.contains(lease.device_id) && traffic_allowed(packet.network_id,actor,lease.device_id)) {
                 deliveries.push_back({lease.device_id, {actor, packet}});
             }
         }
@@ -467,7 +506,7 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
             return lease.address == packet.destination_ipv4;
         });
     if (destination == leases.end() ||
-        !active_keys_.contains(destination->device_id)) {
+        !active_keys_.contains(destination->device_id) || !traffic_allowed(packet.network_id,actor,destination->device_id)) {
         return {};
     }
     return {RoutedEncryptedPacket{destination->device_id, {actor, packet}}};
@@ -982,9 +1021,15 @@ protocol::NetworkPeerState NetworkService::make_peer_state(
     if (!subnet || !network) {
         throw std::runtime_error("network virtual IPv4 subnet is missing");
     }
-    return assemble_peer_state(*subnet, store_.list_virtual_ipv4_leases(network_id),
+    auto state=assemble_peer_state(*subnet, store_.list_virtual_ipv4_leases(network_id),
                                actor, revision, network->owner_device_id,
                                key_epoch_for(network_id), active_keys_);
+    const auto policy=store_.network_policy(network_id);
+    if(policy.managed) {
+        state.policy=policy;
+        for(auto& peer:state.peers)if(!management_capable_.contains(peer.device_id))peer.signed_key.reset();
+    }
+    return state;
 }
 
 std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
@@ -999,9 +1044,7 @@ std::vector<RoutedPeerStateChange> NetworkService::changes_for_members(
     result.reserve(leases.size());
     for (const auto& lease : leases) {
         result.push_back({lease.device_id,
-                          assemble_peer_state(*subnet, leases, lease.device_id, revision,
-                                              network->owner_device_id,
-                                              key_epoch_for(network_id), active_keys_),
+                          make_peer_state(network_id,lease.device_id,revision),
                           {}});
     }
     return result;
@@ -1021,6 +1064,8 @@ NetworkKeyPublishOutcome NetworkService::publish_network_keys(
     if (!network) {
         return {protocol::NetworkResultCode::not_found, network_id, {}};
     }
+    const auto policy=store_.network_policy(network_id);
+    if(policy.managed && !management_capable_.contains(actor))return {protocol::NetworkResultCode::permission_denied,network_id,{}};
     const auto owner_key = active_keys_.find(actor);
     if (network->owner_device_id != actor || owner_key == active_keys_.end()) {
         return {protocol::NetworkResultCode::permission_denied, network_id, {}};
@@ -1041,6 +1086,7 @@ NetworkKeyPublishOutcome NetworkService::publish_network_keys(
         if (envelope.epoch != key_epoch_for(network_id)) {
             return {protocol::NetworkResultCode::conflict, network_id, {}};
         }
+        if(policy.managed && !management_capable_.contains(envelope.recipient_device_id))return {protocol::NetworkResultCode::permission_denied,network_id,{}};
         const auto recipient = active_keys_.find(envelope.recipient_device_id);
         if (!store_.find_virtual_ipv4_lease(network_id, envelope.recipient_device_id) ||
             recipient == active_keys_.end() ||
@@ -1099,7 +1145,7 @@ namespace lanlink::relay {
 bool NetworkService::authorize_peer_exchange(const auth::DeviceId& actor, const p2p::CandidateExchange& x) {
     std::lock_guard lock(mutex_);
     if (!device_allowed(actor) || !device_allowed(x.recipient) ||
-        actor != x.sender || actor == x.recipient ||
+        actor != x.sender || actor == x.recipient || !traffic_allowed(x.network_id,actor,x.recipient) ||
         !store_.find_virtual_ipv4_lease(x.network_id, actor) ||
         !store_.find_virtual_ipv4_lease(x.network_id, x.recipient) || key_epoch_for(x.network_id) != x.key_epoch) return false;
     const auto a=active_keys_.find(actor), b=active_keys_.find(x.recipient);

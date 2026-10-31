@@ -14,6 +14,7 @@ bool peer_binding_authorized(const PeerBinding& b,const auth::SignedDeviceKey& k
         s.identity->signed_key.encryption_public_key!=b.local_session || !auth::verify_signed_device_key(s.identity->signed_key,b.local_device) ||
         key.encryption_public_key!=b.peer_session || !auth::verify_signed_device_key(key,b.peer_device))return false;
     for(const auto& n:s.networks)if(n.peers.network_id==b.network_id) {
+        if(n.peers.policy && !protocol::policy_allows(*n.peers.policy,b.local_device,b.peer_device))return false;
         if(n.key.epoch!=b.key_epoch || n.peers.key_epoch!=b.key_epoch || n.peers.own_address!=local)return false;
         return std::any_of(n.peers.peers.begin(),n.peers.peers.end(),[&](const auto& p){
             return p.device_id==b.peer_device && p.ipv4_address==peer && p.signed_key && *p.signed_key==key;});

@@ -32,6 +32,7 @@ protocol::Frame error_response(const std::uint32_t request_id) {
 
 bool is_network_request(const protocol::MessageType type) noexcept {
     switch (type) {
+        case protocol::MessageType::network_management_request:
         case protocol::MessageType::user_access_request:
         case protocol::MessageType::peer_candidates_send:
         case protocol::MessageType::network_create_request:
@@ -67,11 +68,11 @@ std::vector<RoutedControlFrame> encode_events(
 }
 
 std::vector<RoutedControlFrame> encode_peer_changes(
-    const std::vector<RoutedPeerStateChange>& changes) {
+    const std::vector<RoutedPeerStateChange>& changes, const NetworkControlChannel* channel) {
     std::vector<RoutedControlFrame> result;
     result.reserve(changes.size());
     for (const auto& change : changes) {
-        if (change.state) {
+        if (change.state && (!change.state->policy || channel->capabilities(change.recipient_device_id).supports(protocol::Capability::managed_networks))) {
             result.push_back({change.recipient_device_id,
                               {protocol::MessageType::network_peer_state_update, 0,
                                protocol::encode_network_peer_state(*change.state)}});
@@ -79,21 +80,21 @@ std::vector<RoutedControlFrame> encode_peer_changes(
             result.push_back({change.recipient_device_id,
                               {protocol::MessageType::network_peer_state_revoked, 0,
                                protocol::encode_network_peer_revocation(
-                                   change.revocation)}});
+                                   change.state ? protocol::NetworkPeerRevocation{change.state->network_id,change.state->revision} : change.revocation)}});
         }
     }
     return result;
 }
 
 ControlDispatch operation_response(const std::uint32_t request_id,
-                                   NetworkOperationOutcome outcome) {
+                                   NetworkOperationOutcome outcome, const NetworkControlChannel* channel) {
     protocol::Frame response{
         protocol::MessageType::network_operation_result,
         request_id,
         protocol::encode_network_operation_result(outcome.result),
     };
     auto events = encode_events(outcome.events);
-    auto peer_changes = encode_peer_changes(outcome.peer_changes);
+    auto peer_changes = encode_peer_changes(outcome.peer_changes,channel);
     events.insert(events.end(),
                   std::make_move_iterator(peer_changes.begin()),
                   std::make_move_iterator(peer_changes.end()));
@@ -102,7 +103,8 @@ ControlDispatch operation_response(const std::uint32_t request_id,
 
 ControlDispatch peer_state_response(const std::uint32_t request_id,
                                     const protocol::NetworkId& network_id,
-                                    NetworkPeerStateOutcome outcome) {
+                                    NetworkPeerStateOutcome outcome, bool managed_capable) {
+    if(outcome.state && outcome.state->policy && !managed_capable) {outcome.state.reset();outcome.code=protocol::NetworkResultCode::permission_denied;}
     if (outcome.code == protocol::NetworkResultCode::success && outcome.state) {
         return {{protocol::MessageType::network_peer_state_result,
                  request_id,
@@ -177,8 +179,9 @@ std::vector<RoutedControlFrame> NetworkControlChannel::note_authenticated(
         std::lock_guard lock(capabilities_mutex_);
         capabilities_[actor] = {session_id, {}, {}};
     }
+    static_cast<void>(service_.set_management_capable(actor,false));
     return encode_peer_changes(
-        service_.publish_device_key(actor, session_id, signed_key, now_ms()));
+        service_.publish_device_key(actor, session_id, signed_key, now_ms()),this);
 }
 
 std::vector<RoutedControlFrame> NetworkControlChannel::note_disconnected(
@@ -188,7 +191,7 @@ std::vector<RoutedControlFrame> NetworkControlChannel::note_disconnected(
         const auto it = capabilities_.find(actor);
         if (it != capabilities_.end() && it->second.session == session_id) capabilities_.erase(it);
     }
-    return encode_peer_changes(service_.remove_device_key(actor, session_id));
+    return encode_peer_changes(service_.remove_device_key(actor, session_id),this);
 }
 
 protocol::NegotiatedCapabilities NetworkControlChannel::capabilities(const auth::DeviceId& actor) const {
@@ -199,7 +202,7 @@ protocol::NegotiatedCapabilities NetworkControlChannel::capabilities(const auth:
 
 std::vector<RoutedControlFrame> NetworkControlChannel::initial_peer_states(
     const auth::DeviceId& actor) {
-    return encode_peer_changes(service_.peer_states_for_device(actor));
+    return encode_peer_changes(service_.peer_states_for_device(actor),this);
 }
 
 ControlDispatch NetworkControlChannel::handle_authenticated(
@@ -223,6 +226,12 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
 
     try {
         if (!service_.device_allowed(actor)) return {error_response(request.request_id), {}};
+        if (request.type == protocol::MessageType::network_management_request) {
+            if(!capabilities(actor).supports(protocol::Capability::managed_networks))return {error_response(request.request_id),{}};
+            std::vector<RoutedPeerStateChange> changes;
+            const auto result=service_.manage_network(actor,protocol::decode_management_request(request.payload),now_ms(),&changes);
+            return {{protocol::MessageType::network_management_result,request.request_id,protocol::encode_management_result(result)},encode_peer_changes(changes,this)};
+        }
         if (request.type == protocol::MessageType::user_access_request) {
             const auto access=protocol::decode_access_request(request.payload);
             const auto required=(access.action>=protocol::AccessAction::invite_issue && access.action<=protocol::AccessAction::invite_revoke) ? protocol::Capability::invitation_codes :
@@ -231,7 +240,7 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
             std::vector<RoutedPeerStateChange> changes;
             std::vector<RoutedNetworkEvent> network_events;
             const auto result=service_.access_request(actor,access,now_ms(),&changes,&network_events);
-            auto events=encode_peer_changes(changes);
+            auto events=encode_peer_changes(changes,this);
             auto notifications=encode_events(network_events);
             events.insert(events.end(),notifications.begin(),notifications.end());
             return {{protocol::MessageType::user_access_result,request.request_id,
@@ -258,12 +267,15 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
         if (request.type == protocol::MessageType::network_list_request &&
             protocol::is_capability_payload(request.payload)) {
             const auto negotiated = protocol::negotiate_capabilities({}, protocol::decode_capability_offer(request.payload));
-            std::lock_guard lock(capabilities_mutex_);
-            const auto it = capabilities_.find(actor);
-            if (it == capabilities_.end()) return {error_response(request.request_id), {}};
-            it->second.negotiated = negotiated;
+            {
+                std::lock_guard lock(capabilities_mutex_);
+                const auto it = capabilities_.find(actor);
+                if (it == capabilities_.end()) return {error_response(request.request_id), {}};
+                it->second.negotiated = negotiated;
+            }
+            auto changes=service_.set_management_capable(actor,negotiated.supports(protocol::Capability::managed_networks));
             return {{protocol::MessageType::network_list_result, request.request_id,
-                     protocol::encode_capability_selection(negotiated)}, {}};
+                     protocol::encode_capability_selection(negotiated)}, encode_peer_changes(changes,this)};
         }
         switch (request.type) {
             case protocol::MessageType::network_create_request:
@@ -272,7 +284,7 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
                     service_.create_network(
                         actor,
                         protocol::decode_network_create_request(request.payload),
-                        now_ms()));
+                        now_ms()),this);
             case protocol::MessageType::network_list_request:
                 return list_response(
                     request.request_id,
@@ -286,41 +298,41 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
                     service_.join_network(
                         actor,
                         protocol::decode_network_selection_request(request.payload),
-                        now_ms()));
+                        now_ms()),this);
             case protocol::MessageType::network_leave_request:
                 return operation_response(
                     request.request_id,
                     service_.leave_network(
                         actor,
                         protocol::decode_network_selection_request(request.payload),
-                        now_ms()));
+                        now_ms()),this);
             case protocol::MessageType::network_invite_request:
                 return operation_response(
                     request.request_id,
                     service_.invite_member(
                         actor,
                         protocol::decode_network_member_request(request.payload),
-                        now_ms()));
+                        now_ms()),this);
             case protocol::MessageType::network_approve_request:
                 return operation_response(
                     request.request_id,
                     service_.approve_member(
                         actor,
                         protocol::decode_network_member_request(request.payload),
-                        now_ms()));
+                        now_ms()),this);
             case protocol::MessageType::network_kick_request:
                 return operation_response(
                     request.request_id,
                     service_.kick_member(
                         actor,
                         protocol::decode_network_member_request(request.payload),
-                        now_ms()));
+                        now_ms()),this);
             case protocol::MessageType::network_peer_state_request: {
                 const auto selection =
                     protocol::decode_network_selection_request(request.payload);
                 return peer_state_response(request.request_id,
                                            selection.network_id,
-                                           service_.peer_state(actor, selection, now_ms()));
+                                           service_.peer_state(actor, selection, now_ms()),capabilities(actor).supports(protocol::Capability::managed_networks));
             }
             case protocol::MessageType::network_key_publish_request:
                 return key_publish_response(service_.publish_network_keys(

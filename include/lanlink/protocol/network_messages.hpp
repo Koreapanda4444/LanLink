@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/auth/device_keys.hpp"
+#include "lanlink/protocol/network_policy.hpp"
 
 #include <array>
 #include <cstddef>
@@ -143,6 +144,7 @@ struct NetworkPeerState {
     std::vector<NetworkPeer> peers;
     NetworkDeviceId owner_device_id{};
     std::uint64_t key_epoch = 0;
+    std::optional<NetworkPolicy> policy;
 
     NetworkPeerState() = default;
     NetworkPeerState(NetworkId id, std::uint64_t revision_value,

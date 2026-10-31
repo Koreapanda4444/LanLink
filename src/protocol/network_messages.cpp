@@ -82,6 +82,7 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::span<const std::byte> remaining() const { return payload_.subspan(offset_); }
     void require_finished() const {
         if (offset_ != payload_.size()) {
             throw std::runtime_error("network payload contains trailing bytes");
@@ -552,6 +553,10 @@ std::vector<std::byte> encode_network_peer_state(const NetworkPeerState& state) 
     }
     append_array(output, state.owner_device_id);
     append_integer(output, state.key_epoch);
+    if (state.policy) {
+        const auto extension=encode_network_policy(*state.policy);
+        output.insert(output.end(),extension.begin(),extension.end());
+    }
     return output;
 }
 
@@ -590,7 +595,8 @@ NetworkPeerState decode_network_peer_state(const std::span<const std::byte> payl
     }
     state.owner_device_id = reader.read_array<network_device_id_size>();
     state.key_epoch = reader.read_integer<std::uint64_t>();
-    reader.require_finished();
+    if (!reader.remaining().empty()) state.policy=decode_network_policy(reader.remaining());
+    else reader.require_finished();
     if (!valid_peer_state(state)) {
         throw std::runtime_error("network peer state contains invalid addresses or peers");
     }
