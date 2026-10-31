@@ -429,6 +429,7 @@ std::vector<RoutedPeerStateChange> NetworkService::remove_device_key(
     }
 
     active_keys_.erase(found);
+    management_capable_.erase(actor);
     std::erase_if(sender_fanout_, [&](const auto& entry) {
         return entry.first.second == actor;
     });

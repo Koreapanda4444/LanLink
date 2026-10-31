@@ -63,3 +63,10 @@ session. A service restart uses the config defaults. Remote policy cannot invoke
 Windows API references: [forwarding layer conditions](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-conditions-available-at-each-filtering-layer),
 [interface settings](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-setipinterfaceentry),
 [route creation](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-createipforwardentry2).
+
+ACL enforcement is independent of the desktop. Managed senders refuse denied unicast
+destinations; modified senders are still denied by relay routing, candidate authorization,
+direct session checks and the receiver's active peer cipher. Every edit rotates the epoch.
+Membership removal also prunes device-specific rules, hub/gateway assignments, routed
+subnets and roles in the membership transaction. Rejoining does not restore former
+privileges. An empty hub set after removal is fail-closed until an authorized edit.

@@ -719,6 +719,7 @@ public:
         require_network_id(network_id);
         require_device_id(device_id);
         std::lock_guard lock(mutex_);
+        Transaction transaction(database_,true);
         Statement statement(database_,
                             "DELETE FROM memberships "
                             "WHERE network_id = ?1 AND device_id = ?2 AND role = ?3;");
@@ -726,7 +727,20 @@ public:
         statement.bind_blob(2, device_id.data(), device_id.size());
         statement.bind_integer(3, static_cast<std::int64_t>(MembershipRole::member));
         statement.step_done();
-        return sqlite3_changes(database_) == 1;
+        if(sqlite3_changes(database_)!=1)return false;
+        auto policy=read_policy(network_id);const auto previous=policy;
+        std::erase(policy.hubs,device_id);
+        std::erase_if(policy.members,[&](const auto& m){return m.device==device_id;});
+        std::erase_if(policy.gateways,[&](const auto& g){return g.device==device_id;});
+        std::erase_if(policy.routes,[&](const auto& r){return r.gateway==device_id;});
+        std::erase_if(policy.rules,[&](const auto& r){return r.first.device==device_id || r.second.device==device_id;});
+        if(policy!=previous) {
+            if(policy.revision==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("policy revision exhausted");
+            ++policy.revision;const auto bytes=protocol::encode_network_policy(policy);
+            Statement update(database_,"UPDATE network_policies SET document=? WHERE network_id=?;");
+            update.bind_blob(1,bytes.data(),bytes.size());update.bind_blob(2,network_id.data(),network_id.size());update.step_done();
+        }
+        transaction.commit();return true;
     }
 
     [[nodiscard]] std::vector<MembershipRecord> list_members(

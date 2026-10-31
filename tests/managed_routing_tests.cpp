@@ -26,7 +26,11 @@ int main(){const auto root=std::filesystem::temp_directory_path()/auth::random_a
     const auto secret=auth::NetworkKey::random();
     auth::NetworkPacketCipher ac(network,ap.key_epoch,secret,a.device_id(),ak,ap.own_address),bc(network,bp.key_epoch,secret,b.device_id(),bk,bp.own_address),hc(network,hp.key_epoch,secret,hub.device_id(),hk,hp.own_address);
     ac.update_peers(ap);bc.update_peers(bp);hc.update_peers(hp);
-    const auto forbidden=ac.encrypt(ipv4(ap.own_address,bp.own_address));
+    bool denied_locally=false;try{static_cast<void>(ac.encrypt(ipv4(ap.own_address,bp.own_address)));}catch(const std::exception&){denied_locally=true;}
+    check(denied_locally,"managed sender encrypted a denied destination");
+    // A modified client bypassing its outbound checks is still blocked by relay and receiver.
+    auto unfiltered=ap;unfiltered.policy.reset();auth::NetworkPacketCipher modified(network,ap.key_epoch,secret,a.device_id(),ak,ap.own_address);modified.update_peers(unfiltered);
+    const auto forbidden=modified.encrypt(ipv4(ap.own_address,bp.own_address));
     check(service.route_encrypted_packet(a.device_id(),forbidden).empty(),"relay allowed spoke to spoke");
     bool rejected=false;try{static_cast<void>(bc.decrypt(forbidden,a.device_id()));}catch(const std::exception&){rejected=true;}
     check(rejected,"cipher accepted a disallowed spoke");
@@ -43,5 +47,9 @@ int main(){const auto root=std::filesystem::temp_directory_path()/auth::random_a
     check(changed.code==protocol::NetworkResultCode::success && service.route_encrypted_packet(a.device_id(),permitted).empty(),"old epoch accepted after topology change");
     check(service.kick_member(hub.device_id(),{network,a.device_id()},1000).result.code==protocol::NetworkResultCode::success,"kick hub");
     check(service.route_encrypted_packet(a.device_id(),permitted).empty(),"removed hub retained traffic");
+    check(store.network_policy(network).hubs.empty(),"removed hub retained a policy assignment");
+    static_cast<void>(service.invite_member(hub.device_id(),{network,a.device_id()},1000));
+    check(service.join_network(a.device_id(),{network},1000).result.code==protocol::NetworkResultCode::success,"rejoin fixture");
+    check(store.network_policy(network).hubs.empty(),"rejoined member inherited former hub rights");
   }std::filesystem::remove_all(root);std::cout<<"managed relay, cipher, direct binding, broadcast and epoch restrictions passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';std::filesystem::remove_all(root);return 1;}}

@@ -55,5 +55,10 @@ int main(){const auto root=std::filesystem::temp_directory_path()/auth::random_a
     auto disconnected=as;disconnected.networks.clear();check(network::routing_configuration(disconnected,true,true).routes.empty(),"disconnect keeps route");
     q.policy=store.network_policy(id);q.policy.routes.clear();q.policy.gateways.clear();check(service.manage_network(a.device_id(),q,1).code==protocol::NetworkResultCode::success,"withdraw route");
     check(service.route_encrypted_packet(a.device_id(),wire.front()).empty(),"old gateway epoch accepted");
+    request.policy.revision=store.network_policy(id).revision;const auto new_request=service.manage_network(g.device_id(),request,1);
+    q.policy=new_request.policy;q.policy.gateways[0].approved=true;q.policy.routes.push_back({g.device_id(),0xc0a8fb00U,24,{}});
+    check(service.manage_network(a.device_id(),q,1).code==protocol::NetworkResultCode::success,"gateway approval fixture");
+    check(service.kick_member(a.device_id(),{id,g.device_id()},1).result.code==protocol::NetworkResultCode::success,"gateway kick");
+    check(store.network_policy(id).gateways.empty() && store.network_policy(id).routes.empty(),"removed gateway kept routes");
   }std::filesystem::remove_all(root);std::cout<<"gateway encrypted round trip, routes, consent, spoofing and MTU passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';std::filesystem::remove_all(root);return 1;}}

@@ -275,6 +275,7 @@ void NetworkPacketCipher::update_peers(const protocol::NetworkPeerState& state) 
         }
     }
     peers_.swap(updated);
+    managed_=state.policy && state.policy->managed;
     subnet_address_ = state.subnet_address;
     prefix_length_ = state.prefix_length;
 }
@@ -290,6 +291,8 @@ protocol::EncryptedNetworkPacket NetworkPacketCipher::encrypt(
     std::lock_guard lock(mutex_);
     const bool fanout = protocol::is_ipv4_fanout_destination(
         destination, subnet_address_, prefix_length_);
+    if(managed_ && ((!fanout && std::none_of(peers_.begin(),peers_.end(),[&](const auto& p){return p.second.ipv4_address==destination;})) || (fanout && peers_.empty())))
+        throw std::invalid_argument("network policy denies this destination");
     if ((!fanout && !protocol::is_ipv4_host(destination, subnet_address_, prefix_length_)) ||
         (fanout && ipv4_packet[8] == std::byte{0})) {
         throw std::invalid_argument("virtual packet destination is not in the network");
