@@ -39,10 +39,32 @@ function Write-Pem([string] $Path, [string] $Label, [byte[]] $Bytes, [switch] $A
     else { [IO.File]::WriteAllText($Path, $text, $encoding) }
 }
 
-function Get-FreePort {
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    try { return $listener.LocalEndpoint.Port } finally { $listener.Stop() }
+function Get-FreePort([int[]] $Exclude = @()) {
+    for ($attempt = 0; $attempt -lt 32; $attempt++) {
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $datagram = [Net.Sockets.Socket]::new(
+            [Net.Sockets.AddressFamily]::InterNetwork,
+            [Net.Sockets.SocketType]::Dgram, [Net.Sockets.ProtocolType]::Udp)
+        try {
+            $listener.ExclusiveAddressUse = $true
+            $listener.Start()
+            $port = $listener.LocalEndpoint.Port
+            if ($port -in $Exclude) { continue }
+            # Relay needs this port for both TLS/TCP and QUIC/UDP. Keep the TCP
+            # reservation while checking UDP; a TCP-only probe misses UDP users.
+            $datagram.ExclusiveAddressUse = $true
+            $datagram.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $port))
+            return $port
+        } catch [Net.Sockets.SocketException] {
+            $code = $_.Exception.GetBaseException().SocketErrorCode
+            if ($code -notin @([Net.Sockets.SocketError]::AddressAlreadyInUse,
+                              [Net.Sockets.SocketError]::AccessDenied)) { throw }
+        } finally {
+            $datagram.Dispose()
+            $listener.Stop()
+        }
+    }
+    throw 'Cannot find a loopback port available for both TCP and UDP.'
 }
 
 function Start-Child([string] $Executable, [string[]] $Arguments) {
@@ -121,7 +143,7 @@ try {
         New-Item -ItemType Directory -Path $scenario | Out-Null
         Copy-Item -LiteralPath (Join-Path $root 'auth.token') -Destination $scenario
         $port = Get-FreePort
-        $clientPort = if ($mode -eq 'tcp') { Get-FreePort } else { $port }
+        $clientPort = if ($mode -eq 'tcp') { Get-FreePort -Exclude @($port) } else { $port }
         $configuration = Join-Path $scenario 'relay.conf'
         $configurationText = @(
             'listen_host=127.0.0.1', "relay_port=$port"
