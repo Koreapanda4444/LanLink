@@ -5,7 +5,11 @@ if(LANLINK_BUILD_DESKTOP)
     list(APPEND VCPKG_MANIFEST_FEATURES portable-desktop)
 endif()
 
-project(LanLink VERSION 0.7.0 LANGUAGES CXX)
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum supported macOS version")
+endif()
+
+project(LanLink VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -338,6 +342,19 @@ if(UNIX AND LANLINK_BUILD_DESKTOP)
     target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc imgui::imgui SDL3::SDL3 OpenGL::GL PNG::PNG)
     set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
     lanlink_enable_warnings(lanlink_ui)
+    if(APPLE)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        set(icon "${CMAKE_CURRENT_BINARY_DIR}/LanLink.icns")
+        add_custom_command(OUTPUT "${icon}"
+            COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/make_icon.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/lanlink.png" "${icon}"
+            DEPENDS assets/branding/lanlink.png packaging/macos/make_icon.py)
+        target_sources(lanlink_ui PRIVATE "${icon}" assets/branding/lanlink.png)
+        set_source_files_properties("${icon}" assets/branding/lanlink.png PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(lanlink_ui PROPERTIES MACOSX_BUNDLE TRUE OUTPUT_NAME LanLink
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}" MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
+    endif()
 endif()
 
 include(cmake/WindowsResources.cmake)

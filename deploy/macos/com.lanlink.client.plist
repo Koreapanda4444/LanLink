@@ -5,7 +5,7 @@
     <key>ProgramArguments</key><array>
         <string>/Library/Application Support/LanLink/bin/lanlink-service</string>
         <string>--console</string>
-        <string>/Library/Application Support/LanLink/client.conf</string>
+        <string>/Library/Preferences/LanLink/client.conf</string>
     </array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>

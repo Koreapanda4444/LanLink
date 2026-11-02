@@ -1,6 +1,6 @@
 # v1.0 개발 로드맵
 
-첨부 최종 기획서의 60개 커밋을 유지한다. 현재 구현 범위는 01~47이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
+첨부 최종 기획서의 60개 커밋을 유지한다. 현재 구현 범위는 01~48이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
 
 | 번호 | 목표 | 상태 |
 |---|---|---|
@@ -51,7 +51,7 @@
 | 45 | `feat(linux): package desktop UI and client installer` — Linux x86_64 지원 패키지, UI 플랫폼 백엔드 | 구현 |
 | 46 | `feat(macos): implement utun and route management` — macOS utun/권한/경로/정리, macOS 빌드 검증 | 구현 |
 | 47 | `feat(macos): add native daemon lifecycle and IPC` — launchd, 권한 경계 및 정리 | 구현 |
-| 48 | `feat(macos): package desktop UI and signing workflow` — macOS 앱/패키지, 서명·공증은 자격정보가 있을 때만 실행 | 대기 |
+| 48 | `feat(macos): package desktop UI and signing workflow` — macOS 앱/패키지, 서명·공증은 자격정보가 있을 때만 실행 | 구현 |
 | 49 | `feat(platform): ensure cross-platform peer interoperability` — Windows↔Linux↔macOS 암호화/키/상태/패킷 호환 | 대기 |
 | 50 | `feat(relay): register and discover multiple relay regions` — 지역·용량·프로토콜·신뢰 정보 등록, 공식/자체 분리 | 대기 |
 | 51 | `feat(relay): implement authenticated health and load signals` — 상태 확인·용량 수치·서버 신뢰 검증, 민감정보 노출 방지 | 대기 |
@@ -65,7 +65,7 @@
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
-01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 48~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
+01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 49~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
 
 ## 기능별 커밋 SHA
 
