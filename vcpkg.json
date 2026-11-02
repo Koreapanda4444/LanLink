@@ -24,6 +24,21 @@
       "dependencies": [
         "msquic"
       ]
+    },
+    "portable-desktop": {
+      "description": "SDL3/OpenGL desktop for Linux and macOS",
+      "supports": "!windows",
+      "dependencies": [
+        {
+          "name": "imgui",
+          "features": [
+            "sdl3-binding",
+            "opengl3-binding"
+          ]
+        },
+        "sdl3",
+        "libpng"
+      ]
     }
   }
 }

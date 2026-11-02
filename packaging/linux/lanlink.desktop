@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LanLink
+Name[ko]=LanLink
+Comment=Private virtual networks
+Exec=/opt/lanlink/bin/lanlink-ui
+Icon=/opt/lanlink/share/lanlink/lanlink.png
+Terminal=false
+Categories=Network;

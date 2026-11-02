@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 
+option(LANLINK_BUILD_DESKTOP "Build the portable SDL/OpenGL desktop" OFF)
+if(LANLINK_BUILD_DESKTOP)
+    list(APPEND VCPKG_MANIFEST_FEATURES portable-desktop)
+endif()
+
 project(LanLink VERSION 0.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -316,11 +321,24 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     lanlink_enable_warnings(lanlink_ui_cli)
 endif()
 
+if(UNIX AND LANLINK_BUILD_DESKTOP)
+    find_package(SDL3 CONFIG REQUIRED)
+    find_package(imgui CONFIG REQUIRED)
+    find_package(OpenGL REQUIRED)
+    find_package(PNG REQUIRED)
+    add_executable(lanlink_ui apps/ui/posix_main.cpp apps/ui/posix_preferences.cpp apps/ui/network_model.cpp apps/ui/management_panel.cpp)
+    target_compile_definitions(lanlink_ui PRIVATE LANLINK_LOGO_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/lanlink.png")
+    target_link_libraries(lanlink_ui PRIVATE lanlink_core lanlink_local_ipc imgui::imgui SDL3::SDL3 OpenGL::GL PNG::PNG)
+    set_target_properties(lanlink_ui PROPERTIES OUTPUT_NAME "lanlink-ui")
+    lanlink_enable_warnings(lanlink_ui)
+endif()
+
 include(cmake/WindowsResources.cmake)
 include(cmake/BuildMetadata.cmake)
 include(CTest)
 include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
+include(cmake/PosixClientPackage.cmake)
 
 if(BUILD_TESTING)
     add_executable(lanlink_policy_preview_tests tests/policy_preview_tests.cpp)

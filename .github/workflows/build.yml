@@ -70,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ninja-build pkg-config linux-libc-dev
+          sudo apt-get install --yes ninja-build pkg-config linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk
       - name: Bootstrap vcpkg (Linux)
         if: runner.os == 'Linux'
         run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
@@ -79,7 +79,7 @@ jobs:
         run: '& "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics'
       - name: Configure (Linux)
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLANLINK_BUILD_DESKTOP=ON -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -130,6 +130,22 @@ jobs:
           cmake -S "$game_source" -B "$RUNNER_TEMP/teeworlds075-build" -G Ninja -DCLIENT=OFF -DDOWNLOAD_DEPENDENCIES=OFF -DDOWNLOAD_GTEST=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev
           cmake --build "$RUNNER_TEMP/teeworlds075-build" --target teeworlds_srv --parallel 2
           python3 tests/game_profile_integration.py --server "$RUNNER_TEMP/teeworlds075-build/teeworlds_srv" --maps "$game_source/datasrc/maps" --probe build/lanlink-discovery-probe
+      - name: Package and verify Linux desktop client
+        if: runner.os == 'Linux'
+        run: |
+          cmake --build build --target lanlink_client_archive
+          python3 tests/portable_package_tests.py build/portable-client
+          xvfb-run -a build/portable-client/bin/lanlink-ui --language ko --setup --screenshot "$RUNNER_TEMP/lanlink-linux-ko.png"
+          xvfb-run -a build/portable-client/bin/lanlink-ui --language en --skip-setup --screenshot "$RUNNER_TEMP/lanlink-linux-en.png"
+      - name: Preserve Linux client and screenshots
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LanLink-linux-x64
+          path: |
+            build/artifacts/LanLink-*-linux-*.tar.gz
+            ${{ runner.temp }}/lanlink-linux-*.png
+          if-no-files-found: error
       - name: Package Windows client
         if: runner.os == 'Windows'
         run: cpack --config build/CPackConfig.cmake -C Release -B artifacts
