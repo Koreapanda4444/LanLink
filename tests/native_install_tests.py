@@ -76,7 +76,7 @@ def as_user(account):
         assert control_group in os.getgrouplist(account.pw_name, account.pw_gid), "Installer did not enroll the control user"
         # Darwin limits setgroups even when directory services report more groups.
         # Only the control group is needed to exercise this permission boundary.
-        groups = [control_group]
+        groups = [account.pw_gid, control_group]
     return command([str(prefix / "bin/lanlink-ui-cli"), "status"], check=False,
         user=account.pw_uid, group=account.pw_gid, extra_groups=groups)
 
@@ -89,6 +89,9 @@ with tempfile.TemporaryDirectory(prefix="lanlink-native-install-") as directory:
     try:
         command(install + ["--relay", "127.0.0.1", "--port", "9", "--token-file", str(token), "--user", args.user])
         first = ready()
+        control = grp.getgrnam("lanlink").gr_gid
+        socket_info = Path("/var/run/lanlink/control.sock").stat()
+        assert socket_info.st_gid == control and socket_info.st_mode & 0o777 == 0o660, "Service control socket must be group-restricted"
         allowed = as_user(user)
         assert allowed.returncode == 0 and "authenticated:" in allowed.stdout, allowed.stderr
         denied = as_user(pwd.getpwnam("nobody"))
