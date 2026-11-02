@@ -121,4 +121,4 @@
 | 46 | [878699c](https://github.com/Koreapanda4444/LanLink/commit/878699c478f8506a0a8d25c2e972942829c18631) |
 | 47 | [b44fb81](https://github.com/Koreapanda4444/LanLink/commit/b44fb812802c62c269c9e8afd3d7b6e47aee9bb1) |
 | 48 | [5ae90ec](https://github.com/Koreapanda4444/LanLink/commit/5ae90ec9d6f8150b976b85444af21259940d4b53) |
-| 49 | 플랫폼 간 호환성 구현을 포함한 이 문서의 변경 커밋 |
+| 49 | [ff0d980](https://github.com/Koreapanda4444/LanLink/commit/ff0d98064859c05dba80d718e240b6800e865025) |
