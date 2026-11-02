@@ -7,6 +7,7 @@ endif()
 
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum supported macOS version")
+    list(PREPEND VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_LIST_DIR}/cmake/triplets")
 endif()
 
 project(LanLink VERSION 0.8.0 LANGUAGES CXX)

@@ -1,4 +1,6 @@
 from pathlib import Path
+import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +22,22 @@ def native(path):
 def run(*arguments):
     return subprocess.check_output(arguments, text=True, stderr=subprocess.STDOUT)
 
+def version(value):
+    parts = tuple(map(int, value.split(".")))
+    return (parts + (0, 0, 0))[:3]
+
+declared_minimum = plistlib.loads((app / "Contents/Info.plist").read_bytes())["LSMinimumSystemVersion"]
+for binary in (path for path in root.rglob("*") if native(path)):
+    minimums = []
+    for block in re.split(r"(?=Load command \d+)", run("/usr/bin/otool", "-l", str(binary))):
+        if re.search(r"(?m)^\s*cmd\s+LC_(?:BUILD_VERSION|VERSION_MIN_MACOSX)\s*$", block):
+            value = re.search(r"(?m)^\s*(?:minos|version)\s+(\d+(?:\.\d+){0,2})\s*$", block)
+            if not value:
+                raise ValueError(f"Cannot inspect native deployment target: {binary}")
+            minimums.append(value[1])
+    if not minimums or any(version(value) > version(declared_minimum) for value in minimums):
+        raise ValueError(f"{binary.relative_to(root)} requires macOS {minimums}, above declared {declared_minimum}")
+
 binaries = [path for path in root.rglob("*") if native(path)]
 for binary in binaries:
     for line in run("/usr/bin/otool", "-L", str(binary)).splitlines()[1:]:
@@ -40,4 +58,4 @@ for binary in binaries:
     run("/usr/bin/codesign", "--force", "--sign", "-", str(binary))
 run("/usr/bin/codesign", "--force", "--sign", "-", str(app))
 run("/usr/bin/codesign", "--verify", "--deep", "--strict", str(app))
-print("Relocated native libraries and verified the ad hoc application signature")
+print(f"Verified all native deployment targets <= macOS {declared_minimum}, relocated libraries and verified the ad hoc application signature")

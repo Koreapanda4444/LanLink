@@ -9,6 +9,6 @@
 <key>CFBundleIconFile</key><string>LanLink.icns</string>
 <key>CFBundleShortVersionString</key><string>@MACOSX_BUNDLE_SHORT_VERSION_STRING@</string>
 <key>CFBundleVersion</key><string>@MACOSX_BUNDLE_BUNDLE_VERSION@</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>LSMinimumSystemVersion</key><string>@CMAKE_OSX_DEPLOYMENT_TARGET@</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

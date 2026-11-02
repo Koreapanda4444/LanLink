@@ -249,7 +249,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .vcpkg-binaries
-          key: macos-${{ runner.arch }}-foundation-${{ hashFiles('vcpkg.json') }}-${{ steps.toolchain.outputs.fingerprint }}
+          key: macos-${{ runner.arch }}-foundation-deployment14-${{ hashFiles('vcpkg.json', 'cmake/triplets/*.cmake') }}-${{ steps.toolchain.outputs.fingerprint }}
           restore-keys: macos-${{ runner.arch }}-foundation-
       - name: Bootstrap vcpkg
         run: |
@@ -295,7 +295,7 @@ jobs:
         id: native-cache
         with:
           path: .vcpkg-binaries
-          key: macos-client-${{ runner.arch }}-${{ hashFiles('vcpkg.json') }}-${{ runner.os }}
+          key: macos-client-${{ runner.arch }}-deployment14-${{ hashFiles('vcpkg.json', 'cmake/triplets/*.cmake') }}-${{ runner.os }}
           restore-keys: macos-client-${{ runner.arch }}-
       - name: Bootstrap native dependencies
         run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
