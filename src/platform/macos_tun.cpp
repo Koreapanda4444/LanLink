@@ -72,7 +72,9 @@ class MacTun final : public TunDevice {
                     if(position+2>offset+length)throw std::runtime_error("truncated route address");
                     const auto* value=reinterpret_cast<const sockaddr*>(bytes.data()+position);
                     const auto actual=static_cast<std::size_t>(value->sa_len);
-                    const auto aligned=actual?((actual+sizeof(long)-1)&~(sizeof(long)-1)):sizeof(long);
+                    // Darwin route sockaddrs use 32-bit alignment on both architectures.
+                    constexpr auto alignment=sizeof(std::uint32_t);
+                    const auto aligned=actual?((actual+alignment-1)&~(alignment-1)):alignment;
                     if(aligned>offset+length-position)throw std::runtime_error("invalid route address size");
                     std::uint32_t address=0;
                     constexpr auto start=offsetof(sockaddr_in,sin_addr);
