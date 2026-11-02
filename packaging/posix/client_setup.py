@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import sys
+import time
 
 
 
@@ -34,6 +35,11 @@ def active():
 def stop_service():
     if MAC:
         run(["/bin/launchctl", "bootout", "system/com.lanlink.client"])
+        deadline = time.monotonic() + 20
+        while active():
+            if time.monotonic() >= deadline:
+                raise RuntimeError("launchd did not finish unloading the LanLink service")
+            time.sleep(0.1)
     else:
         run(["/usr/bin/systemctl", "stop", "lanlink-client.service"])
 
@@ -43,7 +49,16 @@ def reload_service():
 
 def start_service(unit):
     if MAC:
-        run(["/bin/launchctl", "bootstrap", "system", str(unit)])
+        deadline = time.monotonic() + 10
+        while True:
+            result = run(["/bin/launchctl", "bootstrap", "system", str(unit)], check=False)
+            if result.returncode == 0:
+                break
+            # launchd can still be completing a successful bootout. Retry only
+            # its transient EIO response while no job is registered.
+            if result.returncode != 5 or active() or time.monotonic() >= deadline:
+                raise RuntimeError("launchd bootstrap failed: " + result.stderr.decode(errors="replace").strip())
+            time.sleep(0.1)
     else:
         run(["/usr/bin/systemctl", "enable", "--now", "lanlink-client.service"])
 

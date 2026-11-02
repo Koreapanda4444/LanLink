@@ -54,7 +54,9 @@ def pid():
 
 def start():
     if mac:
-        command(["/bin/launchctl", "bootstrap", "system", str(unit)])
+        sys.path.insert(0, str(source))
+        import client_setup
+        client_setup.start_service(unit)
     else:
         command(["/usr/bin/systemctl", "start", "lanlink-client.service"])
 
@@ -89,13 +91,16 @@ with tempfile.TemporaryDirectory(prefix="lanlink-native-install-") as directory:
     try:
         command(install + ["--relay", "127.0.0.1", "--port", "9", "--token-file", str(token), "--user", args.user])
         first = ready()
+        print("Installed service ready", flush=True)
         control = grp.getgrnam("lanlink").gr_gid
         socket_info = Path("/var/run/lanlink/control.sock").stat()
         assert socket_info.st_gid == control and socket_info.st_mode & 0o777 == 0o660, "Service control socket must be group-restricted"
         allowed = as_user(user)
         assert allowed.returncode == 0 and "authenticated:" in allowed.stdout, allowed.stderr
+        print("Authorized control user passed", flush=True)
         denied = as_user(pwd.getpwnam("nobody"))
         assert denied.returncode != 0 and "Permission denied" in denied.stderr, denied.stderr
+        print("Unauthorized control user denied", flush=True)
         identity = state / "device.identity"
         protected = (config, state / "auth.token", identity)
         before = {path: hashlib.sha256(path.read_bytes()).digest() for path in protected}
@@ -103,7 +108,12 @@ with tempfile.TemporaryDirectory(prefix="lanlink-native-install-") as directory:
         os.kill(first, signal.SIGKILL)
         assert ready(previous=first) != first
         assert all(hashlib.sha256(path.read_bytes()).digest() == value for path, value in before.items())
+        print("Crash restart and identity preservation passed", flush=True)
         command(install + ["--no-start"])
+        if mac:
+            unloaded = command(["/bin/launchctl", "print", "system/com.lanlink.client"], check=False)
+            assert unloaded.returncode != 0, "Upgrade with --no-start left the launchd job loaded: " + unloaded.stdout
+            command(["/usr/bin/plutil", "-lint", str(unit)])
         assert all(hashlib.sha256(path.read_bytes()).digest() == value for path, value in before.items())
         start()
         ready()
