@@ -40,6 +40,7 @@ namespace p2p = lanlink::p2p;
 
 void expect(const bool condition, const std::string& description) {
     if (!condition) {
+        std::cerr << "expectation failed: " << description << std::endl;
         throw std::runtime_error(description);
     }
 }
@@ -49,6 +50,7 @@ void wait_until(Predicate&& predicate, const std::string& description, std::chro
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (!predicate()) {
         if (std::chrono::steady_clock::now() >= deadline) {
+            std::cerr << "wait timed out: " << description << std::endl;
             throw std::runtime_error(description);
         }
         std::this_thread::sleep_for(10ms);
@@ -919,11 +921,17 @@ int main(const int argc, char* argv[]) {
         if (argc != 2) {
             throw std::invalid_argument("usage: network-client-tests fixture-directory");
         }
+        std::cerr << "Starting QUIC network management" << std::endl;
         test_network_management(argv[1]);
+        std::cerr << "Starting peer state reconnect" << std::endl;
         test_peer_state_reconnect(argv[1]);
+        std::cerr << "Starting TLS TCP fallback and QUIC recovery" << std::endl;
         test_tls_tcp_fallback(argv[1]);
+        std::cerr << "Starting TLS backpressure" << std::endl;
         test_tls_backpressure(argv[1]);
+        std::cerr << "Starting Direct peer paths" << std::endl;
         test_peer_paths(argv[1],false);
+        std::cerr << "Starting TLS relay peer paths" << std::endl;
         test_peer_paths(argv[1],true);
         std::cout << "network management QUIC and TLS TCP integration passed\n";
         return 0;

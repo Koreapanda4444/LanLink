@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import grp
 import json
 import os
 from pathlib import Path
@@ -69,9 +70,15 @@ def ready(previous=None):
     raise AssertionError("Installed native service did not become ready")
 
 def as_user(account):
+    groups = []
+    if account.pw_name == args.user:
+        control_group = grp.getgrnam("lanlink").gr_gid
+        assert control_group in os.getgrouplist(account.pw_name, account.pw_gid), "Installer did not enroll the control user"
+        # Darwin limits setgroups even when directory services report more groups.
+        # Only the control group is needed to exercise this permission boundary.
+        groups = [control_group]
     return command([str(prefix / "bin/lanlink-ui-cli"), "status"], check=False,
-        user=account.pw_uid, group=account.pw_gid,
-        extra_groups=os.getgrouplist(account.pw_name, account.pw_gid) if account.pw_name == args.user else [])
+        user=account.pw_uid, group=account.pw_gid, extra_groups=groups)
 
 with tempfile.TemporaryDirectory(prefix="lanlink-native-install-") as directory:
     token = Path(directory) / "auth.token"
