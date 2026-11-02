@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -1937,6 +1938,14 @@ private:
         QUIC_CREDENTIAL_CONFIG credentials{};
         credentials.Type = QUIC_CREDENTIAL_TYPE_NONE;
         credentials.Flags = QUIC_CREDENTIAL_FLAG_CLIENT;
+#ifdef __APPLE__
+        if (const auto* ca_file = std::getenv("SSL_CERT_FILE"); ca_file && *ca_file) {
+            credentials.Flags = static_cast<QUIC_CREDENTIAL_FLAGS>(credentials.Flags |
+                QUIC_CREDENTIAL_FLAG_USE_TLS_BUILTIN_CERTIFICATE_VALIDATION |
+                QUIC_CREDENTIAL_FLAG_SET_CA_CERTIFICATE_FILE);
+            credentials.CaCertificateFile = ca_file;
+        }
+#endif
         status = api_->ConfigurationLoadCredential(configuration_, &credentials);
 
         if (QUIC_FAILED(status)) {

@@ -2,9 +2,9 @@ set -eu
 
 openssl_binary="$1"
 test_binary="$2"
-fixture_dir="$(mktemp -d)"
+fixture_dir="$(mktemp -d /tmp/lanlink-network-client.XXXXXX)"
 case "$fixture_dir" in
-    /tmp/tmp.*|/var/tmp/tmp.*) trap 'rm -rf -- "$fixture_dir"' EXIT ;;
+    /tmp/lanlink-network-client.*) trap 'rm -rf -- "$fixture_dir"' EXIT ;;
     *) exit 1 ;;
 esac
 
