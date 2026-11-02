@@ -105,6 +105,9 @@ jobs:
       - name: Verify native Linux TUN networking
         if: runner.os == 'Linux'
         run: sudo timeout 30 ./build/lanlink_posix_tun_tests
+      - name: Verify native Linux client lifecycle
+        if: runner.os == 'Linux'
+        run: sudo unshare --net python3 tests/posix_service_tests.py build/lanlink-service
       - name: Test compatibility with the released v0.2.2 relay
         if: runner.os == 'Linux'
         env:

@@ -6,7 +6,14 @@
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/transport/local_pipe.hpp"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <codecvt>
+#include <locale>
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 #include <array>
 #include <algorithm>
@@ -23,6 +30,7 @@
 namespace {
 
 std::string utf8(const std::wstring_view text) {
+#ifdef _WIN32
     const auto length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
         text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
     if (length == 0) throw std::invalid_argument("invalid Unicode text");
@@ -33,6 +41,9 @@ std::string utf8(const std::wstring_view text) {
         throw std::invalid_argument("invalid Unicode text");
     }
     return result;
+#else
+    return std::wstring_convert<std::codecvt_utf8<wchar_t>>{}.to_bytes(text.data(),text.data()+text.size());
+#endif
 }
 
 unsigned hex_digit(const wchar_t digit) {
@@ -89,7 +100,7 @@ lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
 
 }
 
-int wmain(const int argc, wchar_t* argv[]) {
+int run_cli(const int argc, wchar_t* argv[]) {
     try {
         namespace protocol = lanlink::protocol;
         const auto action = argc > 1 ? std::wstring_view{argv[1]} : L"status";
@@ -133,10 +144,17 @@ int wmain(const int argc, wchar_t* argv[]) {
                 access.action=action==L"password" ? protocol::AccessAction::password_set : protocol::AccessAction::password_join;
                 access.require_approval=argc==4;
                 std::cerr << "Network password: ";
+#ifdef _WIN32
                 HANDLE input=GetStdHandle(STD_INPUT_HANDLE); DWORD mode=0; const bool console=GetConsoleMode(input,&mode)!=0;
                 if(console) SetConsoleMode(input,mode & ~ENABLE_ECHO_INPUT);
                 std::getline(std::cin,access.secret);
                 if(console) { SetConsoleMode(input,mode); std::cerr << '\n'; }
+#else
+                termios original{};const bool console=isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO,&original)==0;
+                if(console){auto hidden=original;hidden.c_lflag&=~ECHO;if(tcsetattr(STDIN_FILENO,TCSAFLUSH,&hidden)<0)throw std::runtime_error("cannot hide password input");}
+                try{std::getline(std::cin,access.secret);}catch(...){if(console)tcsetattr(STDIN_FILENO,TCSAFLUSH,&original);throw;}
+                if(console){tcsetattr(STDIN_FILENO,TCSAFLUSH,&original);std::cerr << '\n';}
+#endif
                 request.payload=protocol::encode_access_request(access); std::fill(access.secret.begin(),access.secret.end(),'\0'); break;
             }
             if (operation==L"status" && argc==3) access.action=protocol::AccessAction::account_status;
@@ -275,3 +293,16 @@ int wmain(const int argc, wchar_t* argv[]) {
         return EXIT_FAILURE;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc,wchar_t* argv[]){return run_cli(argc,argv);}
+#else
+int main(int argc,char* argv[]){
+    try {
+        std::vector<std::wstring> values;std::vector<wchar_t*> arguments;
+        for(int i=0;i<argc;++i)values.push_back(std::wstring_convert<std::codecvt_utf8<wchar_t>>{}.from_bytes(argv[i]));
+        for(auto& value:values)arguments.push_back(value.data());
+        return run_cli(argc,arguments.data());
+    }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
+}
+#endif
