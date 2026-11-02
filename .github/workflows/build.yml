@@ -70,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ninja-build pkg-config linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk
+          sudo apt-get install --yes ninja-build pkg-config autoconf autoconf-archive automake libtool linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk
       - name: Bootstrap vcpkg (Linux)
         if: runner.os == 'Linux'
         run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
