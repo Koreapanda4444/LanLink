@@ -165,6 +165,13 @@ target_include_directories(lanlink_packet_engine PUBLIC ${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(lanlink_packet_engine PUBLIC lanlink_auth lanlink_protocol lanlink_core PRIVATE OpenSSL::Crypto)
 lanlink_enable_warnings(lanlink_packet_engine)
 
+if(APPLE)
+    add_library(lanlink_native_tun STATIC src/network/posix_tun.cpp src/platform/macos_tun.cpp)
+    target_include_directories(lanlink_native_tun PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(lanlink_native_tun PUBLIC lanlink_packet_engine)
+    lanlink_enable_warnings(lanlink_native_tun)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(lanlink_native_tun STATIC src/network/posix_tun.cpp src/platform/linux_tun.cpp)
     target_include_directories(lanlink_native_tun PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -247,6 +247,15 @@ jobs:
         run: cmake --build --preset macos-foundation --parallel 2
       - name: Test shared modules
         run: ctest --preset macos-foundation
+      - name: Verify native macOS utun networking
+        run: |
+          scutil --dns > "$RUNNER_TEMP/dns-before.txt"
+          netstat -rn -f inet | awk '$1 == "default" { print }' > "$RUNNER_TEMP/route-before.txt"
+          sudo ./build/macos-foundation/lanlink_posix_tun_tests
+          scutil --dns > "$RUNNER_TEMP/dns-after.txt"
+          netstat -rn -f inet | awk '$1 == "default" { print }' > "$RUNNER_TEMP/route-after.txt"
+          diff -u "$RUNNER_TEMP/dns-before.txt" "$RUNNER_TEMP/dns-after.txt"
+          diff -u "$RUNNER_TEMP/route-before.txt" "$RUNNER_TEMP/route-after.txt"
   relay-linux:
     name: Linux x64 relay (glibc 2.34)
     runs-on: ubuntu-latest
