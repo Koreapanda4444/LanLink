@@ -144,8 +144,9 @@ def install_main():
             if current.is_symlink():
                 raise ValueError(f"Refusing a symbolic installation path: {current}")
             current = current.parent
-    if prefix.exists() and not (prefix / "build-info.json").is_file():
-        raise ValueError("Existing client program directory is not a LanLink installation")
+    if prefix.exists() and (not (prefix / "build-info.json").is_file() or
+            not all((prefix / name).is_file() for name in ("bin/lanlink-service", "bin/lanlink-ui-cli"))):
+        raise ValueError("Existing program directory is not a LanLink client installation; it must not replace a relay or another component")
     if prefix.is_relative_to(source):
         raise ValueError("The installation target must be outside the package")
     for link in source.rglob("*"):
@@ -248,8 +249,9 @@ def uninstall_main():
         parser.error("Run the uninstaller with sudo")
     prefix, config, state, logs, unit, desktop = layout(root)
     check_desktop(prefix, desktop)
-    if prefix.is_symlink() or not (prefix / "build-info.json").is_file():
-        raise ValueError("No managed LanLink installation found")
+    if prefix.is_symlink() or not (prefix / "build-info.json").is_file() or not all(
+            (prefix / name).is_file() for name in ("bin/lanlink-service", "bin/lanlink-ui-cli")):
+        raise ValueError("No managed LanLink client installation found")
     for target in (prefix, config, state, logs, unit, desktop):
         current = target.parent if MAC and target == desktop else target
         while current != root:

@@ -16,8 +16,26 @@ PREFIX = f"LanLink-interop-{os.environ['GITHUB_RUN_ATTEMPT']}"
 REPOSITORY, RUN = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]
 
 def api(endpoint, binary=False):
-    result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{endpoint}"], check=True, capture_output=True)
-    return result.stdout if binary else json.loads(result.stdout)
+    for attempt in range(6):
+        try:
+            result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{endpoint}"], capture_output=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            detail = "GitHub API request timed out"
+        else:
+            if result.returncode == 0:
+                return result.stdout if binary else json.loads(result.stdout)
+            detail = result.stderr.decode(errors="replace").strip()[:2000]
+            transient = any(value in detail.lower() for value in (
+                "http 429", "http 500", "http 502", "http 503", "http 504",
+                "rate limit", "timed out", "timeout", "connection reset",
+                "connection refused", "tls handshake", "unexpected eof", "temporary failure"))
+            if not transient:
+                raise RuntimeError(f"GitHub API {endpoint} failed: {detail}")
+        if attempt == 5:
+            raise RuntimeError(f"GitHub API {endpoint} failed after bounded retries: {detail}")
+        delay = min(60, 5 * (2 ** attempt))
+        print(f"GitHub API retry in {delay}s: {detail}", flush=True)
+        time.sleep(delay)
 
 def wait(marker):
     deadline = time.monotonic() + 60
@@ -33,24 +51,27 @@ def collect(kind):
     destination = ROOT / ("keys" if kind == "keys" else "incoming")
     destination.mkdir(exist_ok=True)
     deadline = time.monotonic() + 20 * 60
+    run = api(f"actions/runs/{RUN}")
+    assert run["head_sha"] == os.environ["GITHUB_SHA"], "workflow provenance changed"
+    next_job_check = 0
     while time.monotonic() < deadline:
-        run = api(f"actions/runs/{RUN}")
-        assert run["head_sha"] == os.environ["GITHUB_SHA"], "workflow provenance changed"
         artifacts = api(f"actions/runs/{RUN}/artifacts?per_page=100")["artifacts"]
         found = {item["name"]: item for item in artifacts if item["name"] in expected and not item["expired"]}
         if len(found) == len(expected):
             break
-        jobs = api(f"actions/runs/{RUN}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")["jobs"]
-        failed = [job["name"] for job in jobs if job["conclusion"] in ("failure", "cancelled", "timed_out")]
-        if failed:
-            raise RuntimeError("Cross-platform exchange stopped after a failed CI job: " + ", ".join(failed))
-        if int(os.environ["GITHUB_RUN_ATTEMPT"]) > 1:
-            names = {job["name"] for job in jobs}
-            if not {"windows-latest", "ubuntu-latest", "macOS native client"} <= names:
-                raise RuntimeError("Rerun all jobs: the ephemeral key exchange requires all three native peers")
+        if time.monotonic() >= next_job_check:
+            jobs = api(f"actions/runs/{RUN}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")["jobs"]
+            failed = [job["name"] for job in jobs if job["conclusion"] in ("failure", "cancelled", "timed_out")]
+            if failed:
+                raise RuntimeError("Cross-platform exchange stopped after a failed CI job: " + ", ".join(failed))
+            if int(os.environ["GITHUB_RUN_ATTEMPT"]) > 1:
+                names = {job["name"] for job in jobs}
+                if not {"windows-latest", "ubuntu-latest", "macOS native client"} <= names:
+                    raise RuntimeError("Rerun all jobs: the ephemeral key exchange requires all three native peers")
+            next_job_check = time.monotonic() + 60
         if (ROOT / "failed.txt").exists():
             raise RuntimeError((ROOT / "failed.txt").read_text())
-        time.sleep(5)
+        time.sleep(15)
     else:
         raise TimeoutError("waiting for all three native platform artifacts")
     for name, item in found.items():

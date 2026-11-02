@@ -7,6 +7,8 @@
 | `LanLink-Setup-0.8.0-windows-x64.exe` | Windows 설치 프로그램 |
 | `LanLink-0.8.0-windows-x64.zip` | Windows 수동 설치 패키지 |
 | `LanLink-relay-0.8.0-linux-x86_64.tar.gz` | Linux x64 릴레이 서버 |
+| `LanLink-0.8.0-linux-x64.tar.gz` | Ubuntu 24.04 x64 데스크톱 클라이언트 |
+| `LanLink-0.8.0-macos-arm64.zip` | macOS 14 이상 Apple Silicon 클라이언트 |
 
 `SHA256SUMS`에서 받은 파일의 해시를 확인한다. PowerShell에서는 `Get-FileHash 파일이름 -Algorithm SHA256`, Linux에서는 `sha256sum --check SHA256SUMS --ignore-missing`을 사용한다. `release-manifest.json`은 해당 빌드의 소스 커밋과 패키지 정보를 담는다.
 
@@ -82,6 +84,20 @@ ZIP 수동 설치는 압축을 해제한 디렉터리의 관리자 PowerShell에
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-LanLink.ps1 `
   -RelayHost relay.example.com -AuthenticationTokenFile C:\secure\auth.token
 ```
+
+## Linux·macOS 클라이언트
+
+클라이언트 패키지를 압축 해제한 디렉터리에서 설치한다. Python 3과 관리자 권한이 필요하다. Linux 데스크톱은 systemd·PolicyKit·OpenGL 3.2가 필요하다.
+
+```sh
+sudo python3 install-client.py --relay relay.example.com --port 4433 --token-file /absolute/auth.token --user YOUR_USER
+```
+
+다시 로그인한 뒤 Linux에서는 `/opt/lanlink/bin/lanlink-ui`, macOS에서는 `/Applications/LanLink.app`을 연다. `lanlink` 그룹에 추가한 사용자는 로컬 서비스를 관리할 수 있다. GUI는 일반 사용자로 실행한다.
+
+업그레이드는 새 패키지의 `sudo python3 install-client.py`로 수행한다. 기존 설정·장치 ID·토큰을 보존한다. 제거는 Linux의 `sudo python3 /opt/lanlink/uninstall-client.py` 또는 macOS의 `sudo python3 "/Library/Application Support/LanLink/uninstall-client.py"`로 실행한다. 기본 제거는 상태를 남기며 명시적 `--purge`만 설정·장치 ID·토큰·로그를 삭제한다.
+
+현재 Linux client와 Relay는 프로그램·설정·상태 경로를 공유하므로 서로 다른 호스트에 설치한다. 클라이언트 설치기는 기존 Relay 디렉터리를 덮어쓰지 않는다. macOS CI 패키지는 ad hoc 서명이다. Developer ID·Apple 공증과 Gatekeeper 설치 검증은 완료하지 않았다. 자세한 경로·서비스 명령·서명 절차는 각 클라이언트 압축 파일 안의 `INSTALL.md`를 참고한다.
 
 ## 업그레이드와 제거
 

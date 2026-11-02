@@ -1,6 +1,6 @@
 # Linux 클라이언트
 
-Linux x64 패키지의 지원 기준은 Ubuntu 24.04다. Python 3, systemd, PolicyKit, OpenGL 3.2 및 데스크톱 세션이 필요하다. 다른 배포판은 소스 빌드 후 의존성과 glibc 호환성을 확인한다. 서버용 Relay 패키지와 클라이언트 패키지는 별개다.
+Linux x64 패키지의 지원 기준은 Ubuntu 24.04다. Python 3, systemd, PolicyKit, OpenGL 3.2 및 데스크톱 세션이 필요하다. 다른 배포판은 소스 빌드 후 의존성과 glibc 호환성을 확인한다. 서버용 Relay 패키지와 클라이언트 패키지는 별개다. 현재 Linux client와 Relay는 프로그램·설정·상태 경로를 공유하므로 서로 다른 호스트에 설치한다. 클라이언트 설치기는 기존 Relay 디렉터리를 덮어쓰지 않는다.
 
 압축을 푼 디렉터리에서 다음과 같이 설치한다. 토큰은 파일로 전달하며 명령행이나 로그에 넣지 않는다.
 

@@ -21,6 +21,20 @@ for path in binaries:
 assert subprocess.check_output([str(source / "bin/lanlink-service"), "--version"], text=True).strip() == metadata["version"]
 with tempfile.TemporaryDirectory(prefix="lanlink-install-") as directory:
     root = Path(directory) / "root"
+    other_root = Path(directory) / "other-component"
+    other_program = other_root / ("Library/Application Support/LanLink" if mac else "opt/lanlink")
+    (other_program / "bin").mkdir(parents=True)
+    (other_program / "build-info.json").write_text(json.dumps(metadata))
+    relay = other_program / "bin/lanlink-relay"
+    relay.write_bytes(b"existing relay must be preserved")
+    (other_program / ".lanlink-installation").write_text(metadata["version"])
+    refused = subprocess.run([sys.executable, str(source / "install-client.py"), "--root", str(other_root), "--no-start"], capture_output=True)
+    assert refused.returncode != 0 and b"not a LanLink client installation" in refused.stderr
+    refused_remove = subprocess.run([sys.executable, str(source / "uninstall-client.py"), "--root", str(other_root), "--purge"], capture_output=True)
+    assert refused_remove.returncode != 0 and b"No managed LanLink client installation" in refused_remove.stderr
+    assert relay.read_bytes() == b"existing relay must be preserved"
+    assert (other_program / ".lanlink-installation").read_text() == metadata["version"]
+    assert not (other_program / "bin/lanlink-service").exists()
     token = Path(directory) / "input.token"
     token.write_text("lanlink-isolated-installer-test-token-2026\n")
     install = [sys.executable, str(source / "install-client.py"), "--root", str(root), "--no-start"]
