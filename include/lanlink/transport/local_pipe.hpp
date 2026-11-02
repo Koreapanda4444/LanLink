@@ -2,10 +2,10 @@
 
 #include "lanlink/protocol/local_control.hpp"
 
-#include <windows.h>
+#include <memory>
 
 #include <functional>
-#include <thread>
+
 
 namespace lanlink::transport {
 
@@ -22,12 +22,8 @@ public:
     void stop() noexcept;
 
 private:
-    void serve() noexcept;
-
-    HANDLE pipe_ = INVALID_HANDLE_VALUE;
-    HANDLE stopping_ = nullptr;
-    Handler handler_;
-    std::thread thread_;
+    class Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 [[nodiscard]] protocol::LocalMessage local_pipe_request(

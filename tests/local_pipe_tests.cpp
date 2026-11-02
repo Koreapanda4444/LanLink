@@ -1,5 +1,6 @@
 #include "lanlink/transport/local_pipe.hpp"
 
+#include <windows.h>
 #include <chrono>
 #include <cstddef>
 #include <exception>

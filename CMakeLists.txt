@@ -261,12 +261,16 @@ if(WIN32)
     target_link_libraries(lanlink_local_ipc PUBLIC lanlink_protocol PRIVATE advapi32)
     lanlink_enable_warnings(lanlink_local_ipc)
 
+    add_library(lanlink_client_runtime STATIC apps/service/client_runtime.cpp src/platform/windows_adapter.cpp)
+    target_link_libraries(lanlink_client_runtime PUBLIC lanlink_session lanlink_local_ipc)
+    lanlink_enable_warnings(lanlink_client_runtime)
+
     add_executable(lanlink_service
         apps/service/main.cpp
         apps/service/windows_service.cpp
     )
 
-    target_link_libraries(lanlink_service PRIVATE lanlink_core lanlink_session lanlink_local_ipc advapi32 shell32 ole32 uuid)
+    target_link_libraries(lanlink_service PRIVATE lanlink_client_runtime advapi32 shell32 ole32 uuid)
     set_target_properties(lanlink_service PROPERTIES OUTPUT_NAME "lanlink-service")
     lanlink_enable_warnings(lanlink_service)
 

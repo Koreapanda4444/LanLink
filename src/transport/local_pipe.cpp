@@ -1,6 +1,8 @@
 #include "lanlink/transport/local_pipe.hpp"
 
+#include <windows.h>
 #include <sddl.h>
+#include <thread>
 
 #include <stdexcept>
 #include <string>
@@ -110,7 +112,20 @@ void send(HANDLE pipe, const protocol::LocalMessage& message,
 
 }
 
-LocalPipeServer::LocalPipeServer(Handler handler) : handler_(std::move(handler)) {
+class LocalPipeServer::Impl {
+public:
+    explicit Impl(Handler handler);
+    ~Impl();
+    void stop() noexcept;
+private:
+    void serve() noexcept;
+    HANDLE pipe_ = INVALID_HANDLE_VALUE;
+    HANDLE stopping_ = nullptr;
+    Handler handler_;
+    std::thread thread_;
+};
+
+LocalPipeServer::Impl::Impl(Handler handler) : handler_(std::move(handler)) {
     if (!handler_) {
         throw std::invalid_argument("missing local pipe handler");
     }
@@ -147,11 +162,11 @@ LocalPipeServer::LocalPipeServer(Handler handler) : handler_(std::move(handler))
     }
 }
 
-LocalPipeServer::~LocalPipeServer() {
+LocalPipeServer::Impl::~Impl() {
     stop();
 }
 
-void LocalPipeServer::stop() noexcept {
+void LocalPipeServer::Impl::stop() noexcept {
     if (stopping_) {
         SetEvent(stopping_);
     }
@@ -168,7 +183,7 @@ void LocalPipeServer::stop() noexcept {
     }
 }
 
-void LocalPipeServer::serve() noexcept {
+void LocalPipeServer::Impl::serve() noexcept {
     while (WaitForSingleObject(stopping_, 0) != WAIT_OBJECT_0) {
         try {
             if (!connect_pipe(pipe_, stopping_)) {
@@ -199,6 +214,10 @@ void LocalPipeServer::serve() noexcept {
         DisconnectNamedPipe(pipe_);
     }
 }
+
+LocalPipeServer::LocalPipeServer(Handler handler) : impl_(std::make_unique<Impl>(std::move(handler))) {}
+LocalPipeServer::~LocalPipeServer() = default;
+void LocalPipeServer::stop() noexcept { impl_->stop(); }
 
 protocol::LocalMessage local_pipe_request(const protocol::LocalMessage& request) {
     if (request.response || request.error) {
