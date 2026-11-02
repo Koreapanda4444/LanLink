@@ -2,9 +2,9 @@
 
 # LanLink
 
-여러 Windows PC를 가상 IPv4 네트워크로 연결하는 프로그램이다. 게임이나 일반 애플리케이션에서 상대 기기의 LanLink IP로 접속한다. 예를 들어 게임 서버의 가상 IP가 `10.77.0.2`라면 `10.77.0.2:8211`처럼 사용한다.
+Windows·Linux·macOS 기기를 가상 IPv4 네트워크로 연결하는 프로그램이다. 게임이나 일반 애플리케이션에서 상대 기기의 LanLink IP로 접속한다. 예를 들어 게임 서버의 가상 IP가 `10.77.0.2`라면 `10.77.0.2:8211`처럼 사용한다.
 
-Windows 서비스가 연결과 가상 어댑터를 유지하고, 데스크톱 UI에서 네트워크 생성·가입·기기 승인·가상 IP 복사를 처리한다. QUIC UDP를 사용하며 연결할 수 없으면 TLS TCP로 전환한다. 가상 네트워크 패킷은 클라이언트 사이에서 암호화하고 릴레이는 암호문을 전달한다.
+Windows 서비스·Linux systemd·macOS launchd가 연결과 가상 어댑터를 유지하고, 데스크톱 UI에서 네트워크 생성·가입·기기 승인·가상 IP 복사를 처리한다. QUIC UDP를 사용하며 연결할 수 없으면 TLS TCP로 전환한다. 가상 네트워크 패킷은 클라이언트 사이에서 암호화하고 릴레이는 암호문을 전달한다.
 
 ## 설치
 
@@ -17,7 +17,7 @@ Windows 서비스가 연결과 가상 어댑터를 유지하고, 데스크톱 UI
 ## 구성
 
 - `lanlink-relay`: 서버의 패킷 중계와 네트워크 관리
-- `lanlink-service`: Windows 자동 시작 서비스와 Wintun 가상 어댑터
+- `lanlink-service`: Windows Wintun·Linux TUN·macOS utun과 각 OS의 상주 서비스
 - `lanlink-ui`: 네트워크·기기·접속 상태를 관리하는 데스크톱 화면
 - `lanlink-ui-cli`: 명령줄 관리 도구
 
@@ -31,8 +31,8 @@ cmake --build build --config Release
 ctest --test-dir build --build-config Release --output-on-failure
 ```
 
-Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux 릴레이 패키지는 `VCPKG_ROOT`를 지정한 뒤 `bash deploy/linux/build-relay.sh`로 만든다. 직접 빌드하는 서버의 라이브러리·glibc 요구 사항은 해당 빌드 환경을 따른다.
+Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux/macOS 데스크톱은 `-DLANLINK_BUILD_DESKTOP=ON`으로 SDL3/OpenGL UI와 native client를 빌드한다. 설치와 지원 환경은 [Linux·macOS 클라이언트 안내](docs/clients-posix.md)를 참고한다. Linux 릴레이 패키지는 `VCPKG_ROOT`를 지정한 뒤 `bash deploy/linux/build-relay.sh`로 만든다. 직접 빌드하는 서버의 라이브러리·glibc 요구 사항은 해당 빌드 환경을 따른다.
 
 ## v1.0 개발
 
-현재 소스는 v0.7.0 마일스톤(기획서 Commit 01~41)이다. Direct QUIC/Relay, LAN 검색·게임 진단에 더해 선택 계정·기기 등록/폐기, 서명된 서버 목록, 비밀번호 가입, 만료 초대 링크와 한국어·영어 UI를 제공한다. 관리형 Mesh·Hub 제한, 기기·그룹 ACL과 역할, 승인 Gateway·사설 서브넷, 관리 변경 이력과 설정 미리보기도 제공한다. 자체 서버의 기존 토큰 인증은 유지하며 공식 계정은 필수가 아니다. 공개 안정판은 v0.2.2이며 새 공식 인프라와 공개 Release는 이 작업에서 배포하지 않는다. [60개 커밋 로드맵](docs/v1-development.md), [v0.7 검증 범위](docs/verification-v0.7.md), [고급 네트워크 관리](docs/managed-networks.md), [계정](docs/user-accounts.md), [서버 탐색](docs/directory.md), [비밀번호](docs/password-joining.md), [초대](docs/invitations.md), [P2P](docs/p2p.md), [게임 호환성](docs/game-compatibility.md), [선택적 Linux L2](docs/l2.md)를 참고한다.
+현재 소스는 v0.8.0 마일스톤(기획서 Commit 01~49)이다. Windows·Linux·macOS native client와 공유 한국어·영어 UI, OS 서비스·IPC·설치 패키지를 제공한다. Direct QUIC/Relay, LAN 검색·게임 진단, 선택 계정·서버 목록·비밀번호·초대, 관리형 Mesh·Hub·ACL·승인 사설 경로도 유지한다. Gateway의 LAN 전달 역할은 Windows에서 지원한다. 자체 서버의 기존 토큰 인증은 유지하며 공식 계정은 필수가 아니다. 공개 안정판은 v0.2.2이며 새 공식 인프라와 공개 Release는 이 작업에서 배포하지 않는다. [60개 커밋 로드맵](docs/v1-development.md), [v0.8 검증 범위](docs/verification-v0.8.md), [Linux·macOS](docs/clients-posix.md), [고급 네트워크 관리](docs/managed-networks.md), [계정](docs/user-accounts.md), [서버 탐색](docs/directory.md), [비밀번호](docs/password-joining.md), [초대](docs/invitations.md), [P2P](docs/p2p.md), [게임 호환성](docs/game-compatibility.md), [선택적 Linux L2](docs/l2.md)를 참고한다.

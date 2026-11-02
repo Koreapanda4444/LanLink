@@ -1,0 +1,53 @@
+name: Native cross-platform cryptographic exchange
+description: Exchange public identities, recipient-sealed keys and authenticated packets between three live native peers.
+inputs:
+  binary:
+    description: Native interop helper executable
+    required: true
+  platform:
+    description: windows, linux or macos
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Start native peer and publish its public identity
+      shell: bash
+      env:
+        INTEROP_BINARY: ${{ inputs.binary }}
+        INTEROP_PLATFORM: ${{ inputs.platform }}
+      run: python tests/interop_exchange.py start "$INTEROP_PLATFORM" "$INTEROP_BINARY"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: LanLink-interop-${{ github.run_attempt }}-keys-${{ inputs.platform }}
+        path: ${{ env.LANLINK_INTEROP_ROOT }}/public/*.state
+        if-no-files-found: error
+        retention-days: 7
+        overwrite: true
+    - name: Seal keys and packets for both other operating systems
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INTEROP_PLATFORM: ${{ inputs.platform }}
+      run: python tests/interop_exchange.py keys "$INTEROP_PLATFORM"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: LanLink-interop-${{ github.run_attempt }}-packets-${{ inputs.platform }}
+        path: ${{ env.LANLINK_INTEROP_ROOT }}/outgoing/*
+        if-no-files-found: error
+        retention-days: 7
+        overwrite: true
+    - name: Verify foreign key envelopes, packet crypto and Direct authorization
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INTEROP_PLATFORM: ${{ inputs.platform }}
+      run: python tests/interop_exchange.py verify "$INTEROP_PLATFORM"
+    - name: Stop the ephemeral native peer
+      if: always()
+      shell: bash
+      env:
+        INTEROP_PLATFORM: ${{ inputs.platform }}
+      run: python tests/interop_exchange.py stop "$INTEROP_PLATFORM"

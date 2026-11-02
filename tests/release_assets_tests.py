@@ -83,6 +83,62 @@ def write_installer(directory, commit=COMMIT):
     (directory / prepare.INSTALLER).write_bytes(data)
 
 
+
+def native_files(system, architecture):
+    required = {"build-info.json", "INSTALL.md", "client_setup.py", "install-client.py", "uninstall-client.py",
+                "bin/lanlink-service", "bin/lanlink-ui-cli"}
+    required |= {f"licenses/{name}.txt" for name in ("msquic", "openssl", "sqlite3", "imgui", "sdl3", "libpng", "zlib")}
+    if system == "Linux":
+        required |= {"bin/lanlink-ui", "share/lanlink/lanlink.png", "lanlink.desktop", "lanlink-client.service",
+                     "lib/libmsquic.so.2"}
+        binaries = ("bin/lanlink-service", "bin/lanlink-ui-cli", "bin/lanlink-ui", "lib/libmsquic.so.2")
+        binary = linux_binary()
+    else:
+        required |= {"LanLink.app/Contents/MacOS/LanLink", "LanLink.app/Contents/Info.plist",
+                     "LanLink.app/Contents/Resources/LanLink.icns", "LanLink.app/Contents/Resources/lanlink.png",
+                     "com.lanlink.client.plist", "lib/libmsquic.dylib"}
+        binaries = ("bin/lanlink-service", "bin/lanlink-ui-cli", "LanLink.app/Contents/MacOS/LanLink", "lib/libmsquic.dylib")
+        data = bytearray(64)
+        data[:4] = b"\xcf\xfa\xed\xfe"
+        struct.pack_into("<I", data, 4, 0x0100000c if architecture == "arm64" else 0x01000007)
+        binary = bytes(data)
+    files = {name: b"native release fixture\n" for name in required}
+    for name in binaries:
+        files[name] = binary
+    files["build-info.json"] = json.dumps({
+        "version": prepare.VERSION, "source_commit": COMMIT, "source_clean": True,
+        "protocol_version": 5, "system": system, "architecture": architecture,
+        "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": prepare.VERSION},
+    }).encode()
+    if system == "Darwin":
+        files["LanLink.app/Contents/Info.plist"] = prepare.plistlib.dumps({
+            "CFBundleIdentifier": "com.lanlink.desktop", "CFBundleShortVersionString": prepare.VERSION})
+    return files
+
+
+def write_native(directory, system, architecture, files=None):
+    files = native_files(system, architecture) if files is None else files
+    name = f"LanLink-{prepare.VERSION}-{'linux' if system == 'Linux' else 'macos'}-{architecture}"
+    if system == "Linux":
+        path = directory / (name + ".tar.gz")
+        with tarfile.open(path, "w:gz") as archive:
+            for name, data in files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+    else:
+        path = directory / (name + ".zip")
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+    return path
+
+
+def write_native_pair(directory):
+    write_native(directory, "Linux", "x64")
+    write_native(directory, "Darwin", "arm64")
+
+
 class ReleaseAssetsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="lanlink-release-tests-")
@@ -180,7 +236,8 @@ class ReleaseAssetsTests(unittest.TestCase):
     def test_publication_preserves_existing_tag(self):
         for kind in prepare.ARCHIVES:
             write_package(self.directory, kind)
-        prepare.prepare(self.directory, COMMIT)
+        write_native_pair(self.directory)
+        prepare.prepare(self.directory, COMMIT, native=True)
         with mock.patch.object(publish, "gh", return_value='{"nameWithOwner":"owner/repository"}') as cli, \
              mock.patch.object(publish, "api", return_value={"object": {"type": "commit", "sha": "b" * 40}}):
             with self.assertRaisesRegex(ValueError, "different commit"):
@@ -190,12 +247,58 @@ class ReleaseAssetsTests(unittest.TestCase):
     def test_publication_preserves_unrelated_draft(self):
         for kind in prepare.ARCHIVES:
             write_package(self.directory, kind)
-        prepare.prepare(self.directory, COMMIT)
+        write_native_pair(self.directory)
+        prepare.prepare(self.directory, COMMIT, native=True)
         with mock.patch.object(publish, "gh", return_value='{"nameWithOwner":"owner/repository"}') as cli, \
              mock.patch.object(publish, "api", side_effect=[None, {"draft": True, "target_commitish": "b" * 40}]):
             with self.assertRaisesRegex(ValueError, "another commit"):
                 publish.main(self.directory, COMMIT)
             self.assertEqual(cli.call_count, 1)
+
+
+    def test_native_release_manifest_and_checksums(self):
+        for kind in prepare.ARCHIVES:
+            write_package(self.directory, kind)
+        write_native_pair(self.directory)
+        manifest = prepare.prepare(self.directory, COMMIT, native=True)
+        self.assertEqual(len(manifest["assets"]), 5)
+        self.assertEqual(len((self.directory / "SHA256SUMS").read_text().splitlines()), 7)
+        self.assertEqual(prepare.verify(self.directory, COMMIT, native=True), manifest)
+        (self.directory / f"LanLink-{prepare.VERSION}-macos-arm64.zip").unlink()
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            prepare.verify(self.directory, COMMIT, native=True)
+
+    def test_native_release_requires_both_platforms(self):
+        for kind in prepare.ARCHIVES:
+            write_package(self.directory, kind)
+        write_native(self.directory, "Linux", "x64")
+        with self.assertRaisesRegex(ValueError, "requires Linux and macOS"):
+            prepare.prepare(self.directory, COMMIT, native=True)
+
+    def test_native_wrong_architecture_and_provenance(self):
+        for system, architecture, binary in (
+                ("Linux", "x64", "bin/lanlink-service"),
+                ("Darwin", "arm64", "LanLink.app/Contents/MacOS/LanLink")):
+            with self.subTest(system=system):
+                files = native_files(system, architecture)
+                files[binary] = windows_binary()
+                path = write_native(self.directory, system, architecture, files)
+                with self.assertRaisesRegex(ValueError, "ELF x64|architecture"):
+                    prepare.inspect_native_package(path, COMMIT)
+                path = write_native(self.directory, system, architecture)
+                with self.assertRaisesRegex(ValueError, "provenance"):
+                    prepare.inspect_native_package(path, "b" * 40)
+
+    def test_native_missing_license_and_private_state(self):
+        for name in ("licenses/sdl3.txt", "licenses/libpng.txt"):
+            files = native_files("Darwin", "arm64")
+            del files[name]
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                prepare.inspect_native_package(write_native(self.directory, "Darwin", "arm64", files), COMMIT)
+        files = native_files("Linux", "x64")
+        files["auth.token"] = b"must never ship"
+        with self.assertRaisesRegex(ValueError, "private state"):
+            prepare.inspect_native_package(write_native(self.directory, "Linux", "x64", files), COMMIT)
 
 
 if __name__ == "__main__":

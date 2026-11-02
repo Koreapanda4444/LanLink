@@ -32,7 +32,7 @@ def retire_previous(repository):
 
 def main(directory, commit):
     directory = Path(directory)
-    verify(directory, commit)
+    manifest = verify(directory, commit, native=True)
     repository = json.loads(gh("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
     tag = f"v{VERSION}"
     reference = api(f"repos/{repository}/git/ref/tags/{tag}")
@@ -51,13 +51,13 @@ def main(directory, commit):
     if release is not None and not release["draft"]:
         with tempfile.TemporaryDirectory(prefix="lanlink-published-") as temporary:
             gh("release", "download", tag, "--dir", temporary)
-            verify(temporary, commit)
+            verify(temporary, commit, native=True)
         retire_previous(repository)
         print(f"Verified existing release: {release['html_url']}")
         return
 
     assets = sorted(str(path) for path in directory.iterdir() if path.is_file())
-    require(len(assets) == 6, "release directory contains unexpected files")
+    require(len(assets) == len(manifest["assets"]) + 3, "release directory contains unexpected files")
     if release is None:
         gh("release", "create", tag, *assets, "--draft", "--target", commit,
            "--title", f"LanLink {VERSION}", "--notes-file", str(Path(__file__).with_name(f"{VERSION}.md")))
@@ -65,11 +65,11 @@ def main(directory, commit):
         gh("release", "upload", tag, *assets, "--clobber")
     with tempfile.TemporaryDirectory(prefix="lanlink-draft-") as temporary:
         gh("release", "download", tag, "--dir", temporary)
-        verify(temporary, commit)
+        verify(temporary, commit, native=True)
     gh("release", "edit", tag, "--draft=false", "--latest")
     published = api(f"repos/{repository}/releases/tags/{tag}")
-    require(published is not None and not published["draft"] and len(published["assets"]) == 6,
-            "release was not published with all six assets")
+    require(published is not None and not published["draft"] and len(published["assets"]) == len(manifest["assets"]) + 3,
+            "release was not published with every verified asset")
     retire_previous(repository)
     print(f"Published {published['html_url']}")
 

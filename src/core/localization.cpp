@@ -3,6 +3,7 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Gateway forwarding is available on Windows.","Gateway 전달 기능은 Windows에서 사용할 수 있습니다."},
     Translation{"Blocked","차단됨"},
     Translation{"Network management","네트워크 관리"},
     Translation{"Topology","연결 구조"},

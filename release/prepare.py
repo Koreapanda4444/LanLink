@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import plistlib
 from pathlib import Path, PurePosixPath
 import posixpath
 import re
@@ -162,6 +163,61 @@ def inspect_package(path, kind, commit, require_clean=True, distribution=None, r
             "file_count": len(files) + len(links), "build": metadata}
 
 
+
+def package_names(directory, native=False):
+    found = {p.name for p in Path(directory).iterdir() if p.name.endswith((".zip", ".tar.gz", ".exe"))}
+    if not native:
+        require(found == PACKAGES, "release must contain exactly the three supported packages")
+        return found
+    linux = f"LanLink-{VERSION}-linux-x64.tar.gz"
+    mac = {f"LanLink-{VERSION}-macos-{arch}.zip" for arch in ("x64", "arm64")}
+    require(PACKAGES <= found and found <= PACKAGES | {linux} | mac, "unexpected native release package")
+    require(linux in found and bool(mac & found), "native release requires Linux and macOS client packages")
+    return found
+
+
+def inspect_native_package(path, commit):
+    files, links = read_archive(path)
+    metadata = json.loads(files["build-info.json"])
+    require(metadata["version"] == VERSION and metadata["source_commit"] == commit and metadata["source_clean"] is True,
+            "native package provenance mismatch")
+    require(metadata["protocol_version"] == 5 and metadata["vcpkg_manifest"]["builtin-baseline"] == BASELINE and
+            metadata["vcpkg_manifest"]["version-string"] == VERSION, "native dependency or protocol mismatch")
+    architecture = metadata["architecture"]
+    required = {"build-info.json", "INSTALL.md", "client_setup.py", "install-client.py", "uninstall-client.py",
+                "bin/lanlink-service", "bin/lanlink-ui-cli"}
+    required |= {f"licenses/{name}.txt" for name in ("msquic", "openssl", "sqlite3", "imgui", "sdl3", "libpng", "zlib")}
+    if metadata["system"] == "Linux":
+        require(architecture == "x64" and Path(path).name == f"LanLink-{VERSION}-linux-x64.tar.gz",
+                "native Linux architecture or filename mismatch")
+        required |= {"bin/lanlink-ui", "share/lanlink/lanlink.png", "lanlink.desktop", "lanlink-client.service"}
+        binaries = ("bin/lanlink-service", "bin/lanlink-ui-cli", "bin/lanlink-ui")
+        for name in binaries:
+            data = files[name]
+            require(len(data) >= 20 and data[:6] == b"\x7fELF\x02\x01" and struct.unpack_from("<H", data, 18)[0] == 62,
+                    "native Linux binary is not ELF x64")
+    else:
+        require(metadata["system"] == "Darwin" and architecture in ("x64", "arm64") and
+                Path(path).name == f"LanLink-{VERSION}-macos-{architecture}.zip", "native macOS architecture or filename mismatch")
+        required |= {"LanLink.app/Contents/MacOS/LanLink", "LanLink.app/Contents/Info.plist",
+                     "LanLink.app/Contents/Resources/LanLink.icns", "LanLink.app/Contents/Resources/lanlink.png",
+                     "com.lanlink.client.plist"}
+        info = plistlib.loads(files["LanLink.app/Contents/Info.plist"])
+        require(info["CFBundleIdentifier"] == "com.lanlink.desktop" and info["CFBundleShortVersionString"] == VERSION,
+                "native app identity or version mismatch")
+        binaries = ("bin/lanlink-service", "bin/lanlink-ui-cli", "LanLink.app/Contents/MacOS/LanLink")
+        for name in binaries:
+            data = files[name]
+            require(len(data) >= 32 and data[:4] == b"\xcf\xfa\xed\xfe" and
+                    struct.unpack_from("<I", data, 4)[0] == (0x0100000c if architecture == "arm64" else 0x01000007),
+                    "native macOS binary architecture mismatch")
+    require(required <= files.keys() and all(files[name] for name in required), "incomplete native client package")
+    require(any(name.startswith("lib/") and "libmsquic" in name for name in set(files) | set(links)),
+            "native QUIC runtime library is missing")
+    return {"name": Path(path).name, "sha256": digest(path), "size_bytes": Path(path).stat().st_size,
+            "file_count": len(files) + len(links), "build": metadata}
+
+
 def inspect_installer(path, commit):
     data = Path(path).read_bytes()
     require(len(data) >= 160 and data[:2] == b"MZ", "invalid Windows installer")
@@ -175,25 +231,25 @@ def inspect_installer(path, commit):
             "build": {"version": VERSION, "source_commit": commit, "system": "Windows", "architecture": "x64"}}
 
 
-def prepare(directory, commit):
+def prepare(directory, commit, native=False):
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "a full source commit is required")
     directory = Path(directory)
-    found = {p.name for p in directory.iterdir() if p.name.endswith((".zip", ".tar.gz", ".exe"))}
-    require(found == PACKAGES, "release must contain exactly the three supported packages")
+    names = package_names(directory, native)
     assets = [inspect_package(directory / name, kind, commit) for kind, name in ARCHIVES.items()]
     assets.append(inspect_installer(directory / INSTALLER, commit))
+    assets.extend(inspect_native_package(directory / name, commit) for name in sorted(names - PACKAGES))
     manifest = {"version": VERSION, "source_commit": commit, "protocol_version": 5,
                 "vcpkg_baseline": BASELINE, "assets": assets}
     (directory / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     shutil.copyfile(Path(__file__).with_name("INSTALL.md"), directory / "INSTALL.md")
-    checksummed = sorted(list(PACKAGES) + ["release-manifest.json", "INSTALL.md"])
+    checksummed = sorted(list(names) + ["release-manifest.json", "INSTALL.md"])
     (directory / "SHA256SUMS").write_text("".join(
         f"{digest(directory / name)}  {name}\n" for name in checksummed))
-    verify(directory, commit)
+    verify(directory, commit, native=native)
     return manifest
 
 
-def verify(directory, commit):
+def verify(directory, commit, native=False):
     directory = Path(directory)
     entries = {}
     for line in (directory / "SHA256SUMS").read_text().splitlines():
@@ -202,12 +258,13 @@ def verify(directory, commit):
                 name == PurePosixPath(name).name and name not in entries, "invalid checksum entry")
         entries[name] = checksum
         require(digest(directory / name) == checksum, f"checksum mismatch for {name}")
-    require(set(entries) == PACKAGES | {"release-manifest.json", "INSTALL.md"},
+    names = package_names(directory, native)
+    require(set(entries) == names | {"release-manifest.json", "INSTALL.md"},
             "release checksum list is incomplete")
     manifest = json.loads((directory / "release-manifest.json").read_text())
     require(manifest["source_commit"] == commit and manifest["version"] == VERSION,
             "published release provenance mismatch")
-    require({asset["name"] for asset in manifest["assets"]} == PACKAGES,
+    require({asset["name"] for asset in manifest["assets"]} == names,
             "release manifest is incomplete")
     for asset in manifest["assets"]:
         require(asset["sha256"] == entries[asset["name"]] and
@@ -220,6 +277,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", type=Path)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--native", action="store_true", help="Require native Linux and macOS client packages")
     arguments = parser.parse_args()
-    result = prepare(arguments.directory, arguments.commit)
+    result = prepare(arguments.directory, arguments.commit, native=arguments.native)
     print(f"Validated LanLink {VERSION}, commit {result['source_commit']}, {len(result['assets'])} packages")

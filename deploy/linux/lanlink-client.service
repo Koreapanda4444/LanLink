@@ -5,6 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
+Group=lanlink
 ExecStart=/opt/lanlink/bin/lanlink-service --console /etc/lanlink/client.conf
 Restart=on-failure
 RestartSec=2

@@ -69,7 +69,13 @@ void ManagementPanel::draw(NetworkModel& model,const NetworkSnapshot& state,cons
             ImGui::TextWrapped("%s",tr("Local routing is optional and applies to approved networks on this device until the service restarts."));
             ImGui::BeginDisabled(!connected || !state.routing_options);
             if(ImGui::Checkbox(tr("Accept approved private subnet routes"),&local_options_[0]))local_dirty_=true;
+#ifndef _WIN32
+            local_options_[1]=false;ImGui::BeginDisabled();
+#endif
             if(ImGui::Checkbox(tr("Forward approved gateway traffic"),&local_options_[1]))local_dirty_=true;
+#ifndef _WIN32
+            ImGui::EndDisabled();ImGui::TextDisabled("%s",tr("Gateway forwarding is available on Windows."));
+#endif
             ImGui::BeginDisabled(!local_dirty_ || state.busy);if(ImGui::Button(tr("Review local routing")))show_local=true;ImGui::EndDisabled();ImGui::EndDisabled();
             ImGui::EndTabItem();
         }

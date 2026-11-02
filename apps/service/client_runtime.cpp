@@ -44,6 +44,9 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
     std::cout << "LanLink " << lanlink::core::component_name(Component::service)
               << " " << lanlink::core::project_version() << '\n';
 
+#ifndef _WIN32
+    if(config.gateway_forwarding)throw std::runtime_error("Gateway forwarding is available on Windows.");
+#endif
     lanlink::transport::QuicClientOptions options;
     const auto bootstrap=lanlink::auth::resolve_bootstrap(config,lanlink::transport::fetch_directory,
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
@@ -137,6 +140,9 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                 if(!request.payload.empty()) {
                     if(request.payload.size()!=2 || request.payload[0]>std::byte{1} || request.payload[1]>std::byte{1})throw std::invalid_argument("invalid local routing options");
                     const bool routes=request.payload[0]==std::byte{1},gateway=request.payload[1]==std::byte{1};
+#ifndef _WIN32
+                    if(gateway)throw std::runtime_error("Gateway forwarding is available on Windows.");
+#endif
                     network.set_routing_options(routes,gateway);accept_routes=routes;forward=gateway;
                 }
                 payload={accept_routes.load()?std::byte{1}:std::byte{0},forward.load()?std::byte{1}:std::byte{0}};break;
