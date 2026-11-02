@@ -36,7 +36,9 @@ std::filesystem::path endpoint() {
 }
 uid_t directory_owner(const std::filesystem::path& path) {
     struct stat info{};
-    if(!path.is_absolute() || lstat(path.parent_path().c_str(),&info)<0 || !S_ISDIR(info.st_mode) ||
+    const auto inspected=lstat(path.parent_path().c_str(),&info);
+    if(inspected<0 && errno==ENOENT)throw std::runtime_error("The background service is unavailable. Start the service or run the LanLink installer to configure this device.");
+    if(!path.is_absolute() || inspected<0 || !S_ISDIR(info.st_mode) ||
        (info.st_mode & 0022) || (info.st_uid!=0 && info.st_uid!=geteuid()))
         throw std::runtime_error("control socket requires a private directory owned by root or the current user");
     return info.st_uid;
@@ -169,7 +171,11 @@ void LocalPipeServer::stop() noexcept{impl_->stop();}
 protocol::LocalMessage local_pipe_request(const protocol::LocalMessage& request) {
     if(request.response || request.error)throw std::invalid_argument("expected a local control request");
     const auto path=endpoint();const auto owner=directory_owner(path);
-    struct stat info{};checked(lstat(path.c_str(),&info),"inspect service socket");
+    struct stat info{};
+    if(lstat(path.c_str(),&info)<0){
+        if(errno==ENOENT)throw std::runtime_error("The background service is unavailable. Start the service or run the LanLink installer to configure this device.");
+        checked(-1,"inspect service socket");
+    }
     if(!S_ISSOCK(info.st_mode) || info.st_uid!=owner || (info.st_mode&0007))throw std::runtime_error("untrusted service socket");
     Descriptor connection(socket(AF_UNIX,SOCK_STREAM,0));checked(connection.get(),"open control connection");prepare(connection.get());
     const auto local=address(path);

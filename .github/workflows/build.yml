@@ -61,7 +61,7 @@ jobs:
         id: vcpkg-cache
         with:
           path: ${{ github.workspace }}/.vcpkg-binaries
-          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-${{ hashFiles('vcpkg.json') }}-${{ steps.toolchain.outputs.image }}
+          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-v2-${{ hashFiles('vcpkg.json') }}-${{ steps.toolchain.outputs.image }}
           restore-keys: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-
       - name: Prepare binary cache
         shell: pwsh
@@ -90,7 +90,7 @@ jobs:
           if (-not $license) { throw 'Wintun license is missing' }
           cmake -S . -B build -A x64 "-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DLANLINK_PACKAGE_WINDOWS_CLIENT=ON "-DLANLINK_WINTUN_DLL=$env:RUNNER_TEMP/wintun/wintun/bin/amd64/wintun.dll" "-DLANLINK_WINTUN_LICENSE_FILE=$($license.FullName)"
       - name: Save vcpkg binaries
-        if: always() && !cancelled() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-binaries
@@ -256,6 +256,53 @@ jobs:
           netstat -rn -f inet | awk '$1 == "default" { print }' > "$RUNNER_TEMP/route-after.txt"
           diff -u "$RUNNER_TEMP/dns-before.txt" "$RUNNER_TEMP/dns-after.txt"
           diff -u "$RUNNER_TEMP/route-before.txt" "$RUNNER_TEMP/route-after.txt"
+  macos-client:
+    name: macOS native client
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+      VCPKG_DISABLE_METRICS: 1
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: microsoft/vcpkg
+          ref: a1cae005c39be7b18ba319fced856b68d7276271
+          path: .vcpkg
+          fetch-depth: 1
+      - name: Prepare native macOS tools
+        run: |
+          brew install openssl@3 ninja
+          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
+      - uses: actions/cache/restore@v4
+        id: native-cache
+        with:
+          path: .vcpkg-binaries
+          key: macos-client-${{ runner.arch }}-${{ hashFiles('vcpkg.json') }}-${{ runner.os }}
+          restore-keys: macos-client-${{ runner.arch }}-
+      - name: Bootstrap native dependencies
+        run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
+      - name: Configure native macOS client
+        run: cmake -S . -B build/macos-client -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+      - name: Save native dependency cache
+        if: success() && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .vcpkg-binaries
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Build native macOS client
+        run: cmake --build build/macos-client --parallel 2
+      - name: Test native macOS transport and UI model
+        run: ctest --test-dir build/macos-client --output-on-failure
+      - name: Verify native macOS service lifecycle
+        run: sudo python3 tests/posix_service_tests.py build/macos-client/lanlink-service
+      - name: Verify launchd daemon lifecycle
+        run: |
+          plutil -lint deploy/macos/com.lanlink.client.plist
+          sudo python3 tests/macos_launchd_tests.py build/macos-client/lanlink-service
   relay-linux:
     name: Linux x64 relay (glibc 2.34)
     runs-on: ubuntu-latest
@@ -297,7 +344,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
           bash deploy/linux/build-relay.sh
       - name: Save vcpkg binaries
-        if: always() && !cancelled() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: .vcpkg-binaries
@@ -339,7 +386,7 @@ jobs:
         run: python3 tests/relay_package_tests.py relay-package/*.tar.gz
   verify-release:
     name: Verify 0.7.0 release packages
-    needs: [build, relay-linux, relay-compatibility, foundation-macos]
+    needs: [build, relay-linux, relay-compatibility, foundation-macos, macos-client]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

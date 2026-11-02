@@ -28,6 +28,11 @@ def request(path, command):
             body += part
         return body
 
+def interfaces():
+    if sys.platform == "darwin":
+        return set(subprocess.check_output(["/sbin/ifconfig", "-l"], text=True).split())
+    return {entry["ifname"] for entry in __import__("json").loads(subprocess.check_output(["ip", "-j", "link", "show"], text=True))}
+
 with tempfile.TemporaryDirectory(prefix="lanlink-service-") as directory:
     root = Path(directory)
     root.chmod(0o700)
@@ -37,6 +42,8 @@ with tempfile.TemporaryDirectory(prefix="lanlink-service-") as directory:
     configuration.write_text(f"relay_host=127.0.0.1\nrelay_port=9\nauth_token_file={root / 'token'}\ndevice_identity_file={root / 'identity'}\nlog_directory={root / 'logs'}\n")
     endpoint = root / "control.sock"
     environment = dict(os.environ, LANLINK_CONTROL_SOCKET=str(endpoint))
+    baseline = interfaces()
+    identity = None
     for mode in ("signal", "ipc"):
         with (root / "process.log").open("w+") as log:
             process = subprocess.Popen([binary, "--console", str(configuration)], env=environment, stdout=log, stderr=log)
@@ -47,10 +54,18 @@ with tempfile.TemporaryDirectory(prefix="lanlink-service-") as directory:
                     assert time.monotonic() < deadline, "service startup timed out"
                     time.sleep(0.05)
                 assert len(request(endpoint, 1)) == 8
+                assert interfaces() - baseline, "native service did not create a tunnel interface"
+                current_identity = (root / "identity").read_bytes()
+                assert identity is None or identity == current_identity, "service restart changed device identity"
+                identity = current_identity
                 if mode == "signal": process.send_signal(signal.SIGTERM)
                 else: assert request(endpoint, 9) == b""
                 assert process.wait(timeout=10) == 0
                 assert not endpoint.exists(), "stale control socket after shutdown"
+                cleanup_deadline = time.monotonic() + 5
+                while interfaces() - baseline and time.monotonic() < cleanup_deadline:
+                    time.sleep(0.05)
+                assert not interfaces() - baseline, "native service left a tunnel interface after shutdown"
             except BaseException:
                 log.seek(0)
                 print(log.read())

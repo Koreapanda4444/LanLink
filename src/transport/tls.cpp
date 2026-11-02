@@ -72,6 +72,12 @@ void stop_socket(const Socket socket) noexcept { shutdown(socket, SHUT_RDWR); }
 void prepare_sockets() {}
 bool would_block() noexcept { return errno == EINPROGRESS || errno == EWOULDBLOCK; }
 void set_nonblocking(const Socket socket) {
+    if (fcntl(socket, F_SETFD, FD_CLOEXEC) != 0) throw std::runtime_error("cannot protect TCP socket descriptor");
+#ifdef SO_NOSIGPIPE
+    const int enabled = 1;
+    if (setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0)
+        throw std::runtime_error("cannot disable TCP SIGPIPE");
+#endif
     const auto flags = fcntl(socket, F_GETFL, 0);
     if (flags < 0 || fcntl(socket, F_SETFL, flags | O_NONBLOCK) != 0) {
         throw std::runtime_error("cannot configure TCP socket");

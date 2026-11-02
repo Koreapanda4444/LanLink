@@ -310,7 +310,7 @@ if(WIN32)
     lanlink_enable_warnings(lanlink_ui_cli)
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(UNIX)
     add_library(lanlink_local_ipc STATIC src/transport/posix_control.cpp)
     target_include_directories(lanlink_local_ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(lanlink_local_ipc PUBLIC lanlink_protocol Threads::Threads)
