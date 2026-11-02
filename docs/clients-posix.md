@@ -28,4 +28,4 @@ sudo python3 /opt/lanlink/uninstall-client.py
 
 Windows와 같은 L3 IPv4 암호화·P2P·Relay 경로와 한국어/영어 화면을 사용한다. Linux TAP은 기존의 별도 선택 모드다. 승인된 사설 경로의 클라이언트 사용은 지원하지만, LAN으로 전달하는 Gateway 역할은 Windows WFP 백엔드가 필요하다. Linux에서 시스템 전체 forwarding이나 방화벽을 임의로 바꾸지 않는다.
 
-소스 빌드는 `-DLANLINK_BUILD_DESKTOP=ON`으로 SDL3/OpenGL UI를 활성화한다. vcpkg의 SDL3 의존성에는 `autoconf`, `autoconf-archive`, `automake`, `libtool`이 필요하다. CI의 Linux build tools 단계에 지정된 X11·Wayland·OpenGL·IME 개발 패키지도 설치한다. 빌드 후 `cmake --build build --target lanlink_client_archive`로 패키지를 생성한다.
+소스 빌드는 `-DLANLINK_BUILD_DESKTOP=ON`으로 SDL3/OpenGL UI를 활성화한다. vcpkg의 SDL3 의존성에는 `autoconf`, `autoconf-archive`, `automake`, `libtool`, `libltdl-dev`가 필요하다. CI의 Linux build tools 단계에 지정된 X11·Wayland·OpenGL·IME 개발 패키지도 설치한다. 빌드 후 `cmake --build build --target lanlink_client_archive`로 패키지를 생성한다.
