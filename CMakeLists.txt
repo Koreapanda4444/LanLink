@@ -534,6 +534,7 @@ if(BUILD_TESTING)
     target_link_libraries(lanlink_direct_quic_tests PRIVATE lanlink_transport)
     add_test(NAME lanlink-direct-quic COMMAND lanlink_direct_quic_tests)
     set_tests_properties(lanlink-direct-quic PROPERTIES TIMEOUT 30)
+    set_tests_properties(lanlink-direct-quic PROPERTIES TIMEOUT 30)
 
     add_executable(lanlink_connectivity_tests tests/connectivity_tests.cpp)
     target_link_libraries(lanlink_connectivity_tests PRIVATE lanlink_p2p)

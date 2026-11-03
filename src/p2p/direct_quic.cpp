@@ -15,6 +15,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <utility>
 
 namespace lanlink::p2p {
 namespace {
@@ -136,11 +137,16 @@ struct DirectQuic::Impl {
         if(api){
             if(listener){api->ListenerStop(listener);api->ListenerClose(listener);listener=nullptr;}
             if(registration)api->RegistrationShutdown(registration,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,0);
-            for(auto* c:handles){if(c->stream){api->StreamClose(c->stream);c->stream=nullptr;}if(c->handle){api->ConnectionClose(c->handle);c->handle=nullptr;}}
+            for(auto* c:handles){
+                HQUIC stream=nullptr,connection=nullptr;
+                {std::lock_guard lock(mutex);stream=std::exchange(c->stream,nullptr);connection=std::exchange(c->handle,nullptr);}
+                if(stream)api->StreamClose(stream);
+                if(connection)api->ConnectionClose(connection);
+            }
             if(server_config){api->ConfigurationClose(server_config);server_config=nullptr;}if(client_config){api->ConfigurationClose(client_config);client_config=nullptr;}
             if(registration){api->RegistrationClose(registration);registration=nullptr;}MsQuicClose(api);api=nullptr;
         }
-        connections.clear();
+        {std::lock_guard lock(mutex);connections.clear();}
     }
     bool output(Connection& c,std::vector<std::byte> bytes,bool datagram,bool control) {
         auto ticket=c.budget.reserve(bytes.size(),control);if(!ticket)return false;
@@ -195,11 +201,15 @@ struct DirectQuic::Impl {
         }catch(...){return QUIC_STATUS_OUT_OF_MEMORY;}
     }
     static QUIC_STATUS QUIC_API connection_callback(HQUIC connection,void* context,QUIC_CONNECTION_EVENT* event) {
-        auto& c=*static_cast<Connection*>(context);auto& o=*c.owner;std::lock_guard lock(o.mutex);
+        auto& c=*static_cast<Connection*>(context);auto& o=*c.owner;std::unique_lock lock(o.mutex);
+        if(event->Type==QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED && (o.stopping || c.closed)) {
+            const auto stream=event->PEER_STREAM_STARTED.Stream;const auto* api=o.api;
+            lock.unlock();api->StreamClose(stream);return QUIC_STATUS_SUCCESS;
+        }
         try {
             switch(event->Type) {
                 case QUIC_CONNECTION_EVENT_CONNECTED:
-                    if(c.outgoing){checked(o.api->StreamOpen(connection,QUIC_STREAM_OPEN_FLAG_NONE,stream_callback,&c,&c.stream),"direct stream open");checked(o.api->StreamStart(c.stream,QUIC_STREAM_START_FLAG_IMMEDIATE),"direct stream start");o.hello(c);}break;
+                    if(c.outgoing && !o.stopping){checked(o.api->StreamOpen(connection,QUIC_STREAM_OPEN_FLAG_NONE,stream_callback,&c,&c.stream),"direct stream open");checked(o.api->StreamStart(c.stream,QUIC_STREAM_START_FLAG_IMMEDIATE),"direct stream start");o.hello(c);}break;
                 case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
                     if(c.outgoing || c.stream){o.api->StreamClose(event->PEER_STREAM_STARTED.Stream);throw std::runtime_error("extra direct stream");}
                     c.stream=event->PEER_STREAM_STARTED.Stream;o.api->SetCallbackHandler(c.stream,reinterpret_cast<void*>(stream_callback),&c);break;
@@ -218,7 +228,7 @@ struct DirectQuic::Impl {
         auto& c=*static_cast<Connection*>(context);auto& o=*c.owner;std::lock_guard lock(o.mutex);
         try {
             if(event->Type==QUIC_STREAM_EVENT_SEND_COMPLETE)delete static_cast<Send*>(event->SEND_COMPLETE.ClientContext);
-            else if(event->Type==QUIC_STREAM_EVENT_RECEIVE) {
+            else if(event->Type==QUIC_STREAM_EVENT_RECEIVE && !o.stopping) {
                 if(event->RECEIVE.TotalBufferLength>128*1024)throw std::runtime_error("direct stream receive limit");
                 for(std::uint32_t i=0;i<event->RECEIVE.BufferCount;++i){const auto& b=event->RECEIVE.Buffers[i];for(const auto& f:c.decoder.push({reinterpret_cast<const std::byte*>(b.Buffer),b.Length}))o.frame(c,f);
                     if(c.decoder.buffered_size()>128*1024)throw std::runtime_error("direct stream frame limit");}

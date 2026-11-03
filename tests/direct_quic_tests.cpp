@@ -70,5 +70,21 @@ int main(){const auto root=std::filesystem::temp_directory_path()/("lanlink-dire
     auto wrong=bk;wrong.signature[0]^=std::byte{1};bool rejected=false;
     try{p2p::DirectQuic invalid(a,{binding,wrong,0x0a400001,0x0a400002,0},{});}catch(const std::exception&){rejected=true;}
     require(rejected,"invalid signed device identity was accepted");
+    auto renewed=remote;renewed.networks.front().key.epoch=1;
+    for(const auto delay:{0,1,2,5,10,20,0,1,2,5,10,20}) {
+        auto reserve_a=std::make_unique<p2p::UdpSocket>(p2p::Endpoint{0x7f000001,0}),reserve_b=std::make_unique<p2p::UdpSocket>(p2p::Endpoint{0x7f000001,0});
+        const auto pa=reserve_a->local_endpoint().port,pb=reserve_b->local_endpoint().port;
+        reserve_a.reset();reserve_b.reset();
+        p2p::DirectQuic race_a(a,{binding,bk,0x0a400001,0x0a400002,pa},{}),race_b(b,{binding.reversed(),ak,0x0a400002,0x0a400001,pb},{});
+        race_a.synchronize(own);race_b.synchronize(renewed);race_a.start();race_b.start();
+        race_a.connect({0x7f000001,race_b.port()});race_b.connect({0x7f000001,race_a.port()});
+        std::jthread sampling([&](std::stop_token stop){while(!stop.stop_requested()){
+            static_cast<void>(race_a.status());static_cast<void>(race_a.quality());std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }});
+        std::this_thread::sleep_for(std::chrono::milliseconds(delay));sampling.request_stop();
+        const auto began=std::chrono::steady_clock::now();race_a.stop();race_b.stop();sampling.join();
+        require(std::chrono::steady_clock::now()-began<std::chrono::seconds(4),"in-flight handshake shutdown retained a stream or callback");
+        require(!race_a.authenticated() && !race_b.authenticated(),"stopped peer remained authorized");
+    }
     std::filesystem::remove_all(root);std::cout<<"native direct QUIC E2E IPv4 datagram/stream, reverse, replay and identity checks passed (no Relay running)\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';std::error_code ignored;std::filesystem::remove_all(root,ignored);return 1;}}
