@@ -584,6 +584,8 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
             network_bucket.tokens < static_cast<double>(deliveries.size())) {
             return {};
         }
+        const auto size=protocol::encode_forwarded_network_packet({actor,packet}).size();
+        if(!quota_.admit(actor,packet.network_id,size,static_cast<std::uint32_t>(deliveries.size()),now))return {};
         sender_bucket.tokens -= 1;
         network_bucket.tokens -= static_cast<double>(deliveries.size());
         if (!replay.highest) std::copy_n(packet.nonce.begin(), replay.nonce_prefix.size(), replay.nonce_prefix.begin());
@@ -602,6 +604,8 @@ std::vector<RoutedEncryptedPacket> NetworkService::route_encrypted_packet(
         !active_keys_.contains(destination->device_id) || !traffic_allowed(packet.network_id,actor,destination->device_id)) {
         return {};
     }
+    const auto size=protocol::encode_forwarded_network_packet({actor,packet}).size();
+    if(!quota_.admit(actor,packet.network_id,size,1,time_source_()))return {};
     return {RoutedEncryptedPacket{destination->device_id, {actor, packet}}};
 }
 

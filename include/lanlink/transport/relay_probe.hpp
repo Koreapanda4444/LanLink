@@ -8,5 +8,5 @@ struct RelayProbe {
     auth::RelayHealth health;
     std::chrono::microseconds rtt{};
 };
-[[nodiscard]] RelayProbe probe_relay(const auth::RelayEndpoint&,std::chrono::milliseconds timeout,const std::atomic_bool& stopping);
+[[nodiscard]] RelayProbe probe_relay(const auth::RelayEndpoint&,std::chrono::milliseconds timeout,const std::atomic_bool& stopping,bool accounting=false);
 }

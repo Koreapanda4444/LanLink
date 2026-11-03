@@ -17,11 +17,17 @@ std::string text(protocol::BinaryReader& in) {
 std::vector<std::byte> body(const RelayHealth& value) {
     if(value.nonce==Nonce{} || !value.capacity || value.capacity>1'000'000 || value.active_connections>value.capacity)
         throw std::invalid_argument("invalid health counters or challenge");
-    protocol::BinaryWriter out;out.put<std::uint32_t>(0x4c4c4831);out.put<std::uint16_t>(protocol::protocol_version);
+    if(!value.accounting_available && (value.admitted_deliveries || value.admitted_bytes || value.quota_rejections || value.control_rejections))
+        throw std::invalid_argument("accounting counters require health format 2");
+    protocol::BinaryWriter out;out.put<std::uint32_t>(value.accounting_available?0x4c4c4832:0x4c4c4831);out.put<std::uint16_t>(protocol::protocol_version);
     text(out,value.relay_id);text(out,value.authority);out.append(value.nonce);out.put<std::uint64_t>(value.issued_ms);
     out.put<std::uint64_t>(value.uptime_ms);out.put<std::uint32_t>(value.capacity);out.put<std::uint32_t>(value.active_connections);
     out.put<std::uint32_t>(value.upstream_rtt_us);
     out.put<std::uint64_t>(value.forwarded_packets);out.put<std::uint64_t>(value.forwarded_bytes);out.put<std::uint64_t>(value.dropped_packets);
+    if(value.accounting_available) {
+        out.put<std::uint64_t>(value.admitted_deliveries);out.put<std::uint64_t>(value.admitted_bytes);
+        out.put<std::uint64_t>(value.quota_rejections);out.put<std::uint64_t>(value.control_rejections);
+    }
     out.put<std::uint8_t>(value.ready?1:0);return std::move(out).finish();
 }
 }
@@ -34,12 +40,18 @@ RelayHealth verify_relay_health(std::span<const std::byte> encoded,const RelayEn
     const auto bytes=encoded.first(encoded.size()-signature_size);Signature signature{};std::copy(encoded.end()-signature_size,encoded.end(),signature.begin());
     if(!verify_signature(expected.health_key,bytes,signature))throw std::runtime_error("relay health signature rejected");
     protocol::BinaryReader in(bytes);
-    if(in.get<std::uint32_t>()!=0x4c4c4831 || in.get<std::uint16_t>()!=expected.protocol_version)
+    const auto magic=in.get<std::uint32_t>();
+    if((magic!=0x4c4c4831 && magic!=0x4c4c4832) || in.get<std::uint16_t>()!=expected.protocol_version)
         throw std::invalid_argument("relay health protocol mismatch");
     RelayHealth value;value.relay_id=text(in);value.authority=text(in);value.nonce=in.array<nonce_size>();value.issued_ms=in.get<std::uint64_t>();
     value.uptime_ms=in.get<std::uint64_t>();value.capacity=in.get<std::uint32_t>();value.active_connections=in.get<std::uint32_t>();
     value.upstream_rtt_us=in.get<std::uint32_t>();
     value.forwarded_packets=in.get<std::uint64_t>();value.forwarded_bytes=in.get<std::uint64_t>();value.dropped_packets=in.get<std::uint64_t>();
+    value.accounting_available=magic==0x4c4c4832;
+    if(value.accounting_available) {
+        value.admitted_deliveries=in.get<std::uint64_t>();value.admitted_bytes=in.get<std::uint64_t>();
+        value.quota_rejections=in.get<std::uint64_t>();value.control_rejections=in.get<std::uint64_t>();
+    }
     const auto ready=in.get<std::uint8_t>();if(ready>1)throw std::invalid_argument("invalid health readiness");value.ready=ready!=0;in.finish();
     static_cast<void>(body(value));
     const auto age=value.issued_ms>now_ms?value.issued_ms-now_ms:now_ms-value.issued_ms;

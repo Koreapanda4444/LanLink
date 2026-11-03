@@ -51,6 +51,7 @@ struct QuicServerOptions {
     std::string authority;
     std::filesystem::path health_identity_file;
     std::optional<auth::RelayEndpoint> upstream;
+    std::uint32_t health_requests_per_second=64;
 };
 
 struct QuicClientOptions {

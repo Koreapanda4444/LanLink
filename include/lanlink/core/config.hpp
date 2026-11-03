@@ -46,6 +46,10 @@ struct RuntimeConfig {
     std::uint32_t relay_send_queue_bytes = 4U * 1024U * 1024U;
     std::uint32_t relay_send_queue_frames = 256;
     std::uint32_t relay_control_requests_per_second = 32;
+    std::uint32_t relay_health_requests_per_second=64;
+    std::uint32_t relay_device_bytes_per_second=8U*1024U*1024U,relay_network_bytes_per_second=32U*1024U*1024U;
+    std::uint32_t relay_authority_bytes_per_second=64U*1024U*1024U;
+    std::uint32_t relay_device_deliveries_per_second=8192,relay_network_deliveries_per_second=32768,relay_authority_deliveries_per_second=65536;
     LogLevel log_level = LogLevel::info;
     std::filesystem::path log_directory = "logs";
     std::uintmax_t log_max_size_bytes = 5U * 1024U * 1024U;

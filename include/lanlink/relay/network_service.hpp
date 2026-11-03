@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/network_messages.hpp"
+#include "lanlink/relay/forwarding_quota.hpp"
 #include "lanlink/protocol/network_management.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/storage/relay_store.hpp"
@@ -80,6 +81,9 @@ public:
                             NetworkIdGenerator network_id_generator = {},
                             TimeSource time_source = {});
 
+    void set_forwarding_limits(ForwardingLimits limits){quota_.configure(limits);}
+    [[nodiscard]] ForwardingMetrics forwarding_metrics()const{return quota_.metrics();}
+    [[nodiscard]] bool admit_control(const auth::DeviceId& actor){return quota_.control(actor,time_source_());}
     NetworkService(const NetworkService&) = delete;
     NetworkService& operator=(const NetworkService&) = delete;
     NetworkService(NetworkService&&) = delete;
@@ -196,6 +200,7 @@ private:
     storage::RelayStore& store_;
     NetworkIdGenerator network_id_generator_;
     TimeSource time_source_;
+    ForwardingQuota quota_;
     std::mutex mutex_;
     std::map<storage::NetworkId, std::uint64_t> revisions_;
     std::map<storage::NetworkId, std::uint64_t> key_epochs_;

@@ -135,7 +135,10 @@ void test_regional_recovery(const std::filesystem::path& directory) {
     home.relay_id="home";home.authority="regional-fixture";home.health_identity_file=directory/"home-health.identity";
     auth::RelayEndpoint root{home.relay_id,"127.0.0.1",home.port,"home",64,protocol::protocol_version,home.authority,home_key.public_key()};
     auto database=std::make_unique<storage::RelayStore>(directory/"regional-home.db");
-    auto service=std::make_unique<relay::NetworkService>(*database);
+    std::atomic<relay::NetworkService::Clock::duration::rep> quota_clock=0;
+    const auto quota_time=[&]{const auto ticks=quota_clock.load();return ticks?
+        relay::NetworkService::Clock::time_point(relay::NetworkService::Clock::duration(ticks)):relay::NetworkService::Clock::now();};
+    auto service=std::make_unique<relay::NetworkService>(*database,relay::NetworkService::NetworkIdGenerator{},quota_time);
     auto control=std::make_unique<relay::NetworkControlChannel>(*service);
     auto authority=std::make_unique<transport::QuicRelayServer>(home,logger,*control);authority->start();
     auto region=home;region.max_connections=16;region.upstream=root;region.auth_token_file.clear();
@@ -168,14 +171,17 @@ void test_regional_recovery(const std::filesystem::path& directory) {
     std::vector<std::byte> plain(40);plain[0]=std::byte{0x45};plain[3]=std::byte{40};plain[8]=std::byte{64};plain[9]=std::byte{17};
     for(unsigned i=0;i<4;++i){plain[12+i]=static_cast<std::byte>((owner_ip>>((3-i)*8))&255);plain[16+i]=static_cast<std::byte>((member_ip>>((3-i)*8))&255);}
     std::atomic<unsigned> delivered=0;
-    auto transmit=[&]{
+    auto transmit=[&](unsigned count=1,bool large=false){
         const auto key=*owner.cached_network_key(network);
         auth::NetworkPacketCipher encrypt(network,key.epoch,key.key,owner_id,owner.cached_packet_identity()->signed_key,owner_ip);
         encrypt.update_peers(*owner.cached_peer_state(network));
         const auto receiver=std::make_shared<auth::NetworkPacketCipher>(network,key.epoch,key.key,member_id,member.cached_packet_identity()->signed_key,member_ip);
         receiver->update_peers(*member.cached_peer_state(network));
-        member.set_encrypted_packet_handler([&,receiver](const auto& packet){expect(receiver->decrypt(packet.packet,packet.sender_device_id)==plain,"regional ciphertext plaintext mismatch");++delivered;});
-        const auto packet=encrypt.encrypt(plain);owner.send_encrypted_packet(packet);return packet;
+        auto payload=plain;if(large){payload.resize(4000);payload[2]=std::byte{15};payload[3]=std::byte{160};}
+        member.set_encrypted_packet_handler([&,receiver,payload](const auto& packet){expect(receiver->decrypt(packet.packet,packet.sender_device_id)==payload,"regional ciphertext plaintext mismatch");++delivered;});
+        const auto packet=encrypt.encrypt(payload);owner.send_encrypted_packet(packet);
+        for(unsigned i=1;i<count;++i)owner.send_encrypted_packet(encrypt.encrypt(payload));
+        return packet;
     };
     const auto old_packet=transmit();wait_until([&]{return delivered.load()==1;},"regional encrypted IPv4 was not delivered");
     const auto failed_region=owner.selected_relay().id;const auto old_session=owner.session_id();const auto old_epoch=owner.cached_network_key(network)->epoch;
@@ -199,11 +205,24 @@ void test_regional_recovery(const std::filesystem::path& directory) {
     },"recovered region did not rejoin the shared authority");
     expect(owner.selected_relay().id!=failed_region,"recovered region must not immediately flap a healthy session");
     const auto before_restart=owner.session_id();authority->stop();authority.reset();control.reset();service.reset();database.reset();
-    database=std::make_unique<storage::RelayStore>(directory/"regional-home.db");service=std::make_unique<relay::NetworkService>(*database);
+    database=std::make_unique<storage::RelayStore>(directory/"regional-home.db");service=std::make_unique<relay::NetworkService>(*database,relay::NetworkService::NetworkIdGenerator{},quota_time);
     control=std::make_unique<relay::NetworkControlChannel>(*service);authority=std::make_unique<transport::QuicRelayServer>(home,logger,*control);authority->start();
     wait_until([&]{return owner.session_id()!=before_restart && synchronized();},"authority process-state restart did not recover persistent membership",25s);
     expect(owner.cached_peer_state(network)->own_address==owner_ip && member.cached_peer_state(network)->own_address==member_ip,"authority restart lost persistent IP leases");
     static_cast<void>(transmit());wait_until([&]{return delivered.load()==3;},"authority restart did not restore encrypted data");
+    quota_clock=relay::NetworkService::Clock::now().time_since_epoch().count();
+    relay::ForwardingLimits limits;limits.device_deliveries_per_second=1;
+    limits.network_deliveries_per_second=1;limits.authority_deliveries_per_second=1;
+    service->set_forwarding_limits(limits);const auto baseline=service->forwarding_metrics();
+    const auto charged_packet=transmit(12,true);
+    wait_until([&]{return delivered.load()==5 && service->forwarding_metrics().quota_rejections==baseline.quota_rejections+10;},"authority did not enforce the quota on real regional stream traffic");
+    const auto accounting=transport::probe_relay(root,2s,cancelled,true).health;
+    const auto charged_size=protocol::encode_forwarded_network_packet({owner_id,charged_packet}).size();
+    expect(accounting.accounting_available && accounting.admitted_deliveries==baseline.admitted_deliveries+2 &&
+        accounting.admitted_bytes==baseline.admitted_bytes+2*charged_size && accounting.quota_rejections==baseline.quota_rejections+10,
+        "signed authority accounting must match accepted delivery bytes and quota refusals");
+    const auto legacy=transport::probe_relay(root,2s,cancelled).health;
+    expect(!legacy.accounting_available && !legacy.quota_rejections && legacy.ready,"legacy health and regional selection must remain compatible after accounting is added");
     owner.stop();member.stop();owner_worker.request_stop();member_worker.request_stop();owner_worker.join();member_worker.join();
     if(first)first->stop();
     if(second)second->stop();

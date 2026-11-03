@@ -15,6 +15,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <atomic>
+#include <thread>
 
 namespace {
 
@@ -644,12 +646,77 @@ void test_network_key_publication(const std::filesystem::path& directory) {
     expect(removed.events.empty(), "former member receives no encrypted key");
 }
 
+void test_global_forwarding_quota() {
+    lanlink::relay::ForwardingQuota quota;lanlink::relay::ForwardingLimits limits;
+    limits.device_bytes_per_second=100;limits.network_bytes_per_second=100;limits.authority_bytes_per_second=150;
+    limits.device_deliveries_per_second=4;limits.network_deliveries_per_second=4;limits.authority_deliveries_per_second=6;limits.control_per_second=2;
+    quota.configure(limits);const auto now=lanlink::relay::ForwardingQuota::Clock::time_point{}+std::chrono::seconds(1);
+    lanlink::auth::DeviceId a{},b{},c{};a[0]=std::byte{1};b[0]=std::byte{2};c[0]=std::byte{3};
+    lanlink::protocol::NetworkId first{},second{};first[0]=std::byte{1};second[0]=std::byte{2};
+    expect(quota.admit(a,first,50,3,now),"fanout quota admits all three deliveries");
+    expect(!quota.admit(a,first,50,2,now),"fanout charges bytes for each recipient to the device");
+    expect(quota.admit(b,first,25,2,now),"another device shares the same network budget");
+    expect(!quota.admit(c,first,1,1,now),"network budget cannot be bypassed using another device");
+    expect(quota.admit(c,second,100,1,now),"rejected quota must not partially consume other buckets");
+    expect(!quota.admit(c,second,1,1,now),"authority aggregate budget bounds multiple networks");
+    for(unsigned i=0;i<4;++i)expect(quota.control(a,now),"bounded control burst");
+    expect(!quota.control(a,now) && !quota.control(a,now),"reconnecting does not reset the device control budget");
+    const auto later=now+std::chrono::seconds(1);
+    expect(quota.admit(a,first,100,1,later),"monotonic time refills all quota dimensions");
+    expect(!quota.admit(a,first,1,1,now),"backward time cannot refill an exhausted network bucket");
+    const auto metrics=quota.metrics();
+    expect(metrics.admitted_deliveries==7 && metrics.admitted_bytes==400 && metrics.quota_rejections==4 && metrics.control_rejections==2,"aggregate accounting counts admitted encrypted delivery bytes and separate refusals");
+    expect(!quota.admit(a,second,~std::uint64_t{},4096,later),"accounting multiplication overflow must fail closed");
+    lanlink::relay::ForwardingQuota bounded;
+    for(unsigned i=1;i<=4096;++i){lanlink::auth::DeviceId id{};id[0]=static_cast<std::byte>(i&255);id[1]=static_cast<std::byte>((i>>8)&255);expect(bounded.control(id,now),"bounded authenticated-device ledger");}
+    lanlink::auth::DeviceId overflow{};overflow[2]=std::byte{1};
+    expect(!bounded.control(overflow,now),"quota maps must be bounded under device churn");
+    expect(bounded.control(overflow,now+std::chrono::minutes(6)),"idle quota entries must be reclaimed");
+}
+
+void test_control_quota_across_sessions(const std::filesystem::path& directory) {
+    using namespace lanlink;
+    storage::RelayStore store(directory/"quota-sessions.db");
+    auto now=relay::NetworkService::Clock::time_point{}+std::chrono::seconds(1);
+    relay::NetworkService service(store,{},[&]{return now;});
+    relay::ForwardingLimits limits;limits.control_per_second=1;service.set_forwarding_limits(limits);
+    relay::NetworkControlChannel channel(service);
+    const auto actor=device_id(47);channel.note_authenticated(actor);
+    auto query=[&](std::uint32_t id){return channel.handle_authenticated(actor,
+        request(protocol::MessageType::network_list_request,id,protocol::encode_network_list_request({}))).response.type;};
+    expect(query(1)==protocol::MessageType::network_list_result && query(2)==protocol::MessageType::network_list_result,"normal control requests use the allowed burst");
+    channel.note_authenticated(actor);
+    expect(query(3)==protocol::MessageType::error,"new authentication cannot reset the authority control quota");
+    now+=std::chrono::seconds(1);
+    expect(query(4)==protocol::MessageType::network_list_result,"control resumes after quota refill");
+    expect(channel.forwarding_metrics().control_rejections==1,"control denial reaches the aggregate authority metrics");
+}
+
+void test_concurrent_authority_quota() {
+    using namespace lanlink;
+    relay::ForwardingQuota quota;relay::ForwardingLimits limits;
+    limits.authority_bytes_per_second=100;limits.authority_deliveries_per_second=100;quota.configure(limits);
+    const auto now=relay::ForwardingQuota::Clock::time_point{}+std::chrono::seconds(1);
+    std::atomic<unsigned> accepted=0;std::vector<std::jthread> workers;
+    for(unsigned n=0;n<8;++n)workers.emplace_back([&,n]{
+        const auto actor=device_id(static_cast<std::uint8_t>(n+1));
+        protocol::NetworkId network{};network[0]=static_cast<std::byte>(n+1);
+        for(unsigned i=0;i<100;++i)if(quota.admit(actor,network,1,1,now))accepted.fetch_add(1);
+    });
+    for(auto& worker:workers)worker.join();
+    const auto metrics=quota.metrics();
+    expect(accepted.load()==200 && metrics.admitted_deliveries==200 && metrics.admitted_bytes==200 && metrics.quota_rejections==600,"concurrent regions and networks cannot exceed the aggregate authority burst");
+}
+
 }
 
 int main() {
     const auto directory = make_test_directory();
 
     try {
+        test_global_forwarding_quota();
+        test_control_quota_across_sessions(directory);
+        test_concurrent_authority_quota();
         test_management_flow(directory);
         test_invalid_frames(directory);
         test_authenticated_identity(directory);

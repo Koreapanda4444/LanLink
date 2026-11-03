@@ -30,6 +30,7 @@ struct ControlDispatch {
 
 class NetworkControlChannel {
 public:
+    [[nodiscard]] ForwardingMetrics forwarding_metrics()const{return service_.forwarding_metrics();}
     using TimeSource = std::function<std::int64_t()>;
 
     explicit NetworkControlChannel(NetworkService& service, TimeSource time_source = {});

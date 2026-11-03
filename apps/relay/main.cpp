@@ -73,6 +73,7 @@ int main(const int argc, char* argv[]) {
         options.control_requests_per_second = config.relay_control_requests_per_second;
         options.relay_id=config.relay_id;options.authority=config.relay_authority;
         options.health_identity_file=config.relay_health_identity_file;
+        options.health_requests_per_second=config.relay_health_requests_per_second;
 
         std::unique_ptr<lanlink::storage::RelayStore> store;
         std::unique_ptr<lanlink::relay::NetworkService> network_service;
@@ -87,6 +88,12 @@ int main(const int argc, char* argv[]) {
         }else {
             store=std::make_unique<lanlink::storage::RelayStore>(config.relay_database_file);
             network_service=std::make_unique<lanlink::relay::NetworkService>(*store);
+            lanlink::relay::ForwardingLimits limits;
+            limits.device_bytes_per_second=config.relay_device_bytes_per_second;limits.network_bytes_per_second=config.relay_network_bytes_per_second;
+            limits.authority_bytes_per_second=config.relay_authority_bytes_per_second;
+            limits.device_deliveries_per_second=config.relay_device_deliveries_per_second;limits.network_deliveries_per_second=config.relay_network_deliveries_per_second;
+            limits.authority_deliveries_per_second=config.relay_authority_deliveries_per_second;limits.control_per_second=config.relay_control_requests_per_second;
+            network_service->set_forwarding_limits(limits);
             control_channel=std::make_unique<lanlink::relay::NetworkControlChannel>(*network_service);
             server=std::make_unique<lanlink::transport::QuicRelayServer>(std::move(options),logger,*control_channel);
         }

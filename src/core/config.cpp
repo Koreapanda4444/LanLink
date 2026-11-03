@@ -108,6 +108,20 @@ RuntimeConfig parse_config(const std::string_view content) {
             else if(key=="directory_url") config.directory_url=value;
             else if(key=="directory_public_key") config.directory_public_key=value;
             else if(key=="directory_relay_id") config.directory_relay_id=value;
+            else if(key=="relay_health_requests_per_second" || key=="relay_device_bytes_per_second" || key=="relay_network_bytes_per_second" ||
+                    key=="relay_authority_bytes_per_second" || key=="relay_device_deliveries_per_second" || key=="relay_network_deliveries_per_second" || key=="relay_authority_deliveries_per_second") {
+                const auto n=parse_unsigned(value,key_view,line_number);
+                const auto cap=key.find("bytes")!=std::string::npos?1024ULL*1024*1024:key=="relay_health_requests_per_second"?1000ULL:1'000'000ULL;
+                if(!n || n>cap)fail(line_number,"relay quota is out of range");
+                const auto value32=static_cast<std::uint32_t>(n);
+                if(key=="relay_health_requests_per_second")config.relay_health_requests_per_second=value32;
+                else if(key=="relay_device_bytes_per_second")config.relay_device_bytes_per_second=value32;
+                else if(key=="relay_network_bytes_per_second")config.relay_network_bytes_per_second=value32;
+                else if(key=="relay_authority_bytes_per_second")config.relay_authority_bytes_per_second=value32;
+                else if(key=="relay_device_deliveries_per_second")config.relay_device_deliveries_per_second=value32;
+                else if(key=="relay_network_deliveries_per_second")config.relay_network_deliveries_per_second=value32;
+                else config.relay_authority_deliveries_per_second=value32;
+            }
             else if(key=="relay_upstream_host")config.relay_upstream_host=value;
             else if(key=="relay_upstream_id")config.relay_upstream_id=value;
             else if(key=="relay_upstream_health_public_key")config.relay_upstream_health_public_key=value;
@@ -365,6 +379,14 @@ void validate_config(const RuntimeConfig& config) {
 }
 
 void validate_relay_config(const RuntimeConfig& config) {
+    if(!config.relay_health_requests_per_second || config.relay_health_requests_per_second>1000 ||
+       !config.relay_device_bytes_per_second || config.relay_device_bytes_per_second>1024U*1024U*1024U ||
+       !config.relay_network_bytes_per_second || config.relay_network_bytes_per_second>1024U*1024U*1024U ||
+       !config.relay_authority_bytes_per_second || config.relay_authority_bytes_per_second>1024U*1024U*1024U ||
+       !config.relay_device_deliveries_per_second || config.relay_device_deliveries_per_second>1'000'000 ||
+       !config.relay_network_deliveries_per_second || config.relay_network_deliveries_per_second>1'000'000 ||
+       !config.relay_authority_deliveries_per_second || config.relay_authority_deliveries_per_second>1'000'000)throw std::runtime_error("relay quota is out of range");
+
     if(!config.relay_upstream_host.empty() || !config.relay_upstream_id.empty() || !config.relay_upstream_health_public_key.empty()) {
         const auto& key=config.relay_upstream_health_public_key;
         if(invalid_host(config.relay_upstream_host) || config.relay_upstream_id.empty() || config.relay_health_identity_file.empty() ||

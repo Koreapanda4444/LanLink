@@ -224,6 +224,7 @@ ControlDispatch NetworkControlChannel::handle_authenticated(
         throw std::runtime_error("unexpected frame on authenticated control channel");
     }
 
+    if(!service_.admit_control(actor))return {error_response(request.request_id),{}};
     try {
         if (!service_.device_allowed(actor)) return {error_response(request.request_id), {}};
         if (request.type == protocol::MessageType::network_management_request) {

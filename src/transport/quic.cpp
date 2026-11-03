@@ -208,7 +208,7 @@ void log_noexcept(core::Logger& logger,
 void validate_server_options(const QuicServerOptions& options) {
     if (options.max_connections == 0 || options.max_connections > 4096 ||
         options.max_tls_handshakes == 0 || options.max_tls_handshakes > options.max_connections ||
-        options.control_requests_per_second == 0) {
+        options.control_requests_per_second == 0 || !options.health_requests_per_second || options.health_requests_per_second>1000) {
         throw std::invalid_argument("invalid relay resource limits");
     }
     if(options.upstream) {
@@ -281,6 +281,7 @@ public:
          core::Logger& logger,
          relay::NetworkControlChannel* control_channel)
         : options_(std::move(options)),
+          health_rate_(options_.health_requests_per_second),
           logger_(logger),
           control_channel_(control_channel) {
         validate_server_options(options_);
@@ -533,10 +534,11 @@ private:
     }
 
     protocol::Frame health_response(const protocol::Frame& request) {
-        if(!health_identity_ || !request.request_id || request.payload.size()!=auth::nonce_size)
+        const bool accounting=request.payload.size()==auth::nonce_size+1 && request.payload.back()==std::byte{2};
+        if(!health_identity_ || !request.request_id || (request.payload.size()!=auth::nonce_size && !accounting))
             throw std::runtime_error("relay health endpoint is unavailable or malformed");
         {std::lock_guard lock(health_mutex_);if(!health_rate_.allow())throw std::runtime_error("relay health rate limit");}
-        auth::RelayHealth health;std::copy(request.payload.begin(),request.payload.end(),health.nonce.begin());
+        auth::RelayHealth health;std::copy_n(request.payload.begin(),auth::nonce_size,health.nonce.begin());
         health.relay_id=options_.relay_id;health.authority=options_.authority;health.capacity=static_cast<std::uint32_t>(options_.max_connections);
         health.issued_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
         health.uptime_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started_at_).count());
@@ -546,6 +548,12 @@ private:
             std::lock_guard lock(bridges_mutex_);
             health.active_connections=static_cast<std::uint32_t>(std::count_if(bridges_.begin(),bridges_.end(),[](const auto& b){return b->authenticated() && !b->finished();}));
             health.upstream_rtt_us=authority_rtt_us_.load();
+        }
+        if(accounting && control_channel_) {
+            health.accounting_available=true;
+            const auto metrics=control_channel_->forwarding_metrics();
+            health.admitted_deliveries=metrics.admitted_deliveries;health.admitted_bytes=metrics.admitted_bytes;
+            health.quota_rejections=metrics.quota_rejections;health.control_rejections=metrics.control_rejections;
         }
         health.ready=running_.load() && health.active_connections<health.capacity &&
             (!options_.upstream || (authority_verified_.load() && authority_ready_.load()));
@@ -1260,7 +1268,7 @@ private:
     std::jthread authority_monitor_;
     std::unique_ptr<auth::DeviceIdentity> health_identity_;
     std::mutex health_mutex_;
-    ControlRateLimit health_rate_{8};
+    ControlRateLimit health_rate_;
     const std::chrono::steady_clock::time_point started_at_=std::chrono::steady_clock::now();
     std::atomic<std::uint64_t> forwarded_packets_=0,forwarded_bytes_=0;
     void note_packet_drop() noexcept {

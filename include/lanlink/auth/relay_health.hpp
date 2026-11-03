@@ -14,6 +14,8 @@ struct RelayHealth {
     std::uint64_t forwarded_packets=0;
     std::uint64_t forwarded_bytes=0;
     std::uint64_t dropped_packets=0;
+    std::uint64_t admitted_deliveries=0,admitted_bytes=0,quota_rejections=0,control_rejections=0;
+    bool accounting_available=false;
     bool ready=false;
     bool operator==(const RelayHealth&) const=default;
 };

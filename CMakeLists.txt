@@ -146,6 +146,7 @@ target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET} PUBLIC la
 lanlink_enable_warnings(lanlink_storage)
 
 add_library(lanlink_relay_domain STATIC
+    src/relay/forwarding_quota.cpp
     src/relay/network_control_channel.cpp
     src/relay/network_service.cpp
 )
@@ -640,6 +641,7 @@ if(BUILD_TESTING)
     target_link_libraries(
         lanlink_network_control_channel_tests
         PRIVATE
+            Threads::Threads
             lanlink_relay_domain
             lanlink_auth
             ${LANLINK_SQLITE_TARGET}

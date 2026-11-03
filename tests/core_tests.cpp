@@ -115,6 +115,19 @@ void test_configuration() {
                      "invalid relay resource configuration");
     }
 
+    const auto quotas=lanlink::core::parse_config(
+        "relay_device_bytes_per_second=1000\nrelay_network_bytes_per_second=2000\nrelay_authority_bytes_per_second=3000\n"
+        "relay_device_deliveries_per_second=10\nrelay_network_deliveries_per_second=20\nrelay_authority_deliveries_per_second=30\n"
+        "relay_health_requests_per_second=40\n");
+    expect(quotas.relay_device_bytes_per_second==1000 && quotas.relay_network_bytes_per_second==2000 && quotas.relay_authority_bytes_per_second==3000 &&
+        quotas.relay_device_deliveries_per_second==10 && quotas.relay_network_deliveries_per_second==20 && quotas.relay_authority_deliveries_per_second==30 &&
+        quotas.relay_health_requests_per_second==40,"relay forwarding and signing quotas are configurable");
+    for(const auto invalid:{"relay_device_bytes_per_second=0\n","relay_network_bytes_per_second=1073741825\n","relay_authority_bytes_per_second=4294967296\n",
+        "relay_device_deliveries_per_second=0\n","relay_network_deliveries_per_second=1000001\n","relay_authority_deliveries_per_second=1000001\n",
+        "relay_health_requests_per_second=0\n","relay_health_requests_per_second=1001\n"}) {
+        expect_error([&]{static_cast<void>(lanlink::core::parse_config(invalid));},"invalid forwarding quota rejected before startup");
+    }
+
     expect_error([] {
         static_cast<void>(lanlink::core::parse_config("relay_port=0\n"));
     }, "zero port");

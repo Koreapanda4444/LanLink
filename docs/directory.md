@@ -42,3 +42,26 @@ LLD2에서 같은 authority의 호환 Relay만 후보로 유지한다. 접속 �
 중앙의 서명 키를 고정한 상태 probe가 통과해야 지역 노드가 접속을 받는다. 5초마다 재검사하고 실패 시 기존 상행과 클라이언트 연결을 종료해 새 지역 선택과 재인증을 유도한다. 응답의 상행 RTT는 선택 점수에 포함한다. 지역별 연결과 대기열은 기존 제한을 공유하고, 취소된 연결의 worker는 서버 종료 전에 join한다. 지역 장애나 중앙 재시작 뒤 클라이언트는 새 인증 세션·peer 상태·키를 동기화하며 영구 네트워크 ID/IPv4 lease는 중앙 DB에서 복원한다. 이전 epoch 패킷과 교차 경로 중복은 기존 암호/권한 검사에서 거부한다.
 
 이는 지역 앞단 장애에 대한 복구다. 중앙 authority 자체의 고가용성/분산 DB 합의는 제공하지 않는다. 중앙이 내려간 동안 새 인증·멤버십 갱신은 중단되고 managed 정책 lease가 만료된다. 중앙을 같은 DB·identity·인증 토큰·인증서로 복구해야 한다. 살아 있는 DB 파일을 여러 중앙 프로세스에 동시에 복사하여 운영하지 않는다.
+
+## 운영 제한과 계수
+
+중앙 authority의 장치별·네트워크별·전체 송신량/전달 수 제한은 모든 지역 앞단에 공통으로 적용한다. `relay_device_bytes_per_second`(기본 8MiB), `relay_network_bytes_per_second`(32MiB), `relay_authority_bytes_per_second`(64MiB), 각 `*_deliveries_per_second`(8192/32768/65536)를 조절한다. 2초 분량까지만 burst를 허용하며 fanout은 수신자 수만큼 전달 수와 암호화 프레임 바이트를 차감한다. 거부된 요청은 일부 버킷만 차감하지 않는다. 기존 broadcast rate/replay 제한과 ACL/epoch 검사는 그대로 적용한다.
+
+`relay_control_requests_per_second`는 연결별 제한과 재접속해도 유지되는 장치별 제한에 함께 적용한다. 장치/네트워크 quota map은 각각 4096개로 제한하고 5분간 사용하지 않은 항목을 회수한다. 제한 도달 시 새 항목을 거부한다. 지역 앞단의 연결/인증 대기열과 각 송신 대기열도 유한하며 제어 트래픽 여유분을 유지한다. `relay_health_requests_per_second`는 aggregate 서명 작업의 전역 상한이다(기본 64, 최대 1000).
+
+계수가 필요한 운영 도구는 `probe_relay(endpoint, timeout, stopping, true)`를 호출한다. 기존 32바이트 nonce 요청은 기존 `LLH1` 응답을 유지한다. nonce 뒤에 `0x02`를 추가한 요청에만 중앙이 `LLH2`로 네 개의 uint64 계수를 서명해 내려준다. 검증기는 두 형식을 모두 읽으며 `accounting_available`로 지원 여부를 구분한다. 지역 앞단은 중앙의 계수를 대신 발급하지 않으므로 중앙 endpoint에 직접 질의한다. 기존 클라이언트와 지역 선택 probe에는 변경이 없다.
+
+서명된 health에는 중앙의 quota 승인 전달 수/바이트와 quota/control 거부 수를 추가한다. 이 값은 **정책에서 승인한 전달량**이며 기존 `forwarded_*`는 실제 transport 송신 큐에 수락된 양이다. 둘 다 암호화 애플리케이션 프레임 기준이며 TLS/QUIC/IP overhead, 최종 수신 확인 또는 클라우드 청구 바이트를 뜻하지 않는다. 개별 장치·IP·네트워크 이름·평문은 공개하지 않는다. 계수와 버킷은 프로세스 수명 동안 유지되고 재시작하면 uptime과 함께 초기화된다. 영구 과금 원장이나 월간 클라우드 비용 상한은 제공하지 않으므로 공급자 측 예산 설정도 별도로 사용한다.
+
+중앙 `relay.conf`의 기본 제한은 다음과 같다. 변경 후 Relay를 재시작한다. Direct P2P 데이터는 Relay 전송량과 계수에 포함하지 않는다.
+
+```ini
+relay_device_bytes_per_second=8388608
+relay_network_bytes_per_second=33554432
+relay_authority_bytes_per_second=67108864
+relay_device_deliveries_per_second=8192
+relay_network_deliveries_per_second=32768
+relay_authority_deliveries_per_second=65536
+relay_control_requests_per_second=32
+relay_health_requests_per_second=64
+```

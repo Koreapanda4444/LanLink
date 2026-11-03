@@ -58,6 +58,15 @@ int main(){
         mismatched=regional.relays[0];mismatched.health_key[0]^=std::byte{1};
         rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,mismatched,signal.nonce,1000));});
         signed_health[20]^=std::byte{1};rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,regional.relays[0],signal.nonce,1000));});
+        signal.accounting_available=true;signal.admitted_deliveries=17;signal.admitted_bytes=32768;
+        signal.quota_rejections=9;signal.control_rejections=6;
+        auto accounting=auth::sign_relay_health(signal,id);
+        require(auth::verify_relay_health(accounting,regional.relays[0],signal.nonce,1000)==signal,"accounting format authenticates every aggregate counter");
+        require(accounting.size()==signed_health.size()+32,"accounting adds only its four signed counters to the legacy signal");
+        accounting[accounting.size()-66]^=std::byte{1};
+        rejects([&]{static_cast<void>(auth::verify_relay_health(accounting,regional.relays[0],signal.nonce,1000));});
+        auto legacy=signal;legacy.accounting_available=false;
+        rejects([&]{static_cast<void>(auth::sign_relay_health(legacy,id));});
         signal.active_connections=129;rejects([&]{static_cast<void>(auth::sign_relay_health(signal,id));});
         config.directory_url="http://localhost/v1/relays";rejects([&]{core::validate_config(config);});
         std::filesystem::remove(path);std::cout<<"signed bootstrap passed\n";return 0;
