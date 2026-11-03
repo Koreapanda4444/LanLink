@@ -1,4 +1,5 @@
 import os
+import errno
 from pathlib import Path
 import select
 import socket
@@ -11,12 +12,20 @@ import time
 
 
 def free_port():
-    with socket.socket() as tcp:
-        tcp.bind(("127.0.0.1", 0))
-        port = tcp.getsockname()[1]
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-            udp.bind(("127.0.0.1", port))
-        return port
+    # The TCP and UDP ephemeral port spaces are independent.
+    for _ in range(128):
+        with socket.socket() as tcp:
+            tcp.bind(("127.0.0.1", 0))
+            port = tcp.getsockname()[1]
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                try:
+                    udp.bind(("127.0.0.1", port))
+                except OSError as error:
+                    if error.errno == errno.EADDRINUSE:
+                        continue
+                    raise
+            return port
+    raise RuntimeError("No shared TCP/UDP loopback port available")
 
 
 class Proxy(socketserver.ThreadingTCPServer):

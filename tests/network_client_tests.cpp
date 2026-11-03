@@ -984,6 +984,10 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     options.interfaces=[tls,interface_index]{return tls?std::vector<p2p::InterfaceAddress>{}:std::vector<p2p::InterfaceAddress>{{"fixture",0x7f000001,interface_index->load(),true,true,false}};};
     lanlink::session::PeerPacketPath a(a_session,a_file,logger,options),b(b_session,b_file,logger,options);
     a.start();b.start();auto& ca=a_session.client();auto& cb=b_session.client();
+    std::jthread telemetry([&](std::stop_token stop){while(!stop.stop_requested()) {
+        static_cast<void>(ca.diagnostics());static_cast<void>(cb.diagnostics());
+        std::this_thread::sleep_for(1ms);
+    }});
     wait_until([&]{return ca.authenticated() && cb.authenticated();},"peer path relay authentication failed");
     const auto id=ca.create_network("Path integration").network_id;
     const auto a_id=ca.cached_packet_identity()->device_id,b_id=cb.cached_packet_identity()->device_id;

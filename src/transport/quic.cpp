@@ -1466,23 +1466,23 @@ public:
             attempt = active_attempt_.lock();
         }
         if (!attempt) return result;
-        std::lock_guard lock(attempt->mutex);
-        if (attempt->tcp) {
-            result.tcp_fallback = attempt->authenticated;
-            const auto traffic = attempt->tcp->traffic();
-            result.sent_bytes = traffic.sent_bytes;
-            result.received_bytes = traffic.received_bytes;
-        } else if (attempt->connection) {
-            QUIC_STATISTICS_V2 stats{};
-            std::uint32_t size = sizeof(stats);
-            if (QUIC_SUCCEEDED(api_->GetParam(attempt->connection,
-                    QUIC_PARAM_CONN_STATISTICS_V2, &size, &stats))) {
-                if (stats.Rtt != 0) result.rtt_us = stats.Rtt;
-                result.sent_bytes = stats.SendTotalBytes;
-                result.received_bytes = stats.RecvTotalBytes;
-                result.lost_packets = stats.SendSuspectedLostPackets > stats.SendSpuriousLostPackets
-                    ? stats.SendSuspectedLostPackets - stats.SendSpuriousLostPackets : 0;
-                result.retransmittable_packets = stats.SendRetransmittablePackets;
+        std::shared_ptr<OwnedConnection> connection;
+        {
+            std::lock_guard lock(attempt->mutex);
+            if(attempt->tcp) {
+                result.tcp_fallback=attempt->authenticated;
+                const auto traffic=attempt->tcp->traffic();result.sent_bytes=traffic.sent_bytes;result.received_bytes=traffic.received_bytes;
+            }else connection=attempt->lifetime;
+        }
+        // GetParam can queue work on the connection worker, whose callbacks also lock state.
+        // Keep only handle ownership while waiting, so neither the callback nor close waits on us.
+        if(connection) {
+            QUIC_STATISTICS_V2 stats{};std::uint32_t size=sizeof(stats);
+            if(QUIC_SUCCEEDED(api_->GetParam(connection->handle,QUIC_PARAM_CONN_STATISTICS_V2,&size,&stats))) {
+                if(stats.Rtt)result.rtt_us=stats.Rtt;
+                result.sent_bytes=stats.SendTotalBytes;result.received_bytes=stats.RecvTotalBytes;
+                result.lost_packets=stats.SendSuspectedLostPackets>stats.SendSpuriousLostPackets?stats.SendSuspectedLostPackets-stats.SendSpuriousLostPackets:0;
+                result.retransmittable_packets=stats.SendRetransmittablePackets;
             }
         }
         return result;
@@ -1924,7 +1924,13 @@ private:
         bool finished = false;
     };
 
+    struct OwnedConnection {
+        const QUIC_API_TABLE* api;HQUIC handle;
+        OwnedConnection(const QUIC_API_TABLE* value,HQUIC connection):api(value),handle(connection){}
+        ~OwnedConnection(){api->ConnectionClose(handle);}
+    };
     struct AttemptState {
+        std::shared_ptr<OwnedConnection> lifetime;
         SendBudget sends;
         std::mutex mutex;
         std::condition_variable complete_wake;
@@ -2235,9 +2241,11 @@ private:
             return false;
         }
 
+        std::shared_ptr<OwnedConnection> lifetime;
+        try{lifetime=std::make_shared<OwnedConnection>(api_,connection);}catch(...){api_->ConnectionClose(connection);throw;}
         {
             std::lock_guard lock(state->mutex);
-            state->connection = connection;
+            state->connection = connection;state->lifetime=lifetime;
         }
 
         {
@@ -2269,13 +2277,13 @@ private:
         }
 
         if (raw_context == nullptr) {
-            api_->ConnectionClose(connection);
+            {std::lock_guard lock(state->mutex);state->lifetime.reset();}
             clear_active(state);
             return false;
         }
 
         if (QUIC_FAILED(status)) {
-            api_->ConnectionClose(connection);
+            {std::lock_guard lock(state->mutex);state->lifetime.reset();}
             delete raw_context;
             clear_active(state);
             record_error("ConnectionStart failed: " + status_text(status));
@@ -2580,14 +2588,16 @@ private:
             case QUIC_CONNECTION_EVENT_DATAGRAM_SEND_STATE_CHANGED:
                 complete_datagram_send(event);
                 break;
-            case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+            case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE: {
                 connected_.store(false);
                 authenticated_.store(false);
                 clear_session();
                 clear_peer_states();
 
+                std::shared_ptr<OwnedConnection> retired;
                 {
                     std::lock_guard lock(context->state->mutex);
+                    retired=std::move(context->state->lifetime);
                     clear_session_id(context->state->session_id);
                     context->state->connection = nullptr;
                     context->state->control_stream = nullptr;
@@ -2596,7 +2606,7 @@ private:
                     fail_pending(*context->state, "relay connection ended");
                 }
 
-                api_->ConnectionClose(connection);
+                retired.reset();
 
                 {
                     std::lock_guard lock(context->state->mutex);
@@ -2607,6 +2617,7 @@ private:
                 context->state->complete_wake.notify_all();
                 delete context;
                 break;
+            }
             default:
                 break;
         }
