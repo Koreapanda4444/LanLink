@@ -899,7 +899,20 @@ void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
     auth::NetworkPacketCipher permitted(id,allowed_key.epoch,allowed_key.key,a_id,ca.cached_packet_identity()->signed_key,a_state.own_address);permitted.update_peers(*ca.cached_peer_state(id));
     const auto receiver=std::make_shared<auth::NetworkPacketCipher>(id,allowed_key.epoch,allowed_key.key,b_id,cb.cached_packet_identity()->signed_key,b_state.own_address);receiver->update_peers(*cb.cached_peer_state(id));
     b.set_receive_handler([&,receiver](const auto& d){expect(receiver->decrypt(d.packet,d.sender_device_id)==plain,"managed allowed plaintext changed");++delivered;});
-    if(!tls)wait_until([&]{const auto x=a.peer_status(),y=b.peer_status();return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;},"managed allow did not reestablish direct path",30s);
+    if(!tls) {
+        // This client intentionally stops automatic policy renewal for the expiry test below.
+        // Keep its lease live during the independent, potentially slower Direct handshake.
+        auto next_renewal=std::chrono::steady_clock::now();
+        wait_until([&]{
+            if(std::chrono::steady_clock::now()>=next_renewal) {
+                static_cast<void>(cb.fetch_peer_state(id));
+                next_renewal=std::chrono::steady_clock::now()+1s;
+            }
+            const auto x=a.peer_status(),y=b.peer_status();
+            return x.size()==1 && y.size()==1 && x[0].path.kind==transport::PathKind::direct_quic && y[0].path.kind==transport::PathKind::direct_quic;
+        },"managed allow did not reestablish direct path",30s);
+        static_cast<void>(cb.fetch_peer_state(id));
+    }
     expect(a.send(permitted.encrypt(plain))==transport::PacketSendResult::accepted,"managed allowed path send failed");
     wait_until([&]{return delivered.load()==delivered_before+1;},"managed allowed packet did not arrive");
     if(!tls) {
