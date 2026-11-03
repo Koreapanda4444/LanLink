@@ -1,4 +1,5 @@
 #include "lanlink/auth/directory.hpp"
+#include "lanlink/core/component.hpp"
 #include <charconv>
 #include <chrono>
 #include <fstream>
@@ -14,6 +15,20 @@ std::uint64_t number(std::string_view value,std::uint64_t maximum) {
 }
 int main(int argc,char* argv[]) {
     try {
+        if(argc==2 && std::string_view(argv[1])=="--version") {
+            std::cout<<lanlink::core::project_version()<<'\n';return 0;
+        }
+        if(argc==4 && std::string_view(argv[1])=="--verify") {
+            std::ifstream input(argv[3],std::ios::binary);
+            if(!input)throw std::runtime_error("cannot open directory catalog");
+            std::vector<std::byte> data(16385);
+            input.read(reinterpret_cast<char*>(data.data()),static_cast<std::streamsize>(data.size()));
+            data.resize(static_cast<std::size_t>(input.gcount()));
+            if(!input.eof() || input.bad() || data.size()>16384)throw std::runtime_error("directory catalog exceeds 16 KiB or cannot be read");
+            const auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+            const auto verified=lanlink::auth::verify_directory(data,lanlink::auth::parse_directory_key(argv[2]),now);
+            std::cout<<"verified revision="<<verified.revision<<" expires_ms="<<verified.expires_ms<<'\n';return 0;
+        }
         const bool regional=argc>1 && std::string_view(argv[1])=="--regional";
         const int begin=regional?6:3, width=regional?7:3;
         if(argc<begin+width || (argc-begin)%width!=0)throw std::invalid_argument(

@@ -7,6 +7,7 @@ root=/
 certificate=
 private_key=
 token_file=
+node_config=
 port=
 bind_host=
 firewall_zone=
@@ -14,13 +15,14 @@ start=1
 firewall=1
 while (( $# )); do
     case "$1" in
-        --root|--certificate|--private-key|--token-file|--port|--bind|--firewall-zone)
+        --root|--certificate|--private-key|--token-file|--port|--bind|--firewall-zone|--node-config)
             (( $# >= 2 )) || { printf 'Missing option value\n' >&2; exit 1; }
             case "$1" in
                 --root) root=$2 ;;
                 --certificate) certificate=$2 ;;
                 --private-key) private_key=$2 ;;
                 --token-file) token_file=$2 ;;
+                --node-config) node_config=$2 ;;
                 --port) port=$2 ;;
                 --bind) bind_host=$2 ;;
                 --firewall-zone) firewall_zone=$2 ;;
@@ -28,7 +30,7 @@ while (( $# )); do
             shift 2 ;;
         --no-start) start=0; shift ;;
         --no-firewall) firewall=0; shift ;;
-        *) printf 'Usage: install-relay.sh [--certificate PEM --private-key PEM --token-file FILE] [--port PORT] [--bind IP] [--firewall-zone ZONE] [--no-start] [--no-firewall] [--root STAGING_DIRECTORY]\n' >&2; exit 1 ;;
+        *) printf 'Usage: install-relay.sh [--certificate PEM --private-key PEM --token-file FILE] [--port PORT] [--bind IP] [--firewall-zone ZONE] [--no-start] [--no-firewall] [--root STAGING_DIRECTORY] [--node-config GENERATED_NODE/relay.conf]\n' >&2; exit 1 ;;
     esac
 done
 [[ $root = /* && $root != *$'\n'* ]] || { printf 'The staging root must be an absolute path\n' >&2; exit 1; }
@@ -61,27 +63,45 @@ for file in bin/lanlink-relay lanlink-relay.service uninstall-relay.sh relay-ver
 done
 [[ ! -L $program_directory && ! -L $config_directory ]] || { printf 'Installation directories cannot be symlinks\n' >&2; exit 1; }
 [[ ! -e $program_directory || -f "$program_directory/.lanlink-installation" ]] || { printf 'The target is not a LanLink installation\n' >&2; exit 1; }
+settings_file="$config_directory/relay.conf"
+if [[ -n $node_config ]]; then
+    [[ -f $node_config && ! -L $node_config ]] || { printf 'Node configuration is missing or is a symlink\n' >&2; exit 1; }
+    python3 "$package_directory/self-hosting/common.py" "$node_config" "$settings_file" "$root" "$package_directory/bin/lanlink-relay"
+    settings_file=$node_config
+fi
+read_setting() {
+    if [[ -f $settings_file ]]; then
+        awk -F= -v key="$1" '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if ($1==key) {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}}' "$settings_file"
+    fi
+}
+regional=0
+[[ -z $(read_setting relay_upstream_host) ]] || regional=1
+if (( regional )) && [[ -n $token_file ]]; then
+    printf 'Regional fronts must not receive the central client authentication token\n' >&2; exit 1
+fi
 certificate=${certificate:-"$config_directory/server.cert"}
 private_key=${private_key:-"$config_directory/server.key"}
-token_file=${token_file:-"$config_directory/auth.token"}
-for source_file in "$certificate" "$private_key" "$token_file"; do
-    [[ -f $source_file ]] || { printf 'Certificate, private key and token files are required for the first installation\n' >&2; exit 1; }
+for source_file in "$certificate" "$private_key"; do
+    [[ -f $source_file ]] || { printf 'Certificate and private key files are required\n' >&2; exit 1; }
 done
-python3 - "$token_file" <<'PY'
+if (( !regional )); then
+    token_file=${token_file:-"$config_directory/auth.token"}
+    [[ -f $token_file ]] || { printf 'The authority authentication token file is required\n' >&2; exit 1; }
+    python3 - "$token_file" <<'TOKEN'
 import pathlib,sys
 raw=pathlib.Path(sys.argv[1]).read_bytes()
 token=raw.rstrip(b'\r\n')
 if len(raw)>4096 or len(token)<32 or any(b<33 or b>126 for b in token):
     sys.exit('Authentication token must contain 32 to 4096 printable ASCII bytes')
-PY
-openssl x509 -in "$certificate" -checkend 0 -noout >/dev/null
-if [[ -f $config_directory/relay.conf ]]; then
-    read_setting() {
-        awk -F= -v key="$1" '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); if ($1==key) {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}}' "$config_directory/relay.conf"
-    }
-    port=${port:-$(read_setting relay_port)}
-    bind_host=${bind_host:-$(read_setting listen_host)}
+TOKEN
 fi
+openssl x509 -in "$certificate" -checkend 0 -noout >/dev/null
+configured_port=$(read_setting relay_port)
+if [[ -n $node_config && -n $port && $port != "$configured_port" ]]; then
+    printf 'The port must match the generated node configuration and catalog\n' >&2; exit 1
+fi
+port=${port:-$configured_port}
+bind_host=${bind_host:-$(read_setting listen_host)}
 port=${port:-4433}
 bind_host=${bind_host:-0.0.0.0}
 [[ $port =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || { printf 'Invalid relay port\n' >&2; exit 1; }
@@ -160,8 +180,8 @@ copy_secret() {
 }
 copy_secret "$certificate" server.cert
 copy_secret "$private_key" server.key
-copy_secret "$token_file" auth.token
-python3 - "$config_directory/relay.conf" "$port" "$bind_host" <<'PY'
+if (( !regional )); then copy_secret "$token_file" auth.token; fi
+python3 - "$config_directory/relay.conf" "$port" "$bind_host" "$node_config" <<'PY'
 import pathlib,sys
 path=pathlib.Path(sys.argv[1])
 settings={}
@@ -172,6 +192,11 @@ if path.is_file():
             if key.strip() in settings:
                 sys.exit('Duplicate relay configuration key')
             settings[key.strip()]=value.strip()
+if sys.argv[4]:
+    for line in pathlib.Path(sys.argv[4]).read_text().splitlines():
+        if line.strip() and not line.lstrip().startswith('#'):
+            key,value=line.split('=',1)
+            settings[key.strip()]=value.strip()
 settings.update(listen_host=sys.argv[3],relay_port=sys.argv[2],
     tls_certificate_file='/etc/lanlink/server.cert',tls_private_key_file='/etc/lanlink/server.key',
     auth_token_file='/etc/lanlink/auth.token',relay_database_file='/var/lib/lanlink/relay.db',
@@ -179,6 +204,7 @@ settings.update(listen_host=sys.argv[3],relay_port=sys.argv[2],
 path.write_text(''.join(f'{key}={value}\n' for key,value in settings.items()))
 PY
 chmod 0640 "$config_directory/relay.conf"
+"$program_directory/bin/lanlink-relay" --check-config "$config_directory/relay.conf" >/dev/null
 install -m 0644 "$program_directory/lanlink-relay.service" "$unit_path"
 if (( !offline )); then
     chown -R root:root "$program_directory"

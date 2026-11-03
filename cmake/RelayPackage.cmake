@@ -5,8 +5,8 @@ if(LANLINK_PACKAGE_RELAY)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "The relay service package requires Linux")
     endif()
-    set_target_properties(lanlink_relay PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
-    install(TARGETS lanlink_relay
+    set_target_properties(lanlink_relay lanlink_directory_sign PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+    install(TARGETS lanlink_relay lanlink_directory_sign
         RUNTIME_DEPENDENCY_SET lanlink_relay_dependencies
         RUNTIME DESTINATION bin COMPONENT relay)
     install(RUNTIME_DEPENDENCY_SET lanlink_relay_dependencies
@@ -20,6 +20,16 @@ if(LANLINK_PACKAGE_RELAY)
         DESTINATION . COMPONENT relay)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/lanlink-relay.service"
         DESTINATION . COMPONENT relay)
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/regions/generate.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/regions/state.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/regions/common.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/regions/inventory.example.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/directory/serve.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/docs/directory.md"
+        DESTINATION self-hosting COMPONENT relay)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/self-hosting.md"
+        DESTINATION self-hosting RENAME README.md COMPONENT relay)
     if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
         foreach(dependency msquic openssl sqlite3)
             install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright"

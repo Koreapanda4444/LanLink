@@ -11,7 +11,7 @@ import tarfile
 import zipfile
 
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 BASELINE = "a1cae005c39be7b18ba319fced856b68d7276271"
 ARCHIVES = {
     "windows": f"LanLink-{VERSION}-windows-x64.zip",
@@ -27,7 +27,9 @@ REQUIRED = {
         "SetupClient.ps1", "package-version.txt", "licenses/Wintun.txt", "licenses/msquic.txt",
         "licenses/openssl.txt", "licenses/sqlite3.txt", "licenses/imgui.txt"},
     "relay": COMMON | {"bin/lanlink-relay", "install-relay.sh", "uninstall-relay.sh",
-        "lanlink-relay.service", "relay-version.txt", "licenses/msquic.txt",
+        "lanlink-relay.service", "relay-version.txt", "bin/lanlink-directory-sign",
+        "self-hosting/generate.py", "self-hosting/state.py", "self-hosting/common.py",
+        "self-hosting/inventory.example.json", "self-hosting/serve.py", "self-hosting/directory.md", "self-hosting/README.md", "licenses/msquic.txt",
         "licenses/openssl.txt", "licenses/sqlite3.txt"},
 }
 
@@ -153,9 +155,10 @@ def inspect_package(path, kind, commit, require_clean=True, distribution=None, r
         require(metadata["system"] == "Linux" and metadata["distribution"] ==
                 (distribution or "linux"), "relay distribution mismatch")
         version_file = "relay-version.txt"
-        binary = files["bin/lanlink-relay"]
-        require(len(binary) >= 20 and binary[:6] == b"\x7fELF\x02\x01" and
-                struct.unpack_from("<H", binary, 18)[0] == 62, "relay binary is not ELF x64")
+        for executable in ("bin/lanlink-relay", "bin/lanlink-directory-sign"):
+            binary = files[executable]
+            require(len(binary) >= 20 and binary[:6] == b"\x7fELF\x02\x01" and
+                    struct.unpack_from("<H", binary, 18)[0] == 62, "relay tool is not ELF x64")
         require(any("libmsquic.so" in name for name in set(files) | set(links)),
                 "relay runtime library is missing")
     require(files[version_file].decode().strip() == VERSION, "installed version file mismatch")

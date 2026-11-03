@@ -1,0 +1,14 @@
+{
+  "authority": "my-home",
+  "revision": 1,
+  "directory_url": "https://directory.example.com/v1/relays",
+  "limits": {
+    "relay_authority_bytes_per_second": 67108864,
+    "relay_control_requests_per_second": 32
+  },
+  "nodes": [
+    {"id": "home", "role": "authority", "host": "home.example.com", "port": 4433, "region": "kr-seoul", "capacity": 128, "health_public_key": "REPLACE_WITH_THE_HOME_HEALTH_PUBLIC_KEY", "advertise": false},
+    {"id": "seoul", "role": "region", "host": "kr.example.com", "port": 4433, "region": "kr-seoul", "capacity": 64, "health_public_key": "REPLACE_WITH_THE_SEOUL_HEALTH_PUBLIC_KEY"},
+    {"id": "frankfurt", "role": "region", "host": "de.example.com", "port": 4433, "region": "de-frankfurt", "capacity": 64, "health_public_key": "REPLACE_WITH_THE_FRANKFURT_HEALTH_PUBLIC_KEY"}
+  ]
+}

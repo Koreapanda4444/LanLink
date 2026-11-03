@@ -6,6 +6,9 @@
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/auth/identity.hpp"
+#include "lanlink/transport/relay_probe.hpp"
+#include <atomic>
+#include <charconv>
 #include <string_view>
 
 #include <chrono>
@@ -36,10 +39,28 @@ int main(const int argc, char* argv[]) {
 
     try {
         if(argc==2 && std::string_view(argv[1])=="--version"){std::cout<<lanlink::core::project_version()<<'\n';return 0;}
+        if(argc==8 && std::string_view(argv[1])=="--probe") {
+            const auto number=[](std::string_view value,std::uint32_t maximum){
+                std::uint32_t parsed=0;const auto result=std::from_chars(value.data(),value.data()+value.size(),parsed);
+                if(result.ec!=std::errc{} || result.ptr!=value.data()+value.size() || !parsed || parsed>maximum)
+                    throw std::invalid_argument("invalid probe port or capacity");
+                return parsed;
+            };
+            lanlink::auth::RelayEndpoint endpoint{argv[4],argv[2],static_cast<std::uint16_t>(number(argv[3],65535))};
+            endpoint.authority=argv[5];endpoint.capacity=number(argv[6],4096);
+            endpoint.health_key=lanlink::auth::parse_directory_key(argv[7]);
+            std::atomic_bool stopping=false;
+            const auto result=lanlink::transport::probe_relay(endpoint,std::chrono::seconds(5),stopping);
+            std::cout<<"ready="<<(result.health.ready?"true":"false")<<" active="<<result.health.active_connections
+                     <<" capacity="<<result.health.capacity<<" rtt_us="<<result.rtt.count()<<'\n';
+            return result.health.ready?0:2;
+        }
         const bool health_key=argc==3 && std::string_view(argv[1])=="--health-key";
-        if(argc>2 && !health_key)throw std::invalid_argument("usage: lanlink-relay [config-path] | --health-key config-path | --version");
-        auto config=argc>1?lanlink::core::load_config(std::filesystem::path{argv[health_key?2:1]}):lanlink::core::RuntimeConfig{};
+        const bool check_config=argc==3 && std::string_view(argv[1])=="--check-config";
+        if(argc>2 && !health_key && !check_config)throw std::invalid_argument("usage: lanlink-relay [config-path] | --health-key config-path | --check-config config-path | --version | --probe HOST PORT ID AUTHORITY CAPACITY PUBLIC_KEY");
+        auto config=argc>1?lanlink::core::load_config(std::filesystem::path{argv[(health_key || check_config)?2:1]}):lanlink::core::RuntimeConfig{};
         lanlink::core::validate_relay_config(config);
+        if(check_config){std::cout<<"configuration valid\n";return 0;}
         if(health_key) {
             if(config.relay_health_identity_file.empty())throw std::runtime_error("relay health identity is not configured");
             const auto identity=lanlink::auth::DeviceIdentity::load_or_create(config.relay_health_identity_file);

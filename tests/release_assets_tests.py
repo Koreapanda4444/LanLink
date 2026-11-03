@@ -41,6 +41,7 @@ def fixture_files(kind):
             result[name] = windows_binary()
     if kind == "relay":
         result["bin/lanlink-relay"] = linux_binary()
+        result["bin/lanlink-directory-sign"] = linux_binary()
         result["lib/libmsquic.so.2.4.8"] = linux_binary()
     result["package-version.txt" if kind == "windows" else "relay-version.txt"] = (prepare.VERSION + "\n").encode()
     result["build-info.json"] = json.dumps({
