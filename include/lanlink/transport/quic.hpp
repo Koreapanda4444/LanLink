@@ -46,6 +46,9 @@ struct QuicServerOptions {
     std::size_t max_tls_handshakes = 16;
     SendQueueLimits send_queue;
     std::uint32_t control_requests_per_second = 32;
+    std::string relay_id;
+    std::string authority;
+    std::filesystem::path health_identity_file;
 };
 
 struct QuicClientOptions {

@@ -17,3 +17,10 @@ lanlink-directory-sign --regional self_hosted 1 data/directory.identity relays.b
 ```
 
 The additional canonical header after issued/expires is uint64 revision and uint8 scope (1 official, 2 self-hosted). Each LLD2 endpoint appends uint16-length-prefixed region, uint32 capacity, uint16 protocol, length-prefixed authority and 32 health-key bytes. Endpoint addresses and IDs must be unique; IDs/authorities are at most 64 ASCII characters, regions 32, hosts 253, capacity 1..1,000,000. Existing size, lifetime and signature checks remain. The unsigned HTTPS serving process cannot add a node, replace a trust key or change load metadata.
+
+
+## Authenticated health and load
+
+Configure `relay_id`, `relay_authority`, `relay_health_identity_file` and the existing connection limits on each node. `lanlink-relay --health-key relay.conf` creates or reads that private identity and prints only its public key for the signed regional catalog. Keep the identity file private and persistent; a directory response cannot supply its own replacement pin.
+
+Clients probe through certificate/hostname-verified TLS with a fresh 32-byte nonce. The server signs its ID, authority, protocol, nonce, timestamp, uptime, capacity, active connection count and aggregate encrypted forwarding/drop counters. Clients require the configured pin, exact authority/capacity, matching challenge and at most 30 seconds clock skew. Nonces prevent response replay; samples are short-lived and never authorize network membership. No client token, device ID, network name or packet content is sent by the probe. Signals authenticate the server; this read-only aggregate endpoint is available before client authentication and does not enroll a device. Admission limits, a global signing rate limit and handshake deadlines also apply to probes.

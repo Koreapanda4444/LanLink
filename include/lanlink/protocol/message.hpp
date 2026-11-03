@@ -39,6 +39,8 @@ enum class MessageType : std::uint16_t {
     peer_candidates_send = 0x010a,
     user_access_request = 0x010b,
     network_management_request = 0x010c,
+    relay_health_request = 0x010d,
+    relay_health_result = 0x018c,
     network_management_result = 0x018b,
     user_access_result = 0x018a,
     peer_candidates_forward = 0x0188,

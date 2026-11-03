@@ -108,6 +108,9 @@ RuntimeConfig parse_config(const std::string_view content) {
             else if(key=="directory_url") config.directory_url=value;
             else if(key=="directory_public_key") config.directory_public_key=value;
             else if(key=="directory_relay_id") config.directory_relay_id=value;
+            else if(key=="relay_id")config.relay_id=value;
+            else if(key=="relay_authority")config.relay_authority=value;
+            else if(key=="relay_health_identity_file")config.relay_health_identity_file=std::u8string(value.begin(),value.end());
             else if (key == "virtual_mtu") {
                 const auto mtu = parse_unsigned(value, key_view, line_number);
                 if (mtu < 576 || mtu > 9000) fail(line_number, "virtual_mtu must be between 576 and 9000");
@@ -355,6 +358,14 @@ void validate_config(const RuntimeConfig& config) {
 
 void validate_relay_config(const RuntimeConfig& config) {
     validate_config(config);
+    if(!config.relay_health_identity_file.empty() || !config.relay_id.empty() || !config.relay_authority.empty()) {
+        const auto valid=[](const std::string& value){return !value.empty() && value.size()<=64 && std::all_of(value.begin(),value.end(),[](unsigned char c){
+            return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='-' || c=='.';
+        });};
+        if(config.relay_health_identity_file.empty() || !valid(config.relay_id) || !valid(config.relay_authority))
+            throw std::runtime_error("regional relay requires an identity file, valid relay_id and relay_authority");
+    }
+
 
     if (config.tls_certificate_file.empty() || config.tls_private_key_file.empty()) {
         throw std::runtime_error("TLS certificate and private key are required by the relay");

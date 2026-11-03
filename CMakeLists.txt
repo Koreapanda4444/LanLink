@@ -103,6 +103,7 @@ target_include_directories(lanlink_protocol
 lanlink_enable_warnings(lanlink_protocol)
 
 add_library(lanlink_auth STATIC
+    src/auth/relay_health.cpp
     src/auth/directory.cpp
     src/auth/access_secret.cpp
     src/auth/device_keys.cpp
@@ -215,6 +216,7 @@ if(LANLINK_FOUNDATION_ONLY)
 endif()
 
 add_library(lanlink_transport STATIC
+    src/transport/relay_probe.cpp
     src/transport/directory_fetch.cpp
     src/p2p/direct_quic.cpp
     src/transport/quic.cpp

@@ -5,6 +5,8 @@
 #include "lanlink/relay/network_service.hpp"
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
+#include "lanlink/auth/identity.hpp"
+#include <string_view>
 
 #include <chrono>
 #include <csignal>
@@ -33,14 +35,16 @@ int main(const int argc, char* argv[]) {
 #endif
 
     try {
-        if (argc > 2) {
-            throw std::invalid_argument("usage: lanlink-relay [config-path]");
-        }
-
-        auto config = argc == 2
-                          ? lanlink::core::load_config(std::filesystem::path{argv[1]})
-                          : lanlink::core::RuntimeConfig{};
+        if(argc==2 && std::string_view(argv[1])=="--version"){std::cout<<lanlink::core::project_version()<<'\n';return 0;}
+        const bool health_key=argc==3 && std::string_view(argv[1])=="--health-key";
+        if(argc>2 && !health_key)throw std::invalid_argument("usage: lanlink-relay [config-path] | --health-key config-path | --version");
+        auto config=argc>1?lanlink::core::load_config(std::filesystem::path{argv[health_key?2:1]}):lanlink::core::RuntimeConfig{};
         lanlink::core::validate_relay_config(config);
+        if(health_key) {
+            if(config.relay_health_identity_file.empty())throw std::runtime_error("relay health identity is not configured");
+            const auto identity=lanlink::auth::DeviceIdentity::load_or_create(config.relay_health_identity_file);
+            std::cout<<lanlink::auth::hex_encode(identity.public_key())<<'\n';return 0;
+        }
 
         lanlink::core::Logger logger(config.log_directory / "relay.log",
                                      "relay",
@@ -67,6 +71,8 @@ int main(const int argc, char* argv[]) {
         options.send_queue.bytes = config.relay_send_queue_bytes;
         options.send_queue.frames = config.relay_send_queue_frames;
         options.control_requests_per_second = config.relay_control_requests_per_second;
+        options.relay_id=config.relay_id;options.authority=config.relay_authority;
+        options.health_identity_file=config.relay_health_identity_file;
 
         lanlink::storage::RelayStore store(config.relay_database_file);
         lanlink::relay::NetworkService network_service(store);

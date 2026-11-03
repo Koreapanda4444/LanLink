@@ -1,4 +1,5 @@
 #include "lanlink/auth/directory.hpp"
+#include "lanlink/auth/relay_health.hpp"
 #include "lanlink/auth/access_secret.hpp"
 #include <filesystem>
 #include <iostream>
@@ -46,6 +47,18 @@ int main(){
         rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
         invalid=regional;invalid.scope=auth::DirectoryScope::legacy;rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
         invalid=regional;invalid.revision=0;rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
+        auth::RelayHealth signal;signal.nonce=auth::random_nonce();signal.relay_id=regional.relays[0].id;signal.authority="home";
+        signal.issued_ms=1000;signal.capacity=128;signal.active_connections=3;signal.ready=true;signal.forwarded_bytes=8192;
+        auto signed_health=auth::sign_relay_health(signal,id);
+        require(auth::verify_relay_health(signed_health,regional.relays[0],signal.nonce,1000)==signal,"pinned health challenge and aggregate counters");
+        rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,regional.relays[0],auth::random_nonce(),1000));});
+        rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,regional.relays[0],signal.nonce,32000));});
+        auto mismatched=regional.relays[0];mismatched.authority="wrong";
+        rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,mismatched,signal.nonce,1000));});
+        mismatched=regional.relays[0];mismatched.health_key[0]^=std::byte{1};
+        rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,mismatched,signal.nonce,1000));});
+        signed_health[20]^=std::byte{1};rejects([&]{static_cast<void>(auth::verify_relay_health(signed_health,regional.relays[0],signal.nonce,1000));});
+        signal.active_connections=129;rejects([&]{static_cast<void>(auth::sign_relay_health(signal,id));});
         config.directory_url="http://localhost/v1/relays";rejects([&]{core::validate_config(config);});
         std::filesystem::remove(path);std::cout<<"signed bootstrap passed\n";return 0;
     }catch(const std::exception& e){std::filesystem::remove(path);std::cerr<<e.what()<<'\n';return 1;}

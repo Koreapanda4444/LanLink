@@ -1,3 +1,4 @@
+#include "lanlink/auth/relay_health.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 
@@ -279,6 +280,10 @@ public:
         try {
             auth_token_ = std::make_unique<auth::AuthToken>(
                 auth::AuthToken::load(options_.auth_token_file));
+            if(!options_.health_identity_file.empty()) {
+                if(options_.relay_id.empty() || options_.authority.empty())throw std::invalid_argument("regional relay identity is incomplete");
+                health_identity_=std::make_unique<auth::DeviceIdentity>(auth::DeviceIdentity::load_or_create(options_.health_identity_file));
+            }
             initialize();
         } catch (...) {
             release();
@@ -478,11 +483,29 @@ private:
         return true;
     }
 
+    protocol::Frame health_response(const protocol::Frame& request) {
+        if(!health_identity_ || !request.request_id || request.payload.size()!=auth::nonce_size)
+            throw std::runtime_error("relay health endpoint is unavailable or malformed");
+        {std::lock_guard lock(health_mutex_);if(!health_rate_.allow())throw std::runtime_error("relay health rate limit");}
+        auth::RelayHealth health;std::copy(request.payload.begin(),request.payload.end(),health.nonce.begin());
+        health.relay_id=options_.relay_id;health.authority=options_.authority;health.capacity=static_cast<std::uint32_t>(options_.max_connections);
+        health.issued_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        health.uptime_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started_at_).count());
+        {std::lock_guard lock(active_control_streams_mutex_);health.active_connections=static_cast<std::uint32_t>(active_control_streams_.size());}
+        health.forwarded_packets=forwarded_packets_.load();health.forwarded_bytes=forwarded_bytes_.load();health.dropped_packets=dropped_packets_.load();
+        health.ready=running_.load() && health.active_connections<health.capacity;
+        return {protocol::MessageType::relay_health_result,request.request_id,auth::sign_relay_health(health,*health_identity_)};
+    }
+
     void handle_tcp_frame(TcpContext& context, const protocol::Frame& frame) {
         if (context.handshake.expire()) {
             throw std::runtime_error("TLS TCP authentication expired");
         }
         if (!context.handshake.authenticated()) {
+            if(frame.type==protocol::MessageType::relay_health_request) {
+                if(!context.channel->enqueue(health_response(frame)))throw std::runtime_error("relay health response backpressure");
+                context.rejected=true;return;
+            }
             protocol::Frame reply;
             if (frame.type == protocol::MessageType::client_hello) {
                 reply = context.handshake.handle_hello(frame);
@@ -588,6 +611,7 @@ private:
     void route_encrypted_packet(const relay::RoutedEncryptedPacket& routed) noexcept {
         try {
             auto payload = protocol::encode_forwarded_network_packet(routed.delivery);
+            const auto payload_size=payload.size();
             std::lock_guard lock(active_control_streams_mutex_);
             for (const auto& active : active_control_streams_) {
                 if (active.device_id != routed.recipient_device_id) {
@@ -598,7 +622,7 @@ private:
                             {protocol::MessageType::network_packet_forward, 0,
                              std::move(payload)})) {
                         note_packet_drop();
-                    }
+                    } else {forwarded_packets_.fetch_add(1);forwarded_bytes_.fetch_add(payload_size);}
                     break;
                 }
                 const auto max_length = active.context->max_datagram_send_length.load();
@@ -609,7 +633,7 @@ private:
                          std::move(payload)}, active.context->sends);
                 if (QUIC_FAILED(status)) {
                     note_packet_drop();
-                }
+                } else {forwarded_packets_.fetch_add(1);forwarded_bytes_.fetch_add(payload_size);}
                 break;
             }
         } catch (const std::exception&) {
@@ -1114,6 +1138,11 @@ private:
     }
 
     QuicServerOptions options_;
+    std::unique_ptr<auth::DeviceIdentity> health_identity_;
+    std::mutex health_mutex_;
+    ControlRateLimit health_rate_{8};
+    const std::chrono::steady_clock::time_point started_at_=std::chrono::steady_clock::now();
+    std::atomic<std::uint64_t> forwarded_packets_=0,forwarded_bytes_=0;
     void note_packet_drop() noexcept {
         const auto count = dropped_packets_.fetch_add(1) + 1;
         if ((count & (count - 1)) == 0) {

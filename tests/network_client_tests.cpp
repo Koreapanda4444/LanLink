@@ -7,6 +7,7 @@
 #include "lanlink/transport/tls.hpp"
 #include "lanlink/session/peer_packet_path.hpp"
 #include "lanlink/auth/packet_crypto.hpp"
+#include "lanlink/transport/relay_probe.hpp"
 
 #include <algorithm>
 #include <array>
@@ -65,6 +66,28 @@ void expect_error(Function&& function, const std::string& description) {
         return;
     }
     throw std::runtime_error(description);
+}
+
+void test_relay_health(const std::filesystem::path& directory) {
+    const auto signer=auth::DeviceIdentity::load_or_create(directory/"health.identity");
+    core::Logger logger(directory/"health.log","health-test",core::LogLevel::warning,1024*1024,2);
+    storage::RelayStore store(directory/"health.db");relay::NetworkService service(store);relay::NetworkControlChannel control(service);
+    transport::QuicServerOptions options;options.listen_host="127.0.0.1";
+    options.port=static_cast<std::uint16_t>(35000+(std::chrono::steady_clock::now().time_since_epoch().count()%20000));
+    options.certificate_file=directory/"cert.pem";options.private_key_file=directory/"key.pem";options.auth_token_file=directory/"auth.token";
+    options.enable_quic=false;options.max_connections=8;options.max_tls_handshakes=4;
+    options.relay_id="health-test";options.authority="test-home";options.health_identity_file=directory/"health.identity";
+    transport::QuicRelayServer server(options,logger,control);server.start();
+    auth::RelayEndpoint endpoint{options.relay_id,"127.0.0.1",options.port};endpoint.capacity=8;endpoint.authority=options.authority;endpoint.health_key=signer.public_key();
+    std::atomic_bool stopping=false;
+    const auto measured=transport::probe_relay(endpoint,2s,stopping);
+    expect(measured.health.ready && measured.health.capacity==8 && measured.health.active_connections==0 && measured.rtt>0us,"authenticated health must report measured RTT and aggregate load");
+    auto wrong=endpoint;wrong.health_key[0]^=std::byte{1};
+    expect_error([&]{static_cast<void>(transport::probe_relay(wrong,2s,stopping));},"TLS alone must not replace the directory health-key pin");
+    wrong=endpoint;wrong.authority="other-home";
+    expect_error([&]{static_cast<void>(transport::probe_relay(wrong,2s,stopping));},"health must bind the selected authority");
+    stopping=true;expect_error([&]{static_cast<void>(transport::probe_relay(endpoint,2s,stopping));},"cancelled probes must not connect");
+    server.stop();
 }
 
 void test_network_management(const std::filesystem::path& directory) {
@@ -935,6 +958,7 @@ int main(const int argc, char* argv[]) {
             throw std::invalid_argument("usage: network-client-tests fixture-directory");
         }
         std::cerr << "Starting QUIC network management" << std::endl;
+        std::cerr<<"Starting authenticated relay health"<<std::endl;test_relay_health(argv[1]);
         test_network_management(argv[1]);
         std::cerr << "Starting peer state reconnect" << std::endl;
         test_peer_state_reconnect(argv[1]);
