@@ -40,7 +40,7 @@ int main() {
             if(packet.size()<offset+8)return;
             std::swap(packet[offset],packet[offset+2]);std::swap(packet[offset+1],packet[offset+3]);
             packet[offset+6]=packet[offset+7]=std::byte{0};protocol::update_ipv4_checksum(packet);
-            adapter.inject(packet);++packets;
+            ++packets;adapter.inject(packet);
         });
         const auto name=adapter.name();require(if_nametoindex(name.c_str())!=0,"TUN was not created");
         protocol::NetworkId id{};id[0]=std::byte{42};
@@ -59,7 +59,8 @@ int main() {
         std::array<char,128> reply{};
         require(recv(fd,reply.data(),reply.size(),0)==sizeof(message) && !std::memcmp(message,reply.data(),sizeof(message)),"kernel TUN receive failed");
         ::close(fd);
-        require(packets>0 && !adapter.pump_error(),"TUN pump failed");
+        if(const auto error=adapter.pump_error())std::rethrow_exception(error);
+        require(packets>0,"TUN handler did not observe the returned UDP packet");
         network::RoutingConfiguration routes;routes.routes.push_back({id,0xc0a8fb00U,24});
         adapter.configure_routing(routes);adapter.configure_routing({});
         bool unsafe=false;routes.routes[0].address=0;routes.routes[0].prefix=0;
