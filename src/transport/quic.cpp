@@ -1,5 +1,6 @@
 #include "lanlink/auth/relay_health.hpp"
 #include "lanlink/transport/relay_pool.hpp"
+#include "lanlink/transport/relay_bridge.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 
@@ -210,6 +211,12 @@ void validate_server_options(const QuicServerOptions& options) {
         options.control_requests_per_second == 0) {
         throw std::invalid_argument("invalid relay resource limits");
     }
+    if(options.upstream) {
+        const auto& home=*options.upstream;
+        if(home.host.empty() || !home.port || home.health_key==auth::PublicKey{} || home.authority!=options.authority ||
+           home.protocol_version!=protocol::protocol_version || !home.capacity || options.health_identity_file.empty() ||
+           (home.host==options.listen_host && home.port==options.port))throw std::invalid_argument("invalid regional authority configuration");
+    }
     static_cast<void>(SendBudget(options.send_queue));
     if (options.listen_host.empty()) {
         throw std::invalid_argument("QUIC listen host is empty");
@@ -223,7 +230,7 @@ void validate_server_options(const QuicServerOptions& options) {
         throw std::invalid_argument("QUIC relay certificate and private key are required");
     }
 
-    if (options.auth_token_file.empty()) {
+    if (!options.upstream && options.auth_token_file.empty()) {
         throw std::invalid_argument("QUIC relay authentication token is required");
     }
 
@@ -272,15 +279,16 @@ class QuicRelayServer::Impl {
 public:
     Impl(QuicServerOptions options,
          core::Logger& logger,
-         relay::NetworkControlChannel& control_channel)
+         relay::NetworkControlChannel* control_channel)
         : options_(std::move(options)),
           logger_(logger),
           control_channel_(control_channel) {
         validate_server_options(options_);
+        if(!options_.upstream && !control_channel_)throw std::invalid_argument("standalone relay requires a control authority");
 
         try {
-            auth_token_ = std::make_unique<auth::AuthToken>(
-                auth::AuthToken::load(options_.auth_token_file));
+            auth_token_=std::make_unique<auth::AuthToken>(options_.upstream?
+                auth::AuthToken::from_secret(auth::hex_encode(auth::random_nonce())):auth::AuthToken::load(options_.auth_token_file));
             if(!options_.health_identity_file.empty()) {
                 if(options_.relay_id.empty() || options_.authority.empty())throw std::invalid_argument("regional relay identity is incomplete");
                 health_identity_=std::make_unique<auth::DeviceIdentity>(auth::DeviceIdentity::load_or_create(options_.health_identity_file));
@@ -322,6 +330,7 @@ public:
         }
 
         running_.store(true);
+        if(options_.upstream)authority_monitor_=std::jthread([this](std::stop_token stop){monitor_authority(stop);});
         log_noexcept(logger_, core::LogLevel::info,
                      "relay listening on TLS TCP" +
                          std::string(options_.enable_quic ? " and QUIC UDP " : " ") +
@@ -364,15 +373,20 @@ public:
     void stop() noexcept {
         std::lock_guard lock(lifecycle_mutex_);
 
-        if (tls_listener_) {
-            tls_listener_->stop();
-        }
+        bridge_stopping_=true;
+        authority_monitor_.request_stop();
+        if(authority_monitor_.joinable())authority_monitor_.join();
+        if (tls_listener_)tls_listener_->stop();
         if (listener_ != nullptr) {
             api_->ListenerClose(listener_);
             listener_ = nullptr;
         }
 
         running_.store(false);
+        std::vector<std::shared_ptr<RelayBridge>> bridges;
+        {std::lock_guard lock(bridges_mutex_);bridges=bridges_;}
+        for(const auto& bridge:bridges)bridge->stop();
+        for(const auto& bridge:bridges)bridge->join();
 
         if (!shutdown_started_ && registration_ != nullptr) {
             shutdown_started_ = true;
@@ -387,6 +401,37 @@ public:
     }
 
 private:
+    struct RegionalTarget {
+        std::mutex mutex;HQUIC connection=nullptr,stream=nullptr;
+        std::atomic<std::uint16_t> max_datagram=0;
+        bool closed=false;SendBudget sends;
+        explicit RegionalTarget(SendQueueLimits limits):sends(limits){}
+    };
+    std::shared_ptr<RelayBridge> make_bridge(RelayBridge::Delivery delivery,std::function<void()> closed) {
+        std::lock_guard lock(bridges_mutex_);
+        std::erase_if(bridges_,[](const auto& b){return b->finished();});
+        if(bridge_stopping_.load() || !authority_verified_.load() || bridges_.size()>=options_.max_connections)
+            throw std::runtime_error("regional authority unavailable or at capacity");
+        auto bridge=std::make_shared<RelayBridge>(*options_.upstream,options_.handshake_timeout,
+            options_.authentication_timeout,options_.send_queue,std::move(delivery),std::move(closed));
+        bridges_.push_back(bridge);return bridge;
+    }
+    void monitor_authority(std::stop_token stop)noexcept {
+        while(!stop.stop_requested() && !bridge_stopping_.load()) {
+            try {
+                const auto sample=probe_relay(*options_.upstream,std::chrono::seconds(2),bridge_stopping_);
+                authority_rtt_us_=static_cast<std::uint32_t>((std::min)(sample.rtt.count(),std::int64_t{10'000'000}));
+                authority_ready_=sample.health.ready;authority_verified_=true;
+            }catch(const std::exception&) {
+                authority_verified_=false;authority_ready_=false;
+                std::vector<std::shared_ptr<RelayBridge>> bridges;
+                {std::lock_guard lock(bridges_mutex_);bridges=bridges_;}
+                for(const auto& bridge:bridges)bridge->stop();
+            }
+            for(unsigned n=0;n<50 && !stop.stop_requested() && !bridge_stopping_.load();++n)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
     struct ConnectionContext {
         ConnectionContext(Impl* owner_value, const HQUIC connection, SendBudget::Ticket slot)
             : owner(owner_value),
@@ -407,6 +452,8 @@ private:
         SendBudget sends;
         SendBudget::Ticket admission;
         ControlRateLimit control_rate;
+        std::shared_ptr<RelayBridge> bridge;
+        std::shared_ptr<RegionalTarget> regional_target;
     };
 
     struct StreamContext {
@@ -445,6 +492,7 @@ private:
         auth::ServerHandshake handshake;
         bool rejected = false;
         ControlRateLimit control_rate;
+        std::shared_ptr<RelayBridge> bridge;
     };
 
     bool register_control_stream(ConnectionContext* const context,
@@ -494,11 +542,39 @@ private:
         health.uptime_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started_at_).count());
         {std::lock_guard lock(active_control_streams_mutex_);health.active_connections=static_cast<std::uint32_t>(active_control_streams_.size());}
         health.forwarded_packets=forwarded_packets_.load();health.forwarded_bytes=forwarded_bytes_.load();health.dropped_packets=dropped_packets_.load();
-        health.ready=running_.load() && health.active_connections<health.capacity;
+        if(options_.upstream) {
+            std::lock_guard lock(bridges_mutex_);
+            health.active_connections=static_cast<std::uint32_t>(std::count_if(bridges_.begin(),bridges_.end(),[](const auto& b){return b->authenticated() && !b->finished();}));
+            health.upstream_rtt_us=authority_rtt_us_.load();
+        }
+        health.ready=running_.load() && health.active_connections<health.capacity &&
+            (!options_.upstream || (authority_verified_.load() && authority_ready_.load()));
         return {protocol::MessageType::relay_health_result,request.request_id,auth::sign_relay_health(health,*health_identity_)};
     }
 
     void handle_tcp_frame(TcpContext& context, const protocol::Frame& frame) {
+        if(options_.upstream) {
+            if(!context.bridge && frame.type==protocol::MessageType::relay_health_request) {
+                if(!context.channel->enqueue(health_response(frame)))throw std::runtime_error("health backpressure");
+                context.rejected=true;return;
+            }
+            if(!context.bridge) {
+                const std::weak_ptr<TlsChannel> weak=context.channel;
+                context.bridge=make_bridge([this,weak](const protocol::Frame& reply){
+                    if(auto channel=weak.lock()) {
+                        const bool accepted=channel->enqueue(reply);
+                        if(reply.type==protocol::MessageType::network_packet_forward) {
+                            if(accepted){forwarded_packets_.fetch_add(1);forwarded_bytes_.fetch_add(reply.payload.size());}else note_packet_drop();
+                        }
+                        return accepted;
+                    }
+                    return false;
+                },[weak]{if(auto channel=weak.lock())channel->stop();});
+            }
+            if(frame.type!=protocol::MessageType::network_packet_send && !context.control_rate.allow())throw std::runtime_error("regional control rate exceeded");
+            if(!context.bridge->send(frame))throw std::runtime_error("regional upstream backpressure");
+            return;
+        }
         if (context.handshake.expire()) {
             throw std::runtime_error("TLS TCP authentication expired");
         }
@@ -523,7 +599,7 @@ private:
                 if (!register_tcp(context.channel, context.handshake.device_id())) {
                     throw std::runtime_error("duplicate TLS TCP device connection");
                 }
-                const auto events = control_channel_.note_authenticated(
+                const auto events = control_channel_->note_authenticated(
                     context.handshake.device_id(), context.handshake.session_id(),
                     context.handshake.signed_device_key());
                 route_control_events(events);
@@ -534,7 +610,7 @@ private:
             if (frame.request_id != 0) {
                 throw std::runtime_error("encrypted packet request id must be zero");
             }
-            const auto routed = control_channel_.route_encrypted_packet(
+            const auto routed = control_channel_->route_encrypted_packet(
                 context.handshake.device_id(), frame.payload);
             for (const auto& delivery : routed) {
                 route_encrypted_packet(delivery);
@@ -544,7 +620,7 @@ private:
         if (!context.control_rate.allow()) {
             throw std::runtime_error("TLS TCP control request rate exceeded");
         }
-        auto result = control_channel_.handle_authenticated(context.handshake.device_id(), frame);
+        auto result = control_channel_->handle_authenticated(context.handshake.device_id(), frame);
         if (!context.channel->enqueue(result.response)) {
             throw std::runtime_error("TLS TCP control response queue overflow");
         }
@@ -552,6 +628,7 @@ private:
     }
 
     void close_tcp(const TcpContext& context) noexcept {
+        if(context.bridge){context.bridge->stop();return;}
         if (!context.handshake.authenticated()) {
             return;
         }
@@ -563,7 +640,7 @@ private:
                           });
         }
         try {
-            route_control_events(control_channel_.note_disconnected(
+            route_control_events(control_channel_->note_disconnected(
                 context.handshake.device_id(), context.handshake.session_id()));
         } catch (const std::exception&) {
             log_noexcept(logger_, core::LogLevel::warning,
@@ -668,8 +745,8 @@ private:
         settings.HandshakeIdleTimeoutMs =
             static_cast<std::uint64_t>(options_.handshake_timeout.count());
         settings.IsSet.HandshakeIdleTimeoutMs = TRUE;
-        settings.IdleTimeoutMs =
-            static_cast<std::uint64_t>(options_.authentication_timeout.count());
+        settings.IdleTimeoutMs = static_cast<std::uint64_t>((options_.upstream?options_.idle_timeout:options_.authentication_timeout).count());
+        if(options_.upstream){settings.KeepAliveIntervalMs=options_.keep_alive_interval_ms;settings.IsSet.KeepAliveIntervalMs=TRUE;}
         settings.IsSet.IdleTimeoutMs = TRUE;
         settings.PeerBidiStreamCount = 1;
         settings.IsSet.PeerBidiStreamCount = TRUE;
@@ -722,7 +799,7 @@ private:
                         handle_tcp_frame(*context, frame);
                     },
                     [context] {
-                        return !context->handshake.expire() &&
+                        return (context->bridge?!context->bridge->finished():!context->handshake.expire()) &&
                                (!context->rejected || context->channel->pending_output());
                     },
                     [this, context] { close_tcp(*context); },
@@ -864,12 +941,21 @@ private:
                 break;
             }
             case QUIC_CONNECTION_EVENT_DATAGRAM_STATE_CHANGED:
+                if(context->regional_target)context->regional_target->max_datagram=event->DATAGRAM_STATE_CHANGED.SendEnabled?event->DATAGRAM_STATE_CHANGED.MaxSendLength:0;
                 context->max_datagram_send_length.store(
                     event->DATAGRAM_STATE_CHANGED.SendEnabled
                         ? event->DATAGRAM_STATE_CHANGED.MaxSendLength : 0);
                 break;
             case QUIC_CONNECTION_EVENT_DATAGRAM_RECEIVED: {
                 if (context->closed.load()) {
+                    break;
+                }
+                if(options_.upstream) {
+                    if(context->bridge && context->bridge->authenticated()) {
+                        const auto* buffer=event->DATAGRAM_RECEIVED.Buffer;
+                        const auto* bytes=reinterpret_cast<const std::byte*>(buffer->Buffer);
+                        if(!context->bridge->send({protocol::MessageType::network_packet_send,0,{bytes,bytes+buffer->Length}}))note_packet_drop();
+                    }
                     break;
                 }
                 auth::DeviceId actor{};
@@ -885,7 +971,7 @@ private:
                     const auto payload = std::span<const std::byte>(
                         reinterpret_cast<const std::byte*>(buffer->Buffer),
                         buffer->Length);
-                    const auto routed = control_channel_.route_encrypted_packet(actor, payload);
+                    const auto routed = control_channel_->route_encrypted_packet(actor, payload);
                     for (const auto& delivery : routed) {
                         route_encrypted_packet(delivery);
                     }
@@ -899,6 +985,8 @@ private:
                 complete_datagram_send(event);
                 break;
             case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE: {
+                if(context->regional_target){std::lock_guard lock(context->regional_target->mutex);context->regional_target->closed=true;context->regional_target->connection=nullptr;context->regional_target->stream=nullptr;}
+                if(context->bridge)context->bridge->stop();
                 {
                     std::lock_guard lock(active_control_streams_mutex_);
                     context->closed.store(true);
@@ -919,7 +1007,7 @@ private:
 
                 if (closed_identity) {
                     try {
-                        route_control_events(control_channel_.note_disconnected(
+                        route_control_events(control_channel_->note_disconnected(
                             closed_identity->first, closed_identity->second));
                     } catch (const std::exception& error) {
                         log_noexcept(logger_, core::LogLevel::warning,
@@ -957,7 +1045,7 @@ private:
                                 context->connection_context->handshake.expire();
                         }
 
-                        if (authentication_expired) {
+                        if (authentication_expired && !options_.upstream) {
                             log_noexcept(logger_,
                                          core::LogLevel::warning,
                                          "relay authentication deadline expired");
@@ -971,6 +1059,30 @@ private:
                             reinterpret_cast<const std::byte*>(input.Buffer), input.Length));
 
                         for (const auto& frame : frames) {
+                            if(options_.upstream) {
+                                auto* connection=context->connection_context;
+                                if(!connection->bridge) {
+                                    auto target=std::make_shared<RegionalTarget>(options_.send_queue);
+                                    target->connection=context->connection;target->stream=stream;target->max_datagram=connection->max_datagram_send_length.load();
+                                    connection->regional_target=target;
+                                    connection->bridge=make_bridge([this,target](const protocol::Frame& reply){
+                                        std::lock_guard lock(target->mutex);
+                                        if(target->closed || !target->stream)return false;
+                                        const bool data=reply.type==protocol::MessageType::network_packet_forward;
+                                        const auto limit=target->max_datagram.load();
+                                        const auto status=data && limit && reply.payload.size()<=limit?
+                                            send_datagram(api_,target->connection,reply.payload,target->sends):send_frame(api_,target->stream,reply,target->sends);
+                                        if(data){if(QUIC_SUCCEEDED(status)){forwarded_packets_.fetch_add(1);forwarded_bytes_.fetch_add(reply.payload.size());}else note_packet_drop();}
+                                        return QUIC_SUCCEEDED(status);
+                                    },[this,target]{
+                                        std::lock_guard lock(target->mutex);
+                                        if(!target->closed && target->connection)api_->ConnectionShutdown(target->connection,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,application_shutdown_code);
+                                    });
+                                }
+                                if(frame.type!=protocol::MessageType::network_packet_send && !connection->control_rate.allow())throw std::runtime_error("regional control rate exceeded");
+                                if(!connection->bridge->send(frame))throw std::runtime_error("regional upstream backpressure");
+                                continue;
+                            }
                             auth::DeviceId actor{};
                             bool authenticated = false;
 
@@ -1014,6 +1126,8 @@ private:
                                          authentication_shutdown_code);
                 break;
             case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE:
+                if(auto target=context->connection_context->regional_target){std::lock_guard lock(target->mutex);target->stream=nullptr;}
+                if(context->connection_context->bridge)context->connection_context->bridge->stop();
                 close_control_stream(stream, event->SHUTDOWN_COMPLETE.AppCloseInProgress);
                 delete context;
                 break;
@@ -1104,7 +1218,7 @@ private:
                 if (context->connection_context->closed.load()) {
                     throw std::runtime_error("authentication connection already closed");
                 }
-                key_events = control_channel_.note_authenticated(
+                key_events = control_channel_->note_authenticated(
                     authenticated_device_id, authenticated_session_id, signed_key);
             }
             route_control_events(key_events);
@@ -1119,7 +1233,7 @@ private:
             if (frame.request_id != 0) {
                 throw std::runtime_error("encrypted packet request id must be zero");
             }
-            const auto routed = control_channel_.route_encrypted_packet(actor, frame.payload);
+            const auto routed = control_channel_->route_encrypted_packet(actor, frame.payload);
             for (const auto& delivery : routed) {
                 route_encrypted_packet(delivery);
             }
@@ -1128,7 +1242,7 @@ private:
         if (!context->control_rate.allow()) {
             throw std::runtime_error("QUIC control request rate exceeded");
         }
-        auto dispatch = control_channel_.handle_authenticated(actor, frame);
+        auto dispatch = control_channel_->handle_authenticated(actor, frame);
         const auto status = send_frame(api_, stream, dispatch.response, context->sends);
 
         if (QUIC_FAILED(status)) {
@@ -1139,6 +1253,11 @@ private:
     }
 
     QuicServerOptions options_;
+    std::mutex bridges_mutex_;
+    std::vector<std::shared_ptr<RelayBridge>> bridges_;
+    std::atomic_bool bridge_stopping_=false,authority_verified_=false,authority_ready_=false;
+    std::atomic<std::uint32_t> authority_rtt_us_=0;
+    std::jthread authority_monitor_;
     std::unique_ptr<auth::DeviceIdentity> health_identity_;
     std::mutex health_mutex_;
     ControlRateLimit health_rate_{8};
@@ -1154,7 +1273,7 @@ private:
     std::shared_ptr<SendBudget> admissions_;
     std::atomic<std::uint64_t> dropped_packets_ = 0;
     core::Logger& logger_;
-    relay::NetworkControlChannel& control_channel_;
+    relay::NetworkControlChannel* control_channel_;
     std::unique_ptr<auth::AuthToken> auth_token_;
     const QUIC_API_TABLE* api_ = nullptr;
     HQUIC registration_ = nullptr;
@@ -3008,8 +3127,11 @@ private:
 QuicRelayServer::QuicRelayServer(QuicServerOptions options,
                                 core::Logger& logger,
                                 relay::NetworkControlChannel& control_channel)
-    : impl_(std::make_unique<Impl>(std::move(options), logger, control_channel)) {
+    : impl_(std::make_unique<Impl>(std::move(options), logger, &control_channel)) {
 }
+
+QuicRelayServer::QuicRelayServer(QuicServerOptions options,core::Logger& logger)
+    :impl_(std::make_unique<Impl>(std::move(options),logger,nullptr)){}
 
 QuicRelayServer::~QuicRelayServer() = default;
 

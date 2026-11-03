@@ -32,6 +32,9 @@ struct RuntimeConfig {
     std::string relay_id;
     std::string relay_authority;
     std::filesystem::path relay_health_identity_file;
+    std::string relay_upstream_host,relay_upstream_id,relay_upstream_health_public_key;
+    std::uint16_t relay_upstream_port=4433;
+    std::uint32_t relay_upstream_capacity=128;
     std::uint32_t quic_handshake_timeout_ms = 10'000;
     std::uint32_t authentication_timeout_ms = 10'000;
     std::uint32_t quic_idle_timeout_ms = 60'000;

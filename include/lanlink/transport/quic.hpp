@@ -50,6 +50,7 @@ struct QuicServerOptions {
     std::string relay_id;
     std::string authority;
     std::filesystem::path health_identity_file;
+    std::optional<auth::RelayEndpoint> upstream;
 };
 
 struct QuicClientOptions {
@@ -105,6 +106,7 @@ public:
     QuicRelayServer(QuicServerOptions options,
                     core::Logger& logger,
                     relay::NetworkControlChannel& control_channel);
+    QuicRelayServer(QuicServerOptions options,core::Logger& logger);
     ~QuicRelayServer();
 
     QuicRelayServer(const QuicRelayServer&) = delete;

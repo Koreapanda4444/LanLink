@@ -108,6 +108,14 @@ RuntimeConfig parse_config(const std::string_view content) {
             else if(key=="directory_url") config.directory_url=value;
             else if(key=="directory_public_key") config.directory_public_key=value;
             else if(key=="directory_relay_id") config.directory_relay_id=value;
+            else if(key=="relay_upstream_host")config.relay_upstream_host=value;
+            else if(key=="relay_upstream_id")config.relay_upstream_id=value;
+            else if(key=="relay_upstream_health_public_key")config.relay_upstream_health_public_key=value;
+            else if(key=="relay_upstream_port" || key=="relay_upstream_capacity") {
+                const auto n=parse_unsigned(value,key_view,line_number);
+                if(!n || n>(key=="relay_upstream_port"?65535U:4096U))fail(line_number,"invalid upstream port or capacity");
+                if(key=="relay_upstream_port")config.relay_upstream_port=static_cast<std::uint16_t>(n);else config.relay_upstream_capacity=static_cast<std::uint32_t>(n);
+            }
             else if(key=="relay_id")config.relay_id=value;
             else if(key=="relay_authority")config.relay_authority=value;
             else if(key=="relay_health_identity_file")config.relay_health_identity_file=std::u8string(value.begin(),value.end());
@@ -357,6 +365,14 @@ void validate_config(const RuntimeConfig& config) {
 }
 
 void validate_relay_config(const RuntimeConfig& config) {
+    if(!config.relay_upstream_host.empty() || !config.relay_upstream_id.empty() || !config.relay_upstream_health_public_key.empty()) {
+        const auto& key=config.relay_upstream_health_public_key;
+        if(invalid_host(config.relay_upstream_host) || config.relay_upstream_id.empty() || config.relay_health_identity_file.empty() ||
+           !config.relay_upstream_port || !config.relay_upstream_capacity || config.relay_upstream_capacity>4096 || key.size()!=64 ||
+           !std::all_of(key.begin(),key.end(),[](unsigned char c){return (c>='0' && c<='9') || (c>='a' && c<='f') || (c>='A' && c<='F');}) ||
+           std::all_of(key.begin(),key.end(),[](char c){return c=='0';}))throw std::runtime_error("regional upstream configuration is incomplete");
+    }
+
     validate_config(config);
     if(!config.relay_health_identity_file.empty() || !config.relay_id.empty() || !config.relay_authority.empty()) {
         const auto valid=[](const std::string& value){return !value.empty() && value.size()<=64 && std::all_of(value.begin(),value.end(),[](unsigned char c){
@@ -371,11 +387,11 @@ void validate_relay_config(const RuntimeConfig& config) {
         throw std::runtime_error("TLS certificate and private key are required by the relay");
     }
 
-    if (config.auth_token_file.empty()) {
+    if (config.relay_upstream_host.empty() && config.auth_token_file.empty()) {
         throw std::runtime_error("auth_token_file is required by the relay");
     }
 
-    if (config.relay_database_file.empty()) {
+    if (config.relay_upstream_host.empty() && config.relay_database_file.empty()) {
         throw std::runtime_error("relay_database_file is required by the relay");
     }
 }

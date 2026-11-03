@@ -1,6 +1,6 @@
 # v1.0 개발 로드맵
 
-첨부 최종 기획서의 60개 커밋을 유지한다. 현재 구현 범위는 01~52이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
+첨부 최종 기획서의 60개 커밋을 유지한다. 현재 구현 범위는 01~53이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
 
 | 번호 | 목표 | 상태 |
 |---|---|---|
@@ -56,7 +56,7 @@
 | 50 | `feat(relay): register and discover multiple relay regions` — 지역·용량·프로토콜·신뢰 정보 등록, 공식/자체 분리 | 구현 |
 | 51 | `feat(relay): implement authenticated health and load signals` — 상태 확인·용량 수치·서버 신뢰 검증, 민감정보 노출 방지 | 구현 |
 | 52 | `feat(relay): select relay using health and latency probes` — 지역보다 실측 품질 우선, 변경 안정화·수동 고정 | 구현 |
-| 53 | `feat(relay): recover sessions after relay failure` — 인증·네트워크 상태·키 재동기화, 데이터 중복/유실 복구 | 대기 |
+| 53 | `feat(relay): recover sessions after relay failure` — 인증·네트워크 상태·키 재동기화, 데이터 중복/유실 복구 | 구현 |
 | 54 | `feat(relay): add quotas, accounting and abuse safeguards` — 전송량/연결/요청량 제한, 장애·비용 방지 및 운영 메트릭 | 대기 |
 | 55 | `feat(deploy): ship reproducible multi-region self-hosting` — Oracle Linux 9 등 기존 배포 경로 유지, 설정·롤백·백업 문서 | 대기 |
 | 56 | `fix(reliability): harden lifecycle, cancellation and concurrency` — 재접속·서비스 재시작·경로 전환·종료 시 race/leak/deadlock 제거 | 대기 |
@@ -65,7 +65,7 @@
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
-01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 42~49는 v0.8.0으로 구현했으며 [검증 기록](verification-v0.8.md)에 native OS 검증과 물리 장비 시험의 제한을 정리한다. 50~51번은 서명된 지역별 Relay 등록과 인증된 상태·부하 신호를 구현했다. 52번은 실측 RTT·부하·유효한 상태를 이용한 선택과 안정화/수동 고정을 구현했다. 53~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
+01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 42~49는 v0.8.0으로 구현했으며 [검증 기록](verification-v0.8.md)에 native OS 검증과 물리 장비 시험의 제한을 정리한다. 50~51번은 서명된 지역별 Relay 등록과 인증된 상태·부하 신호를 구현했다. 52번은 실측 RTT·부하·유효한 상태를 이용한 선택과 안정화/수동 고정을 구현했다. 53번은 하나의 영구 authority를 공유하는 QUIC/TLS 지역 앞단과 지역/중앙 재시작 시 재인증·키/IP 복원을 구현했다. 54~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
 
 ## 기능별 커밋 SHA
 
@@ -125,3 +125,5 @@
 | 50 | [ca7e25d](https://github.com/Koreapanda4444/LanLink/commit/ca7e25de89d69da2f053286fda7139f571646e9d) |
 
 | 51 | [95eaaa1](https://github.com/Koreapanda4444/LanLink/commit/95eaaa192989bb4a992ded3d56f8f9082deb1775) |
+
+| 52 | [e615f6b](https://github.com/Koreapanda4444/LanLink/commit/e615f6b47f9114f6c5825b5b36dbee96b902a145) |

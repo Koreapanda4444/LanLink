@@ -124,6 +124,92 @@ void test_relay_health(const std::filesystem::path& directory) {
     server.stop();
 }
 
+void test_regional_recovery(const std::filesystem::path& directory) {
+    core::Logger logger(directory/"regional.log","regional-test",core::LogLevel::warning,1024*1024,2);
+    const auto base=static_cast<std::uint16_t>(35000+(std::chrono::steady_clock::now().time_since_epoch().count()%18000));
+    auto home_key=auth::DeviceIdentity::load_or_create(directory/"home-health.identity");
+    auto a_key=auth::DeviceIdentity::load_or_create(directory/"region-a-health.identity");
+    auto b_key=auth::DeviceIdentity::load_or_create(directory/"region-b-health.identity");
+    transport::QuicServerOptions home;home.listen_host="127.0.0.1";home.port=base;home.max_connections=64;
+    home.certificate_file=directory/"cert.pem";home.private_key_file=directory/"key.pem";home.auth_token_file=directory/"auth.token";
+    home.relay_id="home";home.authority="regional-fixture";home.health_identity_file=directory/"home-health.identity";
+    auth::RelayEndpoint root{home.relay_id,"127.0.0.1",home.port,"home",64,protocol::protocol_version,home.authority,home_key.public_key()};
+    auto database=std::make_unique<storage::RelayStore>(directory/"regional-home.db");
+    auto service=std::make_unique<relay::NetworkService>(*database);
+    auto control=std::make_unique<relay::NetworkControlChannel>(*service);
+    auto authority=std::make_unique<transport::QuicRelayServer>(home,logger,*control);authority->start();
+    auto region=home;region.max_connections=16;region.upstream=root;region.auth_token_file.clear();
+    region.relay_id="region-a";region.port=static_cast<std::uint16_t>(base+1);region.health_identity_file=directory/"region-a-health.identity";
+    auth::RelayEndpoint ea{region.relay_id,"127.0.0.1",region.port,"asia",16,protocol::protocol_version,home.authority,a_key.public_key()};
+    auto first=std::make_unique<transport::QuicRelayServer>(region,logger);first->start();
+    region.relay_id="region-b";region.port=static_cast<std::uint16_t>(base+2);region.health_identity_file=directory/"region-b-health.identity";
+    auth::RelayEndpoint eb{region.relay_id,"127.0.0.1",region.port,"europe",16,protocol::protocol_version,home.authority,b_key.public_key()};
+    auto second=std::make_unique<transport::QuicRelayServer>(region,logger);second->start();
+    std::atomic_bool cancelled=false;auto next_probe=std::chrono::steady_clock::now();
+    wait_until([&]{
+        if(std::chrono::steady_clock::now()<next_probe)return false;
+        next_probe=std::chrono::steady_clock::now()+250ms;
+        try{return transport::probe_relay(ea,1s,cancelled).health.ready && transport::probe_relay(eb,1s,cancelled).health.ready;}catch(const std::exception&){return false;}
+    },"regional authority health did not become ready");
+    transport::QuicClientOptions options;options.identity_file=directory/"regional-owner.identity";options.auth_token_file=directory/"auth.token";
+    options.relay_pool={ea,eb};options.catalog_revision=1;
+    options.catalog_expires_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())+3'600'000;
+    options.handshake_timeout=300ms;options.reconnect_initial_delay=100ms;options.reconnect_maximum_delay=500ms;
+    transport::QuicRelayClient owner(options,logger);options.identity_file=directory/"regional-member.identity";
+    transport::QuicRelayClient member(options,logger);
+    std::jthread owner_worker([&](std::stop_token stop){owner.run(stop);}),member_worker([&](std::stop_token stop){member.run(stop);});
+    wait_until([&]{return owner.authenticated() && member.authenticated();},"regional clients did not authenticate at the shared authority");
+    const auto network=owner.create_network("Persistent regional network").network_id;
+    const auto owner_id=owner.cached_packet_identity()->device_id,member_id=member.cached_packet_identity()->device_id;
+    expect(owner.invite_member(network,member_id).code==protocol::NetworkResultCode::success && member.join_network(network).code==protocol::NetworkResultCode::success,"cross-region shared membership failed");
+    auto synchronized=[&]{const auto a=owner.cached_peer_state(network),b=member.cached_peer_state(network);const auto x=owner.cached_network_key(network),y=member.cached_network_key(network);return owner.authenticated() && member.authenticated() && a && b && x && y && x->epoch==y->epoch && x->epoch==a->key_epoch && x->epoch==b->key_epoch;};
+    wait_until(synchronized,"regional keys did not synchronize");
+    const auto owner_ip=owner.cached_peer_state(network)->own_address,member_ip=member.cached_peer_state(network)->own_address;
+    std::vector<std::byte> plain(40);plain[0]=std::byte{0x45};plain[3]=std::byte{40};plain[8]=std::byte{64};plain[9]=std::byte{17};
+    for(unsigned i=0;i<4;++i){plain[12+i]=static_cast<std::byte>((owner_ip>>((3-i)*8))&255);plain[16+i]=static_cast<std::byte>((member_ip>>((3-i)*8))&255);}
+    std::atomic<unsigned> delivered=0;
+    auto transmit=[&]{
+        const auto key=*owner.cached_network_key(network);
+        auth::NetworkPacketCipher encrypt(network,key.epoch,key.key,owner_id,owner.cached_packet_identity()->signed_key,owner_ip);
+        encrypt.update_peers(*owner.cached_peer_state(network));
+        const auto receiver=std::make_shared<auth::NetworkPacketCipher>(network,key.epoch,key.key,member_id,member.cached_packet_identity()->signed_key,member_ip);
+        receiver->update_peers(*member.cached_peer_state(network));
+        member.set_encrypted_packet_handler([&,receiver](const auto& packet){expect(receiver->decrypt(packet.packet,packet.sender_device_id)==plain,"regional ciphertext plaintext mismatch");++delivered;});
+        const auto packet=encrypt.encrypt(plain);owner.send_encrypted_packet(packet);return packet;
+    };
+    const auto old_packet=transmit();wait_until([&]{return delivered.load()==1;},"regional encrypted IPv4 was not delivered");
+    const auto failed_region=owner.selected_relay().id;const auto old_session=owner.session_id();const auto old_epoch=owner.cached_network_key(network)->epoch;
+    if(failed_region==ea.id){first->stop();first.reset();}else{second->stop();second.reset();}
+    wait_until([&]{return owner.selected_relay().id!=failed_region && owner.session_id()!=old_session && synchronized() && owner.cached_network_key(network)->epoch!=old_epoch;},"failed region did not reauthenticate and resynchronize",20s);
+    expect(owner.cached_peer_state(network)->own_address==owner_ip && member.cached_peer_state(network)->own_address==member_ip,"regional failover changed persistent IP leases");
+    static_cast<void>(transmit());wait_until([&]{return delivered.load()==2;},"post-failover IPv4 was not delivered");
+    expect_error([&]{owner.send_encrypted_packet(old_packet);},"client must reject ciphertext from the previous key epoch");
+    expect(control->route_encrypted_packet(owner_id,protocol::encode_encrypted_network_packet(old_packet)).empty(),"authority must reject a modified client replaying the old epoch");
+    std::this_thread::sleep_for(100ms);
+    expect(delivered.load()==2,"stale-epoch ciphertext was delivered after failover");
+    auto restored_options=region;
+    restored_options.relay_id=failed_region;restored_options.port=failed_region==ea.id?ea.port:eb.port;
+    restored_options.health_identity_file=directory/(failed_region==ea.id?"region-a-health.identity":"region-b-health.identity");
+    auto restored=std::make_unique<transport::QuicRelayServer>(restored_options,logger);restored->start();
+    next_probe=std::chrono::steady_clock::now();
+    wait_until([&]{
+        if(std::chrono::steady_clock::now()<next_probe)return false;
+        next_probe=std::chrono::steady_clock::now()+250ms;
+        try{return transport::probe_relay(failed_region==ea.id?ea:eb,1s,cancelled).health.ready;}catch(const std::exception&){return false;}
+    },"recovered region did not rejoin the shared authority");
+    expect(owner.selected_relay().id!=failed_region,"recovered region must not immediately flap a healthy session");
+    const auto before_restart=owner.session_id();authority->stop();authority.reset();control.reset();service.reset();database.reset();
+    database=std::make_unique<storage::RelayStore>(directory/"regional-home.db");service=std::make_unique<relay::NetworkService>(*database);
+    control=std::make_unique<relay::NetworkControlChannel>(*service);authority=std::make_unique<transport::QuicRelayServer>(home,logger,*control);authority->start();
+    wait_until([&]{return owner.session_id()!=before_restart && synchronized();},"authority process-state restart did not recover persistent membership",25s);
+    expect(owner.cached_peer_state(network)->own_address==owner_ip && member.cached_peer_state(network)->own_address==member_ip,"authority restart lost persistent IP leases");
+    static_cast<void>(transmit());wait_until([&]{return delivered.load()==3;},"authority restart did not restore encrypted data");
+    owner.stop();member.stop();owner_worker.request_stop();member_worker.request_stop();owner_worker.join();member_worker.join();
+    if(first)first->stop();
+    if(second)second->stop();
+    restored->stop();authority->stop();
+}
+
 void test_network_management(const std::filesystem::path& directory) {
     const auto token = directory / "auth.token";
     const auto database = directory / "relay.db";
@@ -993,6 +1079,7 @@ int main(const int argc, char* argv[]) {
         }
         std::cerr << "Starting QUIC network management" << std::endl;
         std::cerr<<"Starting authenticated relay health"<<std::endl;test_relay_selection(argv[1]);test_relay_health(argv[1]);
+        std::cerr<<"Starting regional failure and authority recovery"<<std::endl;test_regional_recovery(argv[1]);
         test_network_management(argv[1]);
         std::cerr << "Starting peer state reconnect" << std::endl;
         test_peer_state_reconnect(argv[1]);

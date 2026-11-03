@@ -74,20 +74,31 @@ int main(const int argc, char* argv[]) {
         options.relay_id=config.relay_id;options.authority=config.relay_authority;
         options.health_identity_file=config.relay_health_identity_file;
 
-        lanlink::storage::RelayStore store(config.relay_database_file);
-        lanlink::relay::NetworkService network_service(store);
-        lanlink::relay::NetworkControlChannel control_channel(network_service);
-        lanlink::transport::QuicRelayServer server(
-            std::move(options), logger, control_channel);
+        std::unique_ptr<lanlink::storage::RelayStore> store;
+        std::unique_ptr<lanlink::relay::NetworkService> network_service;
+        std::unique_ptr<lanlink::relay::NetworkControlChannel> control_channel;
+        std::unique_ptr<lanlink::transport::QuicRelayServer> server;
+        if(!config.relay_upstream_host.empty()) {
+            lanlink::auth::RelayEndpoint home{config.relay_upstream_id,config.relay_upstream_host,config.relay_upstream_port};
+            home.capacity=config.relay_upstream_capacity;home.authority=config.relay_authority;
+            home.health_key=lanlink::auth::parse_directory_key(config.relay_upstream_health_public_key);
+            options.upstream=std::move(home);
+            server=std::make_unique<lanlink::transport::QuicRelayServer>(std::move(options),logger);
+        }else {
+            store=std::make_unique<lanlink::storage::RelayStore>(config.relay_database_file);
+            network_service=std::make_unique<lanlink::relay::NetworkService>(*store);
+            control_channel=std::make_unique<lanlink::relay::NetworkControlChannel>(*network_service);
+            server=std::make_unique<lanlink::transport::QuicRelayServer>(std::move(options),logger,*control_channel);
+        }
         std::signal(SIGINT, handle_signal);
         std::signal(SIGTERM, handle_signal);
-        server.start();
+        server->start();
 
         while (stop_requested == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds{200});
         }
 
-        server.stop();
+        server->stop();
         logger.info("stopped");
         logger.flush();
         return EXIT_SUCCESS;
