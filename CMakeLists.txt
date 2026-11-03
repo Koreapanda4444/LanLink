@@ -216,6 +216,7 @@ if(LANLINK_FOUNDATION_ONLY)
 endif()
 
 add_library(lanlink_transport STATIC
+    src/transport/relay_pool.cpp
     src/transport/relay_probe.cpp
     src/transport/directory_fetch.cpp
     src/p2p/direct_quic.cpp

@@ -1,4 +1,5 @@
 #include "lanlink/auth/relay_health.hpp"
+#include "lanlink/transport/relay_pool.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/protocol/ipv4_fanout.hpp"
 
@@ -1177,6 +1178,9 @@ public:
           logger_(logger),
           reconnect_(options_.reconnect_initial_delay, options_.reconnect_maximum_delay) {
         validate_client_options(options_);
+        if(options_.relay_probe_interval<std::chrono::seconds(1))throw std::invalid_argument("relay probe interval too short");
+        if(!options_.relay_pool.empty())pool_=std::make_unique<RelayPool>(options_.relay_pool);
+        selected_relay_={"manual",options_.relay_host,options_.port};
 
         try {
             identity_ = std::make_unique<auth::DeviceIdentity>(
@@ -1318,6 +1322,10 @@ public:
         }
         std::lock_guard lock(state->mutex);
         return state->authenticated && static_cast<bool>(state->tcp);
+    }
+
+    [[nodiscard]] auth::RelayEndpoint selected_relay() const {
+        std::lock_guard lock(selection_mutex_);return selected_relay_;
     }
 
     [[nodiscard]] ClientDiagnostics diagnostics() const {
@@ -2005,52 +2013,84 @@ private:
         }
     }
 
+    static std::uint64_t utc_ms() {
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    }
+    std::optional<auth::RelayEndpoint> scan_pool() {
+        const auto utc=utc_ms();
+        if(options_.refresh_directory && utc+60'000>=options_.catalog_expires_ms &&
+           std::chrono::steady_clock::now()>=next_directory_refresh_) {
+            next_directory_refresh_=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+            try {
+                const auto next=options_.refresh_directory();
+                if(next.from_directory && next.catalog_revision>=options_.catalog_revision && next.catalog_expires_ms>utc) {
+                    pool_->update(next.pool);
+                    options_.catalog_revision=next.catalog_revision;options_.catalog_expires_ms=next.catalog_expires_ms;
+                }
+            }catch(const std::exception&){log_noexcept(logger_,core::LogLevel::warning,"relay directory refresh rejected");}
+        }
+        if(utc>=options_.catalog_expires_ms)return std::nullopt;
+        const auto candidates=pool_->due(std::chrono::steady_clock::now());
+        std::vector<std::optional<RelayProbe>> samples(candidates.size());
+        std::vector<std::chrono::steady_clock::time_point> measured_at(candidates.size());std::atomic_size_t cursor=0;
+        std::vector<std::jthread> probes;
+        for(std::size_t n=0;n<(std::min)(candidates.size(),std::size_t{4});++n)probes.emplace_back([&]{
+            for(auto i=cursor.fetch_add(1);i<candidates.size() && !stop_requested_.load();i=cursor.fetch_add(1)) {
+                try{samples[i]=probe_relay(candidates[i],std::chrono::seconds(2),stop_requested_);measured_at[i]=std::chrono::steady_clock::now();}catch(const std::exception&){}
+            }
+        });
+        for(auto& probe:probes)probe.join();
+        const auto now=std::chrono::steady_clock::now();
+        for(std::size_t i=0;i<candidates.size();++i) {
+            if(samples[i])pool_->observe(candidates[i],*samples[i],measured_at[i]);else pool_->failed(candidates[i].id,now);
+        }
+        if(utc_ms()>=options_.catalog_expires_ms)return std::nullopt;
+        return pool_->choose(now);
+    }
     void run_loop() {
         reconnect_.reset();
-
         while (!stop_requested_.load()) {
+            bool planned=false;udp_recovered_=false;
+            if(pool_) {
+                const auto selected=scan_pool();
+                if(stop_requested_.load())break;
+                if(!selected) {
+                    record_error("No verified, available relay in the current directory");
+                    std::unique_lock lock(delay_mutex_);delay_wake_.wait_for(lock,std::chrono::seconds(1),[this]{return stop_requested_.load();});continue;
+                }
+                options_.relay_host=selected->host;options_.port=selected->port;
+                {std::lock_guard lock(selection_mutex_);selected_relay_=*selected;}
+                pool_->activate(selected->id,std::chrono::steady_clock::now());
+                log_noexcept(logger_,core::LogLevel::info,"selected relay "+selected->id+" region "+selected->region);
+            }
             const auto state = std::make_shared<AttemptState>();
-
             if (start_attempt(state)) {
                 std::unique_lock lock(state->mutex);
-                state->complete_wake.wait(lock, [&] {
-                    return state->complete || stop_requested_.load();
-                });
-
-                if (stop_requested_.load() && state->connection != nullptr &&
-                    !state->shutdown_requested) {
-                    state->shutdown_requested = true;
-                    api_->ConnectionShutdown(state->connection,
-                                             QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,
-                                             application_shutdown_code);
+                while(!state->complete && !stop_requested_.load()) {
+                    if(state->complete_wake.wait_for(lock,options_.relay_probe_interval,[&]{return state->complete || stop_requested_.load();}))break;
+                    if(!pool_ || !state->authenticated)continue;
+                    lock.unlock();const auto candidate=scan_pool();lock.lock();
+                    if(candidate && candidate->id!=selected_relay().id && !state->complete && !state->shutdown_requested && !stop_requested_.load()) {
+                        planned=true;state->shutdown_requested=true;
+                        api_->ConnectionShutdown(state->connection,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,application_shutdown_code);
+                    }
                 }
-
+                if (stop_requested_.load() && state->connection != nullptr && !state->shutdown_requested) {
+                    state->shutdown_requested = true;
+                    api_->ConnectionShutdown(state->connection,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,application_shutdown_code);
+                }
                 state->complete_wake.wait(lock, [&] { return state->complete; });
             }
-
             clear_active(state);
-
             const auto quic_succeeded = state->ever_authenticated;
-            const auto quic_connected = state->quic_connected;
-            if (!quic_connected && !stop_requested_.load()) {
-                static_cast<void>(run_tcp_attempt());
-            }
-
-            if (quic_succeeded) {
-                reconnect_.reset();
-            }
-
-            if (stop_requested_.load()) {
-                break;
-            }
-
+            if (!state->quic_connected && !stop_requested_.load())static_cast<void>(run_tcp_attempt());
+            if (quic_succeeded)reconnect_.reset();
+            if (stop_requested_.load())break;
+            if(pool_ && !planned && !udp_recovered_)pool_->failed(selected_relay().id,std::chrono::steady_clock::now());
             reconnect_count_.fetch_add(1);
-            const auto delay = reconnect_.next_delay();
-            log_noexcept(logger_,
-                         core::LogLevel::warning,
-                         "reconnecting to relay in " + std::to_string(delay.count()) + " ms");
-            std::unique_lock lock(delay_mutex_);
-            delay_wake_.wait_for(lock, delay, [this] { return stop_requested_.load(); });
+            const auto delay = planned?std::chrono::milliseconds::zero():reconnect_.next_delay();
+            log_noexcept(logger_,core::LogLevel::warning,"reconnecting to relay in " + std::to_string(delay.count()) + " ms");
+            std::unique_lock lock(delay_mutex_);delay_wake_.wait_for(lock, delay, [this] { return stop_requested_.load(); });
         }
     }
 
@@ -2227,6 +2267,7 @@ private:
         if (state->ever_authenticated) {
             reconnect_.reset();
         }
+        udp_recovered_=udp_available.load();
         return state->ever_authenticated;
     }
 
@@ -2885,6 +2926,11 @@ private:
         context->state->pending.erase(found);
     }
 
+    std::unique_ptr<RelayPool> pool_;
+    mutable std::mutex selection_mutex_;
+    auth::RelayEndpoint selected_relay_;
+    std::chrono::steady_clock::time_point next_directory_refresh_{};
+    bool udp_recovered_=false;
     QuicClientOptions options_;
     core::Logger& logger_;
     ReconnectBackoff reconnect_;
@@ -3028,6 +3074,8 @@ bool QuicRelayClient::using_tcp_fallback() const noexcept {
 protocol::NegotiatedCapabilities QuicRelayClient::capabilities() const {
     return impl_->capabilities();
 }
+
+auth::RelayEndpoint QuicRelayClient::selected_relay() const {return impl_->selected_relay();}
 
 ClientDiagnostics QuicRelayClient::diagnostics() const {
     return impl_->diagnostics();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/auth/network_keys.hpp"
+#include "lanlink/auth/directory.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
 #include "lanlink/transport/resource_limits.hpp"
@@ -65,6 +66,10 @@ struct QuicClientOptions {
     std::chrono::milliseconds reconnect_initial_delay{1'000};
     std::chrono::milliseconds reconnect_maximum_delay{30'000};
     std::chrono::milliseconds tcp_probe_interval{60'000};
+    std::vector<auth::RelayEndpoint> relay_pool;
+    std::uint64_t catalog_expires_ms=0,catalog_revision=0;
+    std::function<auth::BootstrapResult()> refresh_directory;
+    std::chrono::milliseconds relay_probe_interval{30'000};
 };
 
 struct ClientDiagnostics {
@@ -137,6 +142,7 @@ public:
     [[nodiscard]] std::uint64_t received_datagram_count() const noexcept;
     [[nodiscard]] bool using_tcp_fallback() const noexcept;
     [[nodiscard]] ClientDiagnostics diagnostics() const;
+    [[nodiscard]] auth::RelayEndpoint selected_relay() const;
     [[nodiscard]] protocol::NegotiatedCapabilities capabilities() const;
 
     [[nodiscard]] protocol::ManagementResult manage_network(const protocol::ManagementRequest& request,

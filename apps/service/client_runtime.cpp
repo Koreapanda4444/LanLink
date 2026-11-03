@@ -52,6 +52,15 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
     if(!bootstrap.error.empty()) logger.warning(bootstrap.error);
     options.relay_host=bootstrap.relay.host; options.port=bootstrap.relay.port;
+    if(bootstrap.catalog_revision) {
+        options.relay_pool=bootstrap.pool;
+        options.catalog_expires_ms=bootstrap.catalog_expires_ms;
+        options.catalog_revision=bootstrap.catalog_revision;
+        options.refresh_directory=[config]{
+            return lanlink::auth::resolve_bootstrap(config,lanlink::transport::fetch_directory,
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
+        };
+    }
     options.identity_file = config.device_identity_file;
     options.auth_token_file = config.auth_token_file;
     options.handshake_timeout = std::chrono::milliseconds{config.quic_handshake_timeout_ms};

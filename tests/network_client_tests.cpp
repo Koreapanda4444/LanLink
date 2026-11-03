@@ -8,6 +8,7 @@
 #include "lanlink/session/peer_packet_path.hpp"
 #include "lanlink/auth/packet_crypto.hpp"
 #include "lanlink/transport/relay_probe.hpp"
+#include "lanlink/transport/relay_pool.hpp"
 
 #include <algorithm>
 #include <array>
@@ -68,6 +69,30 @@ void expect_error(Function&& function, const std::string& description) {
     throw std::runtime_error(description);
 }
 
+void test_relay_selection(const std::filesystem::path& directory) {
+    const auto signer=auth::DeviceIdentity::load_or_create(directory/"selection.identity");
+    auth::RelayEndpoint a{"a","a.example.com",4433,"eu",100,protocol::protocol_version,"home",signer.public_key()};
+    auto b=a;b.id="b";b.host="b.example.com";b.region="asia";
+    transport::RelayPool pool({a,b});
+    const auto start=transport::RelayPool::Clock::time_point{}+1s;
+    auto sample=[&](const auto& e,auto rtt){transport::RelayProbe p;p.health.relay_id=e.id;p.health.authority=e.authority;p.health.capacity=e.capacity;p.health.ready=true;p.rtt=rtt;return p;};
+    auto slow=sample(a,100ms),fast=sample(b,20ms);
+    pool.observe(a,slow,start);pool.observe(b,fast,start);
+    expect(pool.choose(start)->id=="b","measured quality must win over directory order or region");
+    pool.activate("a",start);expect(pool.choose(start)->id=="a","healthy active relay must respect hold time");
+    const auto later=start+31s;pool.observe(a,slow,later);pool.observe(b,fast,later);
+    expect(pool.choose(later)->id=="b","large improvement after hold must permit migration");
+    fast.rtt=80ms;pool.observe(b,fast,later);expect(pool.choose(later)->id=="a","small quality jitter must not flap relays");
+    fast.health.upstream_rtt_us=100'000;fast.rtt=1ms;pool.observe(b,fast,later);
+    pool.failed("a",later);expect(pool.choose(later)->id=="b","failure must bypass quality hold");
+    expect(!pool.choose(later+5s),"expired health observations must not authorize a new connection");
+    expect(pool.due(later+1ms).size()==0,"failed node must respect cooldown and fresh healthy samples");
+    pool.observe(b,fast,later);b.health_key[0]^=std::byte{1};pool.update({b});
+    expect(!pool.choose(later),"key rotation must invalidate cached health");
+    pool.observe(a,slow,later);expect(!pool.choose(later),"removed node results must not revive it");
+    b.authority="unrelated";expect_error([&]{pool.update({b});},"authority boundary must survive directory refresh");
+}
+
 void test_relay_health(const std::filesystem::path& directory) {
     const auto signer=auth::DeviceIdentity::load_or_create(directory/"health.identity");
     core::Logger logger(directory/"health.log","health-test",core::LogLevel::warning,1024*1024,2);
@@ -86,6 +111,15 @@ void test_relay_health(const std::filesystem::path& directory) {
     expect_error([&]{static_cast<void>(transport::probe_relay(wrong,2s,stopping));},"TLS alone must not replace the directory health-key pin");
     wrong=endpoint;wrong.authority="other-home";
     expect_error([&]{static_cast<void>(transport::probe_relay(wrong,2s,stopping));},"health must bind the selected authority");
+    transport::QuicClientOptions selected;selected.relay_host="invalid.example.com";
+    selected.identity_file=directory/"selection-client.identity";selected.auth_token_file=directory/"auth.token";
+    selected.handshake_timeout=200ms;selected.reconnect_initial_delay=100ms;selected.reconnect_maximum_delay=200ms;
+    selected.relay_pool={endpoint};selected.catalog_revision=1;
+    selected.catalog_expires_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())+60'000;
+    transport::QuicRelayClient client(selected,logger);std::jthread worker([&](std::stop_token stop){client.run(stop);});
+    wait_until([&]{return client.authenticated();},"verified relay pool did not authenticate over TLS fallback");
+    expect(client.selected_relay()==endpoint && client.list_networks().result.networks.empty(),"pool must use the verified endpoint and retain normal network RPC");
+    client.stop();worker.request_stop();worker.join();
     stopping=true;expect_error([&]{static_cast<void>(transport::probe_relay(endpoint,2s,stopping));},"cancelled probes must not connect");
     server.stop();
 }
@@ -958,7 +992,7 @@ int main(const int argc, char* argv[]) {
             throw std::invalid_argument("usage: network-client-tests fixture-directory");
         }
         std::cerr << "Starting QUIC network management" << std::endl;
-        std::cerr<<"Starting authenticated relay health"<<std::endl;test_relay_health(argv[1]);
+        std::cerr<<"Starting authenticated relay health"<<std::endl;test_relay_selection(argv[1]);test_relay_health(argv[1]);
         test_network_management(argv[1]);
         std::cerr << "Starting peer state reconnect" << std::endl;
         test_peer_state_reconnect(argv[1]);
