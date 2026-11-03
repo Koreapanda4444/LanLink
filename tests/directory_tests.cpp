@@ -27,6 +27,25 @@ int main(){
         require(auth::resolve_bootstrap(config,fetch,1000).relay.host=="relay.example.com","authenticated directory selection");
         bytes=altered;auto fallback=auth::resolve_bootstrap(config,fetch,1000);
         require(!fallback.from_directory && fallback.relay.host==config.relay_host && !fallback.error.empty(),"untrusted directory preserves manual fallback");
+        auth::DirectoryCatalog regional=c;regional.scope=auth::DirectoryScope::self_hosted;regional.revision=7;
+        for(auto& relay:regional.relays){relay.region="eu-central";relay.capacity=128;relay.authority="home";relay.health_key=id.public_key();}
+        auto other=regional.relays.front();other.id="other";other.host="other.example.com";other.authority="isolated";regional.relays.push_back(other);
+        bytes=auth::sign_directory(regional,id);const auto verified=auth::verify_directory(bytes,id.public_key(),1000);
+        require(verified.scope==regional.scope && verified.revision==7 && verified.relays==regional.relays,"regional metadata must be authenticated and canonical");
+        config.directory_relay_id.clear();auto pool=auth::resolve_bootstrap(config,fetch,1000);
+        require(pool.pool.size()==2 && pool.catalog_revision==7 && pool.catalog_expires_ms==61000,"failover pool must stay within one authority");
+        config.directory_relay_id="eu";require(auth::resolve_bootstrap(config,fetch,1000).pool.size()==1,"explicit relay pin disables other candidates");
+        config.directory_relay_id.clear();config.bootstrap_mode="official";
+        require(!auth::resolve_bootstrap(config,fetch,1000).from_directory,"self-hosted catalogs must not cross official trust scope");
+        config.bootstrap_mode="self_hosted";
+        regional.relays.front().protocol_version=6;bytes=auth::sign_directory(regional,id);
+        require(auth::resolve_bootstrap(config,fetch,1000).relay.id=="eu","unsupported relay protocol must not be selected");
+        regional.relays.front().protocol_version=protocol::protocol_version;
+        auto invalid=regional;invalid.relays.front().health_key={};rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
+        invalid=regional;invalid.relays[1].host=invalid.relays[0].host;invalid.relays[1].port=invalid.relays[0].port;
+        rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
+        invalid=regional;invalid.scope=auth::DirectoryScope::legacy;rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
+        invalid=regional;invalid.revision=0;rejects([&]{static_cast<void>(auth::sign_directory(invalid,id));});
         config.directory_url="http://localhost/v1/relays";rejects([&]{core::validate_config(config);});
         std::filesystem::remove(path);std::cout<<"signed bootstrap passed\n";return 0;
     }catch(const std::exception& e){std::filesystem::remove(path);std::cerr<<e.what()<<'\n';return 1;}

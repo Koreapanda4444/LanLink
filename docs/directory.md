@@ -6,4 +6,14 @@ The API is GET `/v1/relays`, HTTP 200, `application/vnd.lanlink.directory`, at m
 
 Generate a one-hour catalog with `lanlink-directory-sign data/directory.identity relays.bin kr relay.example.com 4433`. Pin the printed public key in client configuration through a trusted channel. Keep the signing identity offline. Run `python deploy/directory/serve.py --catalog relays.bin --cert cert.pem --key key.pem` behind a managed HTTPS endpoint, refreshing the signed file before expiry. The serving process cannot sign catalogs and supports only read requests. Use a valid DNS/IP certificate trusted by the client's OS (Windows) or OpenSSL (Linux). Local verification may use a fixture CA through SSL_CERT_FILE; production verification is never disabled.
 
-Bootstrap selects a configured ID or the first trusted entry. Regional health probes and failover belong to Phase 7. Directory discovery does not distribute or replace relay authentication tokens.
+Legacy LLD1 catalogs retain their existing selection and do not enable automatic failover. Directory discovery never distributes or replaces authentication tokens.
+
+## Regional catalogs
+
+LLD2 adds a nonzero catalog revision, an explicit `official` or `self_hosted` scope and per-relay region, capacity, wire protocol version, shared authority ID and pinned Ed25519 health key. All fields are covered by the directory signature. Scope must match the configured bootstrap mode. Clients exclude unsupported protocol versions and never form a failover pool across authority IDs. A configured `directory_relay_id` pins one endpoint. Operators must only group relays that use the same live authority; independent SQLite databases are separate networks even if their names match.
+
+```sh
+lanlink-directory-sign --regional self_hosted 1 data/directory.identity relays.bin kr relay.example.com 4433 kr-seoul 128 home HEALTH_PUBLIC_KEY
+```
+
+The additional canonical header after issued/expires is uint64 revision and uint8 scope (1 official, 2 self-hosted). Each LLD2 endpoint appends uint16-length-prefixed region, uint32 capacity, uint16 protocol, length-prefixed authority and 32 health-key bytes. Endpoint addresses and IDs must be unique; IDs/authorities are at most 64 ASCII characters, regions 32, hosts 253, capacity 1..1,000,000. Existing size, lifetime and signature checks remain. The unsigned HTTPS serving process cannot add a node, replace a trust key or change load metadata.
