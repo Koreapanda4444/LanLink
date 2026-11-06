@@ -12,7 +12,7 @@ $shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'LanLink.
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'LanLink.lnk'
 $registry = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink'
 function Assert-True([bool] $Condition, [string] $Message) { if (-not $Condition) { throw $Message } }
-function Invoke-Setup([string[]] $Arguments, [bool] $Success = $true) {
+function Invoke-Setup([string[]] $Arguments, [bool] $Success = $true, [switch] $AllowFailure) {
     Write-Output ("Setup operation: " + ($Arguments -join " "))
     $information = [Diagnostics.ProcessStartInfo]::new([IO.Path]::GetFullPath($Installer))
     $information.UseShellExecute = $false
@@ -22,7 +22,7 @@ function Invoke-Setup([string[]] $Arguments, [bool] $Success = $true) {
     $process = [Diagnostics.Process]::Start($information)
     try {
         if (-not $process.WaitForExit(180000)) { $process.Kill($true); throw 'The EXE installer timed out.' }
-        if (($process.ExitCode -eq 0) -ne $Success) {
+        if (-not $AllowFailure -and (($process.ExitCode -eq 0) -ne $Success)) {
             foreach ($log in @('setup.log.client.log', 'setup.log')) {
                 if (Test-Path (Join-Path $root $log)) { Get-Content (Join-Path $root $log) -Tail 70 }
             }
@@ -112,6 +112,23 @@ public static class LanLinkIconResources {
     Assert-True ((Test-Path (Join-Path $program 'bin\lanlink-ui-cli.exe')) -and (Test-Path $shortcut) -and -not (Test-Path $desktopShortcut)) 'Modify did not restore optional components.'
     Invoke-Setup @('/MODE=install', '/NoStart=1')
     Assert-Preserved
+    # Preserve the original executable-lock regression: Windows may permit an
+    # atomic directory rename or reject it, but must never partially move the
+    # installed tree. Require every installed file to remain complete in either
+    # outcome. The shortcut case below separately requires a late failure.
+    $programHashes = @{}
+    Get-ChildItem -LiteralPath $program -File -Recurse | Where-Object Name -ne 'installation.json' | ForEach-Object {
+        $programHashes[$_.FullName] = (Get-FileHash -LiteralPath $_.FullName).Hash
+    }
+    $locked = [IO.File]::Open((Join-Path $program 'bin\lanlink-ui.exe'), 'Open', 'Read', 'Read')
+    try { Invoke-Setup @('/MODE=repair', '/NoStart=1') -AllowFailure } finally { $locked.Dispose() }
+    foreach ($entry in $programHashes.GetEnumerator()) {
+        Assert-True ((Test-Path -LiteralPath $entry.Key) -and (Get-FileHash -LiteralPath $entry.Key).Hash -eq $entry.Value) "Executable-lock repair partially moved or changed the program tree: $($entry.Key)"
+    }
+    Assert-Preserved
+    Assert-True (-not (Get-Content (Join-Path $root 'setup.log.client.log') -Raw).Contains('rollback was incomplete')) 'Executable-lock rollback did not finish.'
+    Assert-True ((Get-Service LanLink).Status -eq 'Stopped') 'Executable-lock repair changed the previous service state.'
+    Write-Output 'Locked executable: complete installed tree, credentials and service state preserved.'
     # Force a real late failure when Repair replaces an installed shortcut.
     # The program tree has already been replaced at this point, so rollback
     # must restore both the complete previous tree and the original shortcut.
