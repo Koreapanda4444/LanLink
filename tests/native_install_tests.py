@@ -89,9 +89,23 @@ with tempfile.TemporaryDirectory(prefix="lanlink-native-install-") as directory:
     install = [sys.executable, str(source / "install-client.py")]
     uninstall = [sys.executable, str(source / "uninstall-client.py")]
     try:
-        command(install + ["--relay", "127.0.0.1", "--port", "9", "--token-file", str(token), "--user", args.user])
+        command(install + ["--user", args.user])
         first = ready()
-        print("Installed service ready", flush=True)
+        print("Installed unconfigured service ready", flush=True)
+        status = command([str(prefix / "bin/lanlink-ui-cli"), "status"])
+        assert "server configuration: unconfigured" in status.stdout, status.stdout
+        assert not (state / "auth.token").exists() and not (state / "device.identity").exists()
+        os.kill(first, signal.SIGKILL)
+        ready(previous=first)
+        command(install + ["--no-start"])
+        # App-owned registration is outside the installer. This existing native
+        # fixture still exercises the configured transport/adapter lifecycle.
+        (state / "auth.token").write_bytes(token.read_bytes())
+        (state / "auth.token").chmod(0o600)
+        with config.open("a") as output:
+            output.write("relay_host=127.0.0.1\nrelay_port=9\n")
+        start()
+        first = ready()
         control = grp.getgrnam("lanlink").gr_gid
         socket_info = Path("/var/run/lanlink/control.sock").stat()
         assert socket_info.st_gid == control and socket_info.st_mode & 0o777 == 0o660, "Service control socket must be group-restricted"

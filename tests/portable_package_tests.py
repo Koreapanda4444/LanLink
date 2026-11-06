@@ -39,9 +39,16 @@ with tempfile.TemporaryDirectory(prefix="lanlink-install-") as directory:
     token.write_text("lanlink-isolated-installer-test-token-2026\n")
     install = [sys.executable, str(source / "install-client.py"), "--root", str(root), "--no-start"]
     uninstall = [sys.executable, str(source / "uninstall-client.py"), "--root", str(root)]
-    subprocess.run(install + ["--relay", "127.0.0.1", "--token-file", str(token)], check=True)
+    subprocess.run(install, check=True)
     config = root / ("Library/Preferences/LanLink/client.conf" if mac else "etc/lanlink/client.conf")
     state = root / ("Library/Application Support/LanLinkData" if mac else "var/lib/lanlink")
+    assert "relay_host=" not in config.read_text(), "Fresh install must not select a server"
+    assert not (state / "auth.token").exists(), "Installer must not invent server credentials"
+    # Simulate app-owned connection data; reinstall must leave it byte-for-byte.
+    with config.open("a") as output:
+        output.write("relay_host=127.0.0.1\nrelay_port=9\n")
+    (state / "auth.token").write_bytes(token.read_bytes())
+    (state / "auth.token").chmod(0o600)
     identity = state / "device.identity"
     identity.write_bytes(b"isolated device identity fixture")
     protected = (config, identity, state / "auth.token")

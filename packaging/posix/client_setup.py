@@ -112,9 +112,6 @@ def restore_desktop(desktop, previous):
 def install_main():
     parser = argparse.ArgumentParser(description="Install the LanLink desktop client")
     parser.add_argument("--root", default="/", help="Staging root; services and user groups are untouched")
-    parser.add_argument("--relay")
-    parser.add_argument("--port", type=int, default=4433)
-    parser.add_argument("--token-file", type=Path)
     parser.add_argument("--user", help="Existing user to add to the local control group")
     parser.add_argument("--no-start", action="store_true")
     args = parser.parse_args()
@@ -122,10 +119,6 @@ def install_main():
     live = root == Path("/")
     if live and os.geteuid() != 0:
         parser.error("Run the installer with sudo")
-    if args.relay and (not re.fullmatch(r"[A-Za-z0-9.:-]{1,253}", args.relay) or not 1 <= args.port <= 65535):
-        parser.error("Invalid relay host or port")
-    if bool(args.relay) != bool(args.token_file):
-        parser.error("--relay and --token-file must be provided together")
     if args.user:
         pwd.getpwnam(args.user)
     source = Path(__file__).resolve().parent
@@ -152,15 +145,6 @@ def install_main():
     for link in source.rglob("*"):
         if link.is_symlink() and not link.resolve().is_relative_to(source):
             raise ValueError("Runtime library link escapes the package")
-    token = None
-    if args.token_file:
-        token = args.token_file.read_bytes()
-        if not 32 <= len(token.strip()) <= 4096:
-            raise ValueError("Authentication token must contain 32 to 4096 bytes")
-        if config.exists():
-            raise ValueError("Configuration already exists; upgrade without --relay to preserve it")
-        if (state / "auth.token").exists():
-            raise ValueError("Existing token must be preserved; restore client.conf before installing")
     for directory in (prefix.parent, config.parent, state, logs, unit.parent, desktop.parent):
         directory.mkdir(parents=True, exist_ok=True)
     if live:
@@ -174,6 +158,7 @@ def install_main():
     created = []
     installed = False
     was_active = live and active()
+    start_attempted = False
     try:
         shutil.copytree(source, temporary, dirs_exist_ok=True, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         temporary.chmod(0o755)
@@ -191,32 +176,29 @@ def install_main():
         if live and MAC:
             os.chown(unit, 0, 0)
         install_desktop(prefix, desktop)
-        if token is not None:
-            target = state / "auth.token"
-            with target.open("xb") as output:
-                created.append(target)
-                os.fchmod(output.fileno(), 0o600)
-                output.write(token)
+        if not config.exists():
             with config.open("x") as output:
                 created.append(config)
                 os.fchmod(output.fileno(), 0o600)
                 _, _, host_state, host_logs, _, _ = layout(Path("/"))
-                output.write(f"relay_host={args.relay}\nrelay_port={args.port}\n"
+                output.write("# Server connections are configured separately in LanLink.\n"
                     f"auth_token_file={host_state / 'auth.token'}\n"
                     f"device_identity_file={host_state / 'device.identity'}\n"
                     f"log_directory={host_logs}\n")
         if live:
             reload_service()
-            if config.exists() and not args.no_start:
+            if not args.no_start:
+                start_attempted = True
                 start_service(unit)
         if backup.exists():
             shutil.rmtree(backup)
         print(f"Installed LanLink {metadata['version']} in {prefix}")
-        if not config.exists():
-            print(f"Create {config} using INSTALL.md before starting the service.")
+        print("Open LanLink. The service can wait without a registered server.")
         if args.user and live:
             print("Sign out and back in to activate control group membership.")
     except BaseException:
+        if start_attempted and active():
+            stop_service()
         if installed:
             shutil.rmtree(prefix)
         if backup.exists():
