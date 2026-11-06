@@ -31,9 +31,9 @@ auth::SignedDeviceKey key(const auth::DeviceIdentity& identity) {
     result.signature=identity.sign(auth::make_auth_transcript(result.identity_public_key,result.encryption_public_key,result.client_nonce,result.server_nonce));
     return result;
 }
-template<class F> void wait(F ready) {
+template<class F> void wait(const char* operation,F ready) {
     const auto end=std::chrono::steady_clock::now()+15s;
-    while(!ready()) { require(std::chrono::steady_clock::now()<end,"NAT peer timed out"); std::this_thread::sleep_for(20ms); }
+    while(!ready()) { require(std::chrono::steady_clock::now()<end,operation); std::this_thread::sleep_for(20ms); }
 }
 std::vector<std::byte> packet(std::uint32_t source,std::uint32_t destination) {
     std::vector<std::byte> data(128,std::byte{0x71});data[0]=std::byte{0x45};data[2]=std::byte{0};data[3]=std::byte{128};
@@ -80,7 +80,7 @@ int main(int argc,char** argv) { try {
         transport::QuicRelayClient client(options,logger);
         std::exception_ptr error;
         std::jthread worker([&](std::stop_token stop){try{client.run(stop);}catch(...){error=std::current_exception();}});
-        wait([&]{return client.authenticated() && client.using_tcp_fallback();});
+        wait("NAT TLS authentication timed out",[&]{return client.authenticated() && client.using_tcp_fallback();});
         require(client.list_networks().code==protocol::NetworkResultCode::success,"TLS fallback control failed across NAT");
         worker.request_stop();client.stop();worker.join();if(error)std::rethrow_exception(error);
         std::cout<<name<<": kernel UDP block -> authenticated TLS fallback passed\n";return 0;
@@ -92,12 +92,18 @@ int main(int argc,char** argv) { try {
         require(cipher.decrypt(delivery.packet,delivery.sender_device_id)==packet(other.own_address,state.own_address),"NAT plaintext changed");++received;
     });
     peer.synchronize({{{identity.device_id(),own_key}},{{state,{1,network_key}}}});
-    peer.start();peer.connect(remote);wait([&]{return peer.authenticated();});
+    peer.start();
+    // Both punched UDP sockets have now been replaced by their QUIC endpoint.
+    // Do not let the faster certificate initialization send into a port whose
+    // listener has not started: an ICMP refusal can end the single test dial.
+    save(root/(name+".direct-ready"),{});
+    wait("NAT peer listener readiness timed out",[&]{return std::filesystem::exists(root/(left?"b.direct-ready":"a.direct-ready"));});
+    peer.connect(remote);wait("NAT Direct authentication timed out",[&]{return peer.authenticated();});
     const auto plaintext=packet(state.own_address,other.own_address);
     for(unsigned index=0;index<30;++index) {
         const auto encrypted=cipher.encrypt(plaintext);require(encrypted.ciphertext!=plaintext,"plaintext left NAT peer");
         require(peer.send(encrypted)==transport::PacketSendResult::accepted,"NAT Direct send failed");std::this_thread::sleep_for(30ms);
     }
-    wait([&]{return received.load()>0;});peer.stop();
+    wait("NAT encrypted packet receive timed out",[&]{return received.load()>0;});peer.stop();
     std::cout<<name<<(loopback?": loopback fixture":": kernel SNAT/DNAT")<<", signed punch and encrypted Direct QUIC passed\n";return 0;
 } catch(const std::exception& error) { std::cerr<<error.what()<<'\n';return 1; } }

@@ -88,11 +88,14 @@ def main():
                                 processes.append(subprocess.Popen(inside(name,binary,root,name,40003-index,50000+index,mode),
                                                                   env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True))
                             messages = []
+                            failures = []
                             for process in processes:
                                 text, _ = process.communicate(timeout=40)
                                 if process.returncode:
-                                    raise RuntimeError(text)
+                                    failures.append(text.strip())
                                 messages.append(text.strip())
+                            if failures:
+                                raise RuntimeError(f'{mode} peers: ' + ' | '.join(messages))
                             results.append({'scenario':mode,'status':'passed','evidence':messages})
                             print(json.dumps(results[-1]), flush=True)
                         finally:
