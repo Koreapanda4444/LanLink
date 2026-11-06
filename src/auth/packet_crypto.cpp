@@ -21,8 +21,6 @@ using CipherContext = std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_f
 
 constexpr std::string_view key_domain = "lanlink-virtual-packet-key-v1";
 constexpr std::string_view aad_domain = "lanlink-virtual-packet-aad-v1";
-constexpr std::size_t wire_header_size = protocol::network_id_size + 4 + 8 + 4 +
-                                         protocol::packet_nonce_size + 2;
 
 template <std::size_t Size>
 bool is_zero(const std::array<std::byte, Size>& value) {
@@ -120,8 +118,7 @@ std::vector<std::byte> authenticated_data(
     const DeviceId& sender_id,
     const EncryptionPublicKey& session_public_key,
     const std::uint32_t source_ipv4) {
-    auto header = protocol::encode_encrypted_network_packet(packet);
-    header.resize(wire_header_size);
+    const auto header = protocol::encode_encrypted_network_packet_header(packet);
     std::vector<std::byte> output;
     output.reserve(aad_domain.size() + header.size() + sender_id.size() +
                    session_public_key.size() + 4);
@@ -322,7 +319,7 @@ protocol::EncryptedNetworkPacket NetworkPacketCipher::encrypt(
 std::vector<std::byte> NetworkPacketCipher::decrypt(
     const protocol::EncryptedNetworkPacket& packet,
     const DeviceId& authenticated_sender) {
-    static_cast<void>(protocol::encode_encrypted_network_packet(packet));
+    static_cast<void>(protocol::encode_encrypted_network_packet_header(packet));
     if (packet.network_id != network_id_ || packet.key_epoch != key_epoch_) {
         throw std::runtime_error("virtual packet does not match current network key");
     }

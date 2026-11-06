@@ -14,6 +14,7 @@ inline constexpr std::size_t min_virtual_ipv4_packet_size = 20;
 inline constexpr std::size_t max_virtual_ipv4_packet_size = 65'535;
 inline constexpr std::size_t packet_nonce_size = 12;
 inline constexpr std::size_t packet_tag_size = 16;
+inline constexpr std::size_t encrypted_packet_header_size = network_id_size + 4 + 8 + 4 + packet_nonce_size + 2;
 
 struct EncryptedNetworkPacket {
     NetworkId network_id{};
@@ -34,6 +35,8 @@ struct ForwardedNetworkPacket {
     bool operator==(const ForwardedNetworkPacket&) const = default;
 };
 
+[[nodiscard]] std::array<std::byte, encrypted_packet_header_size> encode_encrypted_network_packet_header(
+    const EncryptedNetworkPacket& packet);
 [[nodiscard]] std::vector<std::byte> encode_encrypted_network_packet(
     const EncryptedNetworkPacket& packet);
 [[nodiscard]] EncryptedNetworkPacket decode_encrypted_network_packet(

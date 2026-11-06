@@ -60,7 +60,7 @@
 | 54 | `feat(relay): add quotas, accounting and abuse safeguards` — 전송량/연결/요청량 제한, 장애·비용 방지 및 운영 메트릭 | 구현 |
 | 55 | `feat(deploy): ship reproducible multi-region self-hosting` — Oracle Linux 9 등 기존 배포 경로 유지, 설정·롤백·백업 문서 | 구현 |
 | 56 | `fix(reliability): harden lifecycle, cancellation and concurrency` — TLS 수신기 동시 시작·종료 직렬화, 중복 시작 거부·활성 연결 종료·재시작 회귀 | 구현 |
-| 57 | `perf(network): optimize buffering, allocations and forwarding` — 측정값 기반 성능 개선, 회귀 지표 제공 | 대기 |
+| 57 | `perf(network): optimize buffering, allocations and forwarding` — 인증 헤더의 payload 복사·할당 제거, 크기별 직렬화 비교 지표 | 구현 |
 | 58 | `security(audit): verify protocol, auth, keys and permissions` — 위협 모델·악용 방지·의존성 점검·보안 회귀 테스트 | 대기 |
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |

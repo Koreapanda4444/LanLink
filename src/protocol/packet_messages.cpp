@@ -7,16 +7,8 @@
 namespace lanlink::protocol {
 namespace {
 
-constexpr std::size_t header_size = network_id_size + 4 + 8 + 4 + packet_nonce_size + 2;
+constexpr std::size_t header_size = encrypted_packet_header_size;
 constexpr std::size_t fixed_size = header_size + packet_tag_size;
-
-template <typename Integer>
-void append_integer(std::vector<std::byte>& output, const Integer value) {
-    for (std::size_t index = sizeof(Integer); index > 0; --index) {
-        output.push_back(std::byte{static_cast<unsigned char>(
-            value >> ((index - 1) * 8U))});
-    }
-}
 
 template <typename Integer>
 Integer read_integer(const std::span<const std::byte> payload,
@@ -56,19 +48,31 @@ bool valid_packet(const EncryptedNetworkPacket& packet) {
 
 }
 
-std::vector<std::byte> encode_encrypted_network_packet(
+std::array<std::byte, encrypted_packet_header_size> encode_encrypted_network_packet_header(
     const EncryptedNetworkPacket& packet) {
     if (!valid_packet(packet)) {
         throw std::invalid_argument("encrypted packet header or length is invalid");
     }
+    std::array<std::byte, encrypted_packet_header_size> output{};
+    auto position = std::copy(packet.network_id.begin(), packet.network_id.end(), output.begin());
+    const auto append = [&](const auto value) {
+        for (std::size_t index = sizeof(value); index > 0; --index)
+            *position++ = std::byte{static_cast<unsigned char>(value >> ((index - 1) * 8U))};
+    };
+    append(packet.destination_ipv4);
+    append(packet.key_epoch);
+    append(packet.sequence);
+    position = std::copy(packet.nonce.begin(), packet.nonce.end(), position);
+    append(static_cast<std::uint16_t>(packet.ciphertext.size()));
+    return output;
+}
+
+std::vector<std::byte> encode_encrypted_network_packet(
+    const EncryptedNetworkPacket& packet) {
+    const auto header = encode_encrypted_network_packet_header(packet);
     std::vector<std::byte> output;
     output.reserve(fixed_size + packet.ciphertext.size());
-    output.insert(output.end(), packet.network_id.begin(), packet.network_id.end());
-    append_integer(output, packet.destination_ipv4);
-    append_integer(output, packet.key_epoch);
-    append_integer(output, packet.sequence);
-    output.insert(output.end(), packet.nonce.begin(), packet.nonce.end());
-    append_integer(output, static_cast<std::uint16_t>(packet.ciphertext.size()));
+    output.insert(output.end(), header.begin(), header.end());
     output.insert(output.end(), packet.ciphertext.begin(), packet.ciphertext.end());
     output.insert(output.end(), packet.tag.begin(), packet.tag.end());
     return output;

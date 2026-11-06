@@ -12,6 +12,8 @@ endif()
 
 project(LanLink VERSION 0.9.0 LANGUAGES CXX)
 
+option(LANLINK_BUILD_BENCHMARKS "Build reproducible packet serialization measurements" OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -194,6 +196,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 add_executable(lanlink_directory_sign apps/relay/directory_sign.cpp)
+if(LANLINK_BUILD_BENCHMARKS)
+    add_executable(lanlink_packet_benchmark tests/packet_benchmark.cpp)
+    target_link_libraries(lanlink_packet_benchmark PRIVATE lanlink_protocol)
+    lanlink_enable_warnings(lanlink_packet_benchmark)
+endif()
 target_link_libraries(lanlink_directory_sign PRIVATE lanlink_auth lanlink_core)
 set_target_properties(lanlink_directory_sign PROPERTIES OUTPUT_NAME "lanlink-directory-sign")
 lanlink_enable_warnings(lanlink_directory_sign)
