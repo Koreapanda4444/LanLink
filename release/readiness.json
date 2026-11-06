@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "checks": {
+    "physical_nat": {"status": "pending", "evidence": ""},
+    "mixed_os_realtime": {"status": "pending", "evidence": ""},
+    "game_host_guest": {"status": "pending", "evidence": ""}
+  }
+}

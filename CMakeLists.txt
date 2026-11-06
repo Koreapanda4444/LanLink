@@ -11,7 +11,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     list(PREPEND VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_LIST_DIR}/cmake/triplets")
 endif()
 
-project(LanLink VERSION 0.9.0 LANGUAGES CXX)
+project(LanLink VERSION 1.0.0 LANGUAGES CXX)
 
 option(LANLINK_BUILD_BENCHMARKS "Build reproducible packet serialization measurements" OFF)
 

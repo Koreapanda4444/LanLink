@@ -12,7 +12,7 @@ import tempfile
 from urllib.parse import urlsplit
 from common import digest, require
 
-VERSION = "0.9.0"
+VERSION = "1.0.0"
 LIMITS = {
     "relay_send_queue_bytes", "relay_send_queue_frames", "relay_control_requests_per_second",
     "relay_health_requests_per_second", "relay_device_bytes_per_second", "relay_network_bytes_per_second",

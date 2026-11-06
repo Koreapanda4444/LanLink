@@ -42,7 +42,7 @@ def fixture_files(kind):
     if kind == "relay":
         result["bin/lanlink-relay"] = linux_binary()
         result["bin/lanlink-directory-sign"] = linux_binary()
-        result["lib/libmsquic.so.2.4.8"] = linux_binary()
+        result["lib/libmsquic.so.2.6.3"] = linux_binary()
     result["package-version.txt" if kind == "windows" else "relay-version.txt"] = (prepare.VERSION + "\n").encode()
     result["build-info.json"] = json.dumps({
         "version": prepare.VERSION, "source_commit": COMMIT, "source_clean": True,
@@ -69,7 +69,7 @@ def write_package(directory, kind, files=None, links=None, root=""):
                 entry = tarfile.TarInfo(archive_name(name))
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
-            for name, target in (links or {"lib/libmsquic.so.2": "libmsquic.so.2.4.8"}).items():
+            for name, target in (links or {"lib/libmsquic.so.2": "libmsquic.so.2.6.3"}).items():
                 entry = tarfile.TarInfo(archive_name(name))
                 entry.type = tarfile.SYMTYPE
                 entry.linkname = target
@@ -170,6 +170,13 @@ class ReleaseAssetsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid Windows installer"):
             prepare.inspect_installer(self.directory / prepare.INSTALLER, COMMIT)
 
+    def test_unverified_acceptance_blocks_publication(self):
+        with mock.patch.object(publish, "gh") as cli, mock.patch.object(publish, "api") as api:
+            with self.assertRaisesRegex(ValueError, "unverified acceptance"):
+                publish.main(self.directory, COMMIT)
+            cli.assert_not_called()
+            api.assert_not_called()
+
     def test_package_metadata_mismatch(self):
         for field, value in (("source_commit", "b" * 40), ("version", "99.0.0"),
                              ("source_clean", False), ("architecture", "arm64"),
@@ -242,7 +249,7 @@ class ReleaseAssetsTests(unittest.TestCase):
             write_package(self.directory, kind)
         write_native_pair(self.directory)
         prepare.prepare(self.directory, COMMIT, native=True)
-        with mock.patch.object(publish, "gh", return_value='{"nameWithOwner":"owner/repository"}') as cli, \
+        with mock.patch.object(publish, "require_release_readiness"), mock.patch.object(publish, "gh", return_value='{"nameWithOwner":"owner/repository"}') as cli, \
              mock.patch.object(publish, "api", return_value={"object": {"type": "commit", "sha": "b" * 40}}):
             with self.assertRaisesRegex(ValueError, "different commit"):
                 publish.main(self.directory, COMMIT)
@@ -253,7 +260,7 @@ class ReleaseAssetsTests(unittest.TestCase):
             write_package(self.directory, kind)
         write_native_pair(self.directory)
         prepare.prepare(self.directory, COMMIT, native=True)
-        with mock.patch.object(publish, "gh", return_value='{"nameWithOwner":"owner/repository"}') as cli, \
+        with mock.patch.object(publish, "require_release_readiness"), mock.patch.object(publish, "gh", return_value='{"nameWithOwner":"owner/repository"}') as cli, \
              mock.patch.object(publish, "api", side_effect=[None, {"draft": True, "target_commitish": "b" * 40}]):
             with self.assertRaisesRegex(ValueError, "another commit"):
                 publish.main(self.directory, COMMIT)

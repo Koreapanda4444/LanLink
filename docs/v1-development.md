@@ -1,6 +1,6 @@
 # v1.0 개발 로드맵
 
-첨부 최종 기획서의 60개 커밋을 유지한다. 현재 구현 범위는 01~55이다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
+첨부 최종 기획서의 60개 커밋을 유지한다. 01~60의 코드·시험 도구·패키지 준비를 진행했으며, 59번 물리 환경 검증과 공개 발행 승인은 남아 있다. 구현 상태와 검증 상태를 분리하며 실제 장비에서 확인하지 못한 항목은 검증 결과에서 명시한다. 공개 배포는 별도 승인 후 진행한다.
 
 | 번호 | 목표 | 상태 |
 |---|---|---|
@@ -62,10 +62,10 @@
 | 56 | `fix(reliability): harden lifecycle, cancellation and concurrency` — TLS 수신기 동시 시작·종료 직렬화, 중복 시작 거부·활성 연결 종료·재시작 회귀 | 구현 |
 | 57 | `perf(network): optimize buffering, allocations and forwarding` — 인증 헤더의 payload 복사·할당 제거, 크기별 직렬화 비교 지표 | 구현 |
 | 58 | `security(audit): verify protocol, auth, keys and permissions` — fd 경계 수정·실제 런타임 버전 하한·MsQuic 2.6.3/OpenSSL 3.6.4·위협 모델과 회귀 | 구현 |
-| 59 | `test(compat): validate NAT, games and cross-platform matrices` — 두 Linux NAT 라우터와 UDP 차단/TLS 시험·OS/게임 검증표, 물리 공유기/혼합 OS 실시간은 미검증 | 검증 중 |
-| 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
+| 59 | `test(compat): validate NAT, games and cross-platform matrices` — 두 Linux NAT 라우터와 UDP 차단/TLS 시험·OS/게임 검증표, 물리 공유기/혼합 OS 실시간은 미검증 | 자동 시험 구현·실기기 검증 대기 |
+| 60 | `release(v1.0.0): prepare and verify production artifacts` — 다섯 패키지·출처·보안 의존성·체크섬 검증과 미확인 실사용 조건의 공개 발행 차단 | 패키지 준비·공개 승인 대기 |
 
-01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 42~49는 v0.8.0으로 구현했으며 [검증 기록](verification-v0.8.md)에 native OS 검증과 물리 장비 시험의 제한을 정리한다. 50~51번은 서명된 지역별 Relay 등록과 인증된 상태·부하 신호를 구현했다. 52번은 실측 RTT·부하·유효한 상태를 이용한 선택과 안정화/수동 고정을 구현했다. 53번은 하나의 영구 authority를 공유하는 QUIC/TLS 지역 앞단과 지역/중앙 재시작 시 재인증·키/IP 복원을 구현했다. 54번은 중앙 전체/네트워크/장치별 바이트·전달·요청 제한, fanout 비용 계수와 aggregate 상태 지표를 구현했다. 55번은 v0.9.0으로 inventory 기반 지역 설정·서명 catalog 생성, 실제 노드 키 검증 설치와 snapshot 백업·차단된 빈 대상 복원을 구현했다. 50~55의 시험 항목과 환경 제한은 [v0.9 기록](verification-v0.9.md)에 정리한다. 56~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
+01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 42~49는 v0.8.0으로 구현했으며 [검증 기록](verification-v0.8.md)에 native OS 검증과 물리 장비 시험의 제한을 정리한다. 50~51번은 서명된 지역별 Relay 등록과 인증된 상태·부하 신호를 구현했다. 52번은 실측 RTT·부하·유효한 상태를 이용한 선택과 안정화/수동 고정을 구현했다. 53번은 하나의 영구 authority를 공유하는 QUIC/TLS 지역 앞단과 지역/중앙 재시작 시 재인증·키/IP 복원을 구현했다. 54번은 중앙 전체/네트워크/장치별 바이트·전달·요청 제한, fanout 비용 계수와 aggregate 상태 지표를 구현했다. 55번은 v0.9.0으로 inventory 기반 지역 설정·서명 catalog 생성, 실제 노드 키 검증 설치와 snapshot 백업·차단된 빈 대상 복원을 구현했다. 50~55의 시험 항목과 환경 제한은 [v0.9 기록](verification-v0.9.md)에 정리한다. 56~60은 [v1.0 검증 기록](verification-v1.0.md)에 구현·자동 시험과 남은 실사용 승인 조건을 구분한다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.
 
 ## 기능별 커밋 SHA
 
@@ -127,4 +127,9 @@
 | 52 | [e615f6b](https://github.com/Koreapanda4444/LanLink/commit/e615f6b47f9114f6c5825b5b36dbee96b902a145) |
 | 53 | [00c9fa0](https://github.com/Koreapanda4444/LanLink/commit/00c9fa01157b71016ceb91decbb2f2e5e6473e21) |
 | 54 | [ed3c6b7](https://github.com/Koreapanda4444/LanLink/commit/ed3c6b767f778b3dd44c536a247a98006c7aedda) |
-| 55 | 다중 리전 배포 도구와 v0.9.0 메타데이터를 포함한 이 문서의 변경 커밋 |
+| 55 | [4228280](https://github.com/Koreapanda4444/LanLink/commit/4228280596fddf5b5c38d30ec518989b764d1f47) |
+| 56 | [cb1a5a3](https://github.com/Koreapanda4444/LanLink/commit/cb1a5a3014980225ad6aa2110e10028af67b3bf0) |
+| 57 | [085a9c0](https://github.com/Koreapanda4444/LanLink/commit/085a9c071881b84b86afc0d062e21847643c47d4) |
+| 58 | [ffc565b](https://github.com/Koreapanda4444/LanLink/commit/ffc565b0a42583b155788806a3a83a56ff341ed6), MSVC 보완 [9d8e6f1](https://github.com/Koreapanda4444/LanLink/commit/9d8e6f12ac3336fff0a1b036e8164f3b98c73d12) |
+| 59 | [a355e61](https://github.com/Koreapanda4444/LanLink/commit/a355e614deb51dd2cf15916e71262a3f87a33401) |
+| 60 | v1.0.0 패키지·공개 승인 게이트를 포함한 이 문서의 변경 커밋 |

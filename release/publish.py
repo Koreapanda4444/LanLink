@@ -21,16 +21,17 @@ def api(path):
     return json.loads(result.stdout)
 
 
-def retire_previous(repository):
-    previous = "v0.1.0"
-    if api(f"repos/{repository}/releases/tags/{previous}") is not None:
-        gh("release", "delete", previous, "--yes", "--cleanup-tag")
-        require(api(f"repos/{repository}/releases/tags/{previous}") is None and
-                api(f"repos/{repository}/git/ref/tags/{previous}") is None,
-                "previous release cleanup is incomplete")
+def require_release_readiness():
+    readiness = json.loads(Path(__file__).with_name("readiness.json").read_text())
+    required = {"physical_nat", "mixed_os_realtime", "game_host_guest"}
+    checks = readiness.get("checks", {})
+    require(readiness.get("schema") == 1 and required <= checks.keys(), "release readiness evidence is incomplete")
+    pending = [name for name in sorted(required) if checks[name].get("status") != "passed" or not checks[name].get("evidence")]
+    require(not pending, "public release is blocked by unverified acceptance checks: " + ", ".join(pending))
 
 
 def main(directory, commit):
+    require_release_readiness()
     directory = Path(directory)
     manifest = verify(directory, commit, native=True)
     repository = json.loads(gh("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
@@ -52,7 +53,6 @@ def main(directory, commit):
         with tempfile.TemporaryDirectory(prefix="lanlink-published-") as temporary:
             gh("release", "download", tag, "--dir", temporary)
             verify(temporary, commit, native=True)
-        retire_previous(repository)
         print(f"Verified existing release: {release['html_url']}")
         return
 
@@ -70,7 +70,6 @@ def main(directory, commit):
     published = api(f"repos/{repository}/releases/tags/{tag}")
     require(published is not None and not published["draft"] and len(published["assets"]) == len(manifest["assets"]) + 3,
             "release was not published with every verified asset")
-    retire_previous(repository)
     print(f"Published {published['html_url']}")
 
 

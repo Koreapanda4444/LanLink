@@ -1,12 +1,12 @@
 # 다중 리전 자체 서버 운영
 
-v0.9.0의 지역 Relay는 하나의 영구 중앙 authority를 공유한다. 중앙만 SQLite DB와 클라이언트 인증 토큰을 보관한다. 각 지역 앞단은 별도 TLS 인증서와 상태 서명 identity를 보관하고 원래 클라이언트의 인증 proof·제어·암호화 데이터를 중앙으로 중계한다. 지역 노드마다 독립 DB를 복사하는 방식은 사용하지 않는다. Direct P2P 데이터는 기존대로 Relay를 우회한다. 지역 상행은 TLS/TCP이므로 중앙까지의 지연과 TCP 대기 비용이 있다.
+v1.0.0의 지역 Relay는 하나의 영구 중앙 authority를 공유한다. 중앙만 SQLite DB와 클라이언트 인증 토큰을 보관한다. 각 지역 앞단은 별도 TLS 인증서와 상태 서명 identity를 보관하고 원래 클라이언트의 인증 proof·제어·암호화 데이터를 중앙으로 중계한다. 지역 노드마다 독립 DB를 복사하는 방식은 사용하지 않는다. Direct P2P 데이터는 기존대로 Relay를 우회한다. 지역 상행은 TLS/TCP이므로 중앙까지의 지연과 TCP 대기 비용이 있다.
 
 패키지 지원 기준은 Linux x64/glibc 2.34다. 동일 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검사한다. 호스트에는 Python 3.9 이상, OpenSSL, ca-certificates, libstdc++와 systemd가 필요하다. 기존 `install-relay.sh`와 서비스 계정·방화벽 정책을 그대로 사용한다. Linux client와 Relay는 설치 경로를 공유하므로 서로 다른 호스트에 설치한다.
 
 ## 1. 패키지와 키 준비
 
-검증된 ZIP/EXE/Linux/macOS 패키지는 CI의 `LanLink-0.9.0-release` artifact에 함께 보관된다. 자체 서버에는 `LanLink-relay-0.9.0-linux-x86_64.tar.gz`를 사용한다. `SHA256SUMS`와 `release-manifest.json`의 소스 SHA를 확인하고 중앙·지역 모두 같은 패키지를 사용한다. 소스 빌드는 `deploy/linux/build-relay.sh`가 `vcpkg.json`의 고정 baseline을 확인한다.
+검증된 ZIP/EXE/Linux/macOS 패키지는 CI의 `LanLink-1.0.0-release` artifact에 함께 보관된다. 자체 서버에는 `LanLink-relay-1.0.0-linux-x86_64.tar.gz`를 사용한다. `SHA256SUMS`와 `release-manifest.json`의 소스 SHA를 확인하고 중앙·지역 모두 같은 패키지를 사용한다. 소스 빌드는 `deploy/linux/build-relay.sh`가 `vcpkg.json`의 고정 baseline을 확인한다.
 
 Oracle Linux 9의 런타임 도구:
 

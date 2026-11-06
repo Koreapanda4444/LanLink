@@ -11,7 +11,7 @@ import tarfile
 import zipfile
 
 
-VERSION = "0.9.0"
+VERSION = "1.0.0"
 DEPENDENCY_POLICY = json.loads((Path(__file__).parent / "dependencies.json").read_text())
 QUIC_PORT_SHA256 = hashlib.sha256((Path(__file__).parent.parent / "cmake/ports/msquic/portfile.cmake").read_bytes()).hexdigest()
 BASELINE = "a1cae005c39be7b18ba319fced856b68d7276271"
