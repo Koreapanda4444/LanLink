@@ -19,6 +19,8 @@ else()
 endif()
 # Keep upstream warnings, but do not make a new compiler warning a dependency build failure.
 vcpkg_replace_string("${SOURCE_PATH}/CMakeLists.txt" "-Werror -Wall" "-Wall")
+vcpkg_replace_string("${SOURCE_PATH}/CMakeLists.txt" "/WX /W4" "/W4")
+string(COMPARE EQUAL "${VCPKG_CRT_LINKAGE}" "static" STATIC_CRT)
 vcpkg_cmake_configure(SOURCE_PATH "${SOURCE_PATH}" OPTIONS
     -DQUIC_SOURCE_LINK=OFF
     -DQUIC_BUILD_SHARED=ON
@@ -26,6 +28,8 @@ vcpkg_cmake_configure(SOURCE_PATH "${SOURCE_PATH}" OPTIONS
     -DQUIC_BUILD_PERF=OFF
     -DQUIC_ENABLE_LOGGING=OFF
     -DQUIC_TLS_LIB=${tls_provider}
+    -DQUIC_STATIC_LINK_CRT=${STATIC_CRT}
+    -DQUIC_STATIC_LINK_PARTIAL_CRT=${STATIC_CRT}
     ${tls_options}
 )
 vcpkg_cmake_install()
