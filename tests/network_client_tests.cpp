@@ -9,6 +9,7 @@
 #include "lanlink/auth/packet_crypto.hpp"
 #include "lanlink/transport/relay_probe.hpp"
 #include "lanlink/transport/relay_pool.hpp"
+#include "lanlink/transport/quic_version.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,6 +29,12 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/select.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -67,6 +74,22 @@ void expect_error(Function&& function, const std::string& description) {
         return;
     }
     throw std::runtime_error(description);
+}
+
+void test_quic_version_floor() {
+    static std::array<std::uint32_t, 4> version{};
+    QUIC_API_TABLE table{};
+    table.GetParam = [](HQUIC, std::uint32_t, std::uint32_t* size, void* output) -> QUIC_STATUS {
+        std::copy(version.begin(), version.end(), static_cast<std::uint32_t*>(output));
+        *size = static_cast<std::uint32_t>(sizeof(version));
+        return QUIC_STATUS_SUCCESS;
+    };
+    for (const auto old : {std::array{2U, 4U, 8U, 0U}, std::array{2U, 5U, 11U, 0U}, std::array{2U, 6U, 2U, 0U}}) {
+        version = old;
+        expect_error([&] { transport::require_secure_quic(&table); }, "unsafe runtime bypassed the version floor");
+    }
+    version = {2, 6, 3, 0};
+    transport::require_secure_quic(&table);
 }
 
 void test_relay_selection(const std::filesystem::path& directory) {
@@ -900,6 +923,29 @@ void test_tls_tcp_fallback(const std::filesystem::path& directory) {
 }
 
 void test_tls_backpressure(const std::filesystem::path& directory) {
+#ifndef _WIN32
+    struct Descriptors {
+        std::vector<int> held;
+        rlimit previous{};
+        bool changed = false;
+        ~Descriptors() {
+            for (const auto descriptor : held) close(descriptor);
+            if (changed) static_cast<void>(setrlimit(RLIMIT_NOFILE, &previous));
+        }
+    } descriptors;
+    expect(getrlimit(RLIMIT_NOFILE, &descriptors.previous) == 0, "cannot inspect descriptor test limit");
+    auto raised = descriptors.previous;
+    raised.rlim_cur = std::max(raised.rlim_cur, static_cast<rlim_t>(FD_SETSIZE + 128));
+    expect(raised.rlim_cur <= raised.rlim_max && setrlimit(RLIMIT_NOFILE, &raised) == 0,
+           "high descriptor regression requires FD_SETSIZE+128 descriptors");
+    descriptors.changed = true;
+    while (descriptors.held.empty() || descriptors.held.back() < FD_SETSIZE + 16) {
+        const auto descriptor = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        expect(descriptor >= 0, "cannot reserve high descriptor regression fixture");
+        descriptors.held.push_back(descriptor);
+    }
+    std::cerr << "TLS sockets above FD_SETSIZE=" << FD_SETSIZE << std::endl;
+#endif
     const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto port = static_cast<std::uint16_t>(35'000 + (ticks % 20'000));
     std::mutex mutex;
@@ -1116,6 +1162,7 @@ int main(const int argc, char* argv[]) {
         if (argc != 2) {
             throw std::invalid_argument("usage: network-client-tests fixture-directory");
         }
+        test_quic_version_floor();
         std::cerr << "Starting QUIC network management" << std::endl;
         std::cerr<<"Starting authenticated relay health"<<std::endl;test_relay_selection(argv[1]);test_relay_health(argv[1]);
         std::cerr<<"Starting regional failure and authority recovery"<<std::endl;test_regional_recovery(argv[1]);

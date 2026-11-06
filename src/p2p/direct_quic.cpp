@@ -1,3 +1,4 @@
+#include "lanlink/transport/quic_version.hpp"
 #include "lanlink/p2p/direct_quic.hpp"
 #include "lanlink/protocol/binary.hpp"
 #include "lanlink/protocol/codec.hpp"
@@ -77,6 +78,7 @@ struct DirectQuic::Impl {
         if(!lease_valid || stopping)throw std::runtime_error("direct path has no current membership lease");
         try {
             checked(MsQuicOpen2(&api),"peer MsQuicOpen");
+            transport::require_secure_quic(api);
             QUIC_REGISTRATION_CONFIG reg{"lanlink-direct",QUIC_EXECUTION_PROFILE_LOW_LATENCY};checked(api->RegistrationOpen(&reg,&registration),"peer registration");
             QUIC_SETTINGS settings{};settings.PeerBidiStreamCount=1;settings.IsSet.PeerBidiStreamCount=TRUE;
             settings.DatagramReceiveEnabled=TRUE;settings.IsSet.DatagramReceiveEnabled=TRUE;

@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
+list(PREPEND VCPKG_OVERLAY_PORTS "${CMAKE_CURRENT_LIST_DIR}/cmake/ports")
 
 option(LANLINK_BUILD_DESKTOP "Build the portable SDL/OpenGL desktop" OFF)
 if(LANLINK_BUILD_DESKTOP)
@@ -23,7 +24,7 @@ option(LANLINK_FOUNDATION_ONLY "Build portable shared modules without network ex
 if(NOT LANLINK_FOUNDATION_ONLY)
     find_package(msquic CONFIG REQUIRED)
 endif()
-find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
+find_package(OpenSSL 3.6.4 REQUIRED COMPONENTS SSL Crypto)
 find_package(SQLite3 REQUIRED)
 
 if(TARGET SQLite3::SQLite3)
@@ -687,6 +688,7 @@ if(BUILD_TESTING)
                     lanlink_relay_domain
                     lanlink_auth
                     ${LANLINK_SQLITE_TARGET}
+                    ${LANLINK_MSQUIC_TARGET}
             )
             target_link_libraries(lanlink_network_client_tests PRIVATE lanlink_session)
             lanlink_enable_warnings(lanlink_network_client_tests)

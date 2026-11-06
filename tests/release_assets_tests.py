@@ -49,6 +49,7 @@ def fixture_files(kind):
         "protocol_version": 5, "system": "Windows" if kind == "windows" else "Linux",
         "distribution": "Windows" if kind == "windows" else "linux", "architecture": "x64",
         "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": prepare.VERSION},
+        "dependency_policy": prepare.DEPENDENCY_POLICY, "msquic_port_sha256": prepare.QUIC_PORT_SHA256,
     }).encode()
     return result
 
@@ -110,6 +111,7 @@ def native_files(system, architecture):
         "version": prepare.VERSION, "source_commit": COMMIT, "source_clean": True,
         "protocol_version": 5, "system": system, "architecture": architecture,
         "vcpkg_manifest": {"builtin-baseline": prepare.BASELINE, "version-string": prepare.VERSION},
+        "dependency_policy": prepare.DEPENDENCY_POLICY, "msquic_port_sha256": prepare.QUIC_PORT_SHA256,
     }).encode()
     if system == "Darwin":
         files["LanLink.app/Contents/Info.plist"] = prepare.plistlib.dumps({
@@ -171,7 +173,8 @@ class ReleaseAssetsTests(unittest.TestCase):
     def test_package_metadata_mismatch(self):
         for field, value in (("source_commit", "b" * 40), ("version", "99.0.0"),
                              ("source_clean", False), ("architecture", "arm64"),
-                             ("protocol_version", 4), ("distribution", "ubuntu")):
+                             ("protocol_version", 4), ("distribution", "ubuntu"),
+                             ("dependency_policy", {}), ("msquic_port_sha256", "0" * 64)):
             with self.subTest(field=field):
                 files = fixture_files("relay")
                 info = json.loads(files["build-info.json"])

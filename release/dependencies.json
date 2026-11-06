@@ -1,0 +1,8 @@
+{
+  "msquic": "2.6.3",
+  "msquic_commit": "16ca4d8d785d34fb22285e7c652e477ac16475a5",
+  "openssl": "3.6.4",
+  "sqlite3": "3.53.4",
+  "unix_quic_tls": "external-openssl",
+  "windows_quic_tls": "schannel"
+}

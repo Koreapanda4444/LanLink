@@ -14,7 +14,7 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <netdb.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -111,6 +111,7 @@ private:
 
 bool wait_socket(const Socket socket, const bool read, const bool write,
                  const bool connecting = false) {
+#ifdef _WIN32
     fd_set readers;
     fd_set writers;
     fd_set exceptions;
@@ -133,6 +134,17 @@ bool wait_socket(const Socket socket, const bool read, const bool write,
         throw std::runtime_error("TCP socket wait failed");
     }
     return result != 0;
+#else
+    static_cast<void>(connecting);
+    pollfd descriptor{socket, static_cast<short>((read ? POLLIN : 0) | (write ? POLLOUT : 0)), 0};
+    const auto result = poll(&descriptor, 1, 50);
+    if (result < 0) {
+        if (errno == EINTR) return false;
+        throw std::runtime_error("TCP socket wait failed");
+    }
+    if (descriptor.revents & POLLNVAL) throw std::runtime_error("TCP socket is invalid");
+    return result != 0;
+#endif
 }
 
 SocketOwner connect_socket(const std::string& host, const std::uint16_t port,

@@ -8,5 +8,7 @@
   "architecture": "@LANLINK_PACKAGE_ARCHITECTURE@",
   "compiler": "@CMAKE_CXX_COMPILER_ID@",
   "compiler_version": "@CMAKE_CXX_COMPILER_VERSION@",
+  "dependency_policy": @LANLINK_DEPENDENCY_POLICY@,
+  "msquic_port_sha256": "@LANLINK_QUIC_PORT_SHA256@",
   "vcpkg_manifest": @LANLINK_DEPENDENCY_MANIFEST@
 }

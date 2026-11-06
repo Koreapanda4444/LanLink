@@ -1,3 +1,4 @@
+#include "lanlink/transport/quic_version.hpp"
 #include "lanlink/auth/relay_health.hpp"
 #include "lanlink/transport/relay_pool.hpp"
 #include "lanlink/transport/relay_bridge.hpp"
@@ -737,6 +738,8 @@ private:
             api_ = nullptr;
             throw_status("MsQuicOpen2", status);
         }
+
+        require_secure_quic(api_);
 
         const QUIC_REGISTRATION_CONFIG registration_config{
             "lanlink-relay",
@@ -2069,6 +2072,8 @@ private:
             api_ = nullptr;
             throw_status("MsQuicOpen2", status);
         }
+
+        require_secure_quic(api_);
 
         const QUIC_REGISTRATION_CONFIG registration_config{
             "lanlink-service",

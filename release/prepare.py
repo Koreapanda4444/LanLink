@@ -12,6 +12,8 @@ import zipfile
 
 
 VERSION = "0.9.0"
+DEPENDENCY_POLICY = json.loads((Path(__file__).parent / "dependencies.json").read_text())
+QUIC_PORT_SHA256 = hashlib.sha256((Path(__file__).parent.parent / "cmake/ports/msquic/portfile.cmake").read_bytes()).hexdigest()
 BASELINE = "a1cae005c39be7b18ba319fced856b68d7276271"
 ARCHIVES = {
     "windows": f"LanLink-{VERSION}-windows-x64.zip",
@@ -134,6 +136,7 @@ def inspect_package(path, kind, commit, require_clean=True, distribution=None, r
     require(required <= files.keys(), f"incomplete {kind} package: {sorted(required - files.keys())}")
     require(all(files[name] for name in required), "empty required package file")
     metadata = json.loads(files["build-info.json"])
+    require(metadata.get("dependency_policy") == DEPENDENCY_POLICY and metadata.get("msquic_port_sha256") == QUIC_PORT_SHA256, "security dependency policy or overlay mismatch")
     require(metadata["version"] == VERSION and metadata["source_commit"] == commit,
             "package version or source commit mismatch")
     require(not require_clean or metadata["source_clean"] is True, "package source tree was dirty")
@@ -182,6 +185,7 @@ def package_names(directory, native=False):
 def inspect_native_package(path, commit):
     files, links = read_archive(path)
     metadata = json.loads(files["build-info.json"])
+    require(metadata.get("dependency_policy") == DEPENDENCY_POLICY and metadata.get("msquic_port_sha256") == QUIC_PORT_SHA256, "security dependency policy or overlay mismatch")
     require(metadata["version"] == VERSION and metadata["source_commit"] == commit and metadata["source_clean"] is True,
             "native package provenance mismatch")
     require(metadata["protocol_version"] == 5 and metadata["vcpkg_manifest"]["builtin-baseline"] == BASELINE and
