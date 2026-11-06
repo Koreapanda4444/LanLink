@@ -14,7 +14,7 @@
 
 TLS 동시 종료/재시작과 기존 Direct·Relay 회귀를 통과했다. 새 MsQuic 2.6.3과 OpenSSL 3.6.4를 실제로 빌드해 인증·암호화·Direct·Relay·TLS·상태 복구를 실행했다. 초기 Direct 단독 실행은 설치된 MsQuic의 로컬 라이브러리 검색 경로가 시스템 OpenSSL을 선택해 실패했으며, 개발용 MsQuic 설치의 RPATH를 새 OpenSSL 위치에 맞춘 뒤 통과했다. 이 로컬 경로는 배포 소스나 패키지에 넣지 않는다.
 
-전체 로컬 CTest는 45개를 실행한다. Unix socket 생성 권한이 없는 환경에서 IPC와 UI network model 두 개는 `Operation not permitted`로 실행되지 않으며 나머지 native 회귀는 통과했다. 이 두 시험은 CI에서 생략하지 않는다. Release validator와 공개 승인 차단의 Python 시험은 17개다.
+전체 로컬 CTest는 45개를 실행한다. Unix socket 생성 권한이 없는 환경에서 IPC와 UI network model 두 개는 `Operation not permitted`로 실행되지 않으며 나머지 native 회귀는 통과했다. 이 두 시험은 CI에서 생략하지 않는다. Release validator와 공개 승인 차단의 Python 시험은 18개다.
 
 NAT helper의 prepare·서명된 UDP 탐색·양방향 암호화 Direct는 서로 다른 두 프로세스의 loopback에서 확인했다. 로컬에는 `unshare --net` 권한이 없어 NAT topology는 CI의 Linux root namespace에서 실행한다. 59번 소스의 [NAT 검사 단계](https://github.com/Koreapanda4444/LanLink/actions/runs/42135577326/job/127622937577)는 두 kernel NAT 라우터의 Direct 암호화 통신과 UDP 차단 후 인증된 TLS fallback 검사를 통과했다. loopback 실행을 실제 NAT 성공으로 표기하지 않는다.
 
@@ -31,3 +31,5 @@ Windows 의존성 초기 검증에서 새 MsQuic의 MSVC 분석 경고가 `/WX`�
 `release/readiness.json`은 실제 공유기/NAT·혼합 OS 실시간 통신·물리 host/guest 게임 시험에 `passed`와 확인 가능한 evidence가 있어야 공개 발행을 허용한다. 현재 세 항목은 모두 pending이다. 발행 도구는 이 게이트를 GitHub 쓰기 전에 확인하며 기존 Release/tag를 자동 삭제하지 않는다. 모든 필수 CI 통과와 해당 실사용 증거를 갖춘 뒤에도 실제 공개 Release는 별도 승인 후 실행한다.
 
 macOS는 ad hoc 서명이며 Developer ID·공증은 미실행이다. Intel 및 macOS 최소 버전 실기기 실행, 공인 인프라 생성·운영, 중앙의 active-active HA는 이번 자동 검증의 완료 범위가 아니다. 이런 제한 때문에 패키지 준비 완료를 제품의 모든 실사용 조건 검증 완료로 해석하지 않는다.
+
+패키지 보안 overlay hash는 checkout의 CRLF/LF 차이를 정규화한 Git 소스 내용의 SHA256이다. Windows 원시 파일 hash와 Linux 원시 파일 hash를 비교해 발생한 최종 validator 불일치를 수정했으며, 줄바꿈 동등성과 실제 버전 변조 거부를 함께 검사한다.

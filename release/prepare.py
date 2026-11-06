@@ -13,7 +13,11 @@ import zipfile
 
 VERSION = "1.0.0"
 DEPENDENCY_POLICY = json.loads((Path(__file__).parent / "dependencies.json").read_text())
-QUIC_PORT_SHA256 = hashlib.sha256((Path(__file__).parent.parent / "cmake/ports/msquic/portfile.cmake").read_bytes()).hexdigest()
+def overlay_digest(source):
+    return hashlib.sha256(source.replace(b"\r\n", b"\n")).hexdigest()
+
+
+QUIC_PORT_SHA256 = overlay_digest((Path(__file__).parent.parent / "cmake/ports/msquic/portfile.cmake").read_bytes())
 BASELINE = "a1cae005c39be7b18ba319fced856b68d7276271"
 ARCHIVES = {
     "windows": f"LanLink-{VERSION}-windows-x64.zip",

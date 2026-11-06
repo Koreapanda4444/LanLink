@@ -177,6 +177,11 @@ class ReleaseAssetsTests(unittest.TestCase):
             cli.assert_not_called()
             api.assert_not_called()
 
+    def test_overlay_hash_uses_canonical_source_line_endings(self):
+        source = b"set(VERSION 2.6.3)\nset(TLS openssl)\n"
+        self.assertEqual(prepare.overlay_digest(source), prepare.overlay_digest(source.replace(b"\n", b"\r\n")))
+        self.assertNotEqual(prepare.overlay_digest(source), prepare.overlay_digest(source.replace(b"2.6.3", b"2.4.8")))
+
     def test_package_metadata_mismatch(self):
         for field, value in (("source_commit", "b" * 40), ("version", "99.0.0"),
                              ("source_clean", False), ("architecture", "arm64"),

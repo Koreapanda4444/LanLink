@@ -8,7 +8,7 @@
 - 기존 MsQuic 2.4.8은 [ACK underflow](https://github.com/microsoft/msquic/security/advisories/GHSA-gvvw-8j96-8g5r), [경로 처리 use-after-free/RCE](https://github.com/microsoft/msquic/security/advisories/GHSA-92f5-vc22-8j33), [OpenSSL 호스트명 검증](https://github.com/microsoft/msquic/security/advisories/GHSA-w5f4-fx9m-m4q7) 수정 이전 버전이었다.
 - overlay port로 MsQuic **2.6.3**, 소스 commit `16ca4d8d785d34fb22285e7c652e477ac16475a5`를 고정했다. Windows는 Schannel, Unix는 고정 vcpkg의 **OpenSSL 3.6.4**를 사용한다. 오래된 내장 QuicTLS 3.1.7을 함께 빌드하지 않는다. OpenSSL의 [3.6.4 보안 변경](https://openssl-library.org/news/openssl-3.6-notes/)도 확인했다.
 - Relay·클라이언트·Direct가 MsQuic API를 열 때 실제 런타임 버전을 검사해 2.6.3 미만을 거부한다. 패키지 일부 DLL/so만 교체하는 방식 대신 전체 패키지를 교체한다. 구버전 번호 거부와 정확한 최소 버전 허용을 회귀 검사한다.
-- `release/dependencies.json`과 overlay SHA256을 build-info에 기록한다. 패키지 검증기는 누락·변조된 정책/hash를 거부하며, CI dependency cache 키에 overlay를 포함한다. 기본 vcpkg baseline은 유지한다. SQLite는 해당 baseline의 3.53.4다.
+- `release/dependencies.json`과 CRLF를 LF로 정규화한 overlay 소스 SHA256을 build-info에 기록한다. 패키지 검증기는 누락·변조된 정책/hash를 거부하며, CI dependency cache 키에 overlay를 포함한다. 기본 vcpkg baseline은 유지한다. SQLite는 해당 baseline의 3.53.4다.
 
 ## 위협 모델과 회귀 증거
 
