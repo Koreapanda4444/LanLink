@@ -1,6 +1,8 @@
-# LanLink 1.0.0 설치
+# LanLink 설치 — 최신 main
 
-현재는 CI 패키지 준비 단계다. 실제 공유기·혼합 OS 실시간 통신·host/guest 게임 시험은 남아 있으며 공개 안정판은 v0.2.2다. 전체 패키지를 사용하고 프로그램 일부 DLL/so만 교체하지 않는다.
+이 문서는 설치 구조 개편 Phase 1을 포함한 최신 main/CI 패키지 기준이다. 공개 v1.0.0 프리릴리스의 첨부 파일은 개편 전 설치 방식을 사용한다. 아직 새 Release를 발행하지 않았다. 실제 공유기·혼합 OS 실시간 통신·host/guest 게임 시험은 별도 검증으로 남는다. 전체 패키지를 사용하고 프로그램 일부 DLL/so만 교체하지 않는다.
+
+Phase 1에서는 설치·서비스 대기·유지관리를 구현한다. 앱 내 서버 등록·전환은 Phase 2, 기기별 서버 등록 인증은 Phase 3 범위다. 새로 설치한 앱의 서버 미등록 표시는 정상 상태다.
 
 ## 파일 선택
 
@@ -33,7 +35,7 @@ sudo dnf install -y python3 openssl ca-certificates libstdc++
 
 클라이언트가 접속할 호스트명 또는 IP에 맞는 PEM 인증서와 개인 키를 준비한다. 인증서는 클라이언트 Windows에서 신뢰해야 한다. 사설 CA를 사용한다면 그 CA의 공개 인증서를 클라이언트의 신뢰할 수 있는 루트 저장소에 등록한다. 개인 키는 서버에 보관한다.
 
-공유 토큰 파일을 만들고 허용할 클라이언트에 전달한다.
+기존 Relay 엔진은 아래 서버 인증 토큰을 사용한다. Phase 1에서 이 인증 구조를 변경하거나 관리 비밀 공유 문제를 해결했다고 보지 않는다. 기기별 등록 인증은 Phase 3에서 개선한다. 토큰은 명령행이나 로그에 노출하지 않는다.
 
 ```bash
 umask 077
@@ -76,25 +78,42 @@ relay_control_requests_per_second=32
 
 설치 시작 시 한국어 또는 영어를 선택한다. 무인 설치에서는 `/LANG=ko` 또는 `/LANG=en`으로 지정할 수 있다.
 
-`LanLink-Setup-1.0.0-windows-x64.exe`를 실행하고 릴레이 주소, 포트와 인증 토큰 파일을 입력한다. 관리자 권한이 필요하다. 기본 프로그램 위치는 `C:\Program Files\LanLink`, 데이터 위치는 `C:\ProgramData\LanLink`다. 필요한 DLL과 서명된 공식 Wintun을 포함하며, LanLink 자체 실행 파일과 설치 프로그램은 서명되지 않았다.
+Setup EXE를 실행하면 서버 주소·포트·토큰 입력 없이 설치한다. 관리자 권한이 필요하다. 기본 프로그램 위치는 `C:\Program Files\LanLink`, 데이터 위치는 `C:\ProgramData\LanLink`다. 필요한 DLL과 서명된 공식 Wintun을 포함하며, LanLink 자체 실행 파일과 설치 프로그램은 서명되지 않았다.
 
-설치가 끝나면 시작 메뉴에서 LanLink를 연다. 네트워크를 만들고 ID를 공유하거나, 전달받은 ID로 가입 요청을 보낸다. 소유자가 승인하면 가상 IP가 표시된다. 게임이나 애플리케이션에서는 상대 기기의 가상 IP를 사용한다. 창을 닫아도 Windows 서비스가 연결을 유지한다.
+설치 후 LanLink를 바로 실행할 수 있다. 서버 미등록 시 서비스는 대기하고 GUI는 ‘등록된 서버 없음’을 표시한다. 인증 정보 오류·실제 연결 오류·서비스 실행 오류와 구분한다. 연결 설정을 설치기에서 입력하거나 변경하지 않는다.
 
-소유자는 현재 서비스가 받은 가입 요청을 화면에서 승인할 수 있다. 이전 요청은 기기 ID를 받아 `Manage a device by ID`에서 승인할 수도 있다. 네트워크 탈퇴와 기기 제거에는 확인 창이 표시된다.
+이미 설치되어 있으면 같은 EXE에서 다음을 선택한다.
 
-ZIP 수동 설치는 압축을 해제한 디렉터리의 관리자 PowerShell에서 실행한다.
+- **Modify:** CLI 도구, 시작 메뉴 바로가기, 바탕 화면 바로가기 변경.
+- **Repair:** 선택된 구성은 유지하며 파일·서비스·필수 DLL·방화벽 규칙을 복원. 저장된 서버 프로필·기기 인증 정보·설정은 보존.
+- **Uninstall:** 앱과 서비스를 제거. 기본값은 데이터 보존이며 별도 체크로 데이터 삭제를 선택.
+
+Windows ‘설치된 앱’의 수정·제거 진입점은 설치 시 보관한 같은 Setup EXE를 실행한다. 실행 중인 캐시를 덮어쓰지 않도록 관리자 전용 임시 복사본에서 작업한다. 공유 Wintun 드라이버를 전역 삭제하지 않는다. 설치·수정·복구 실패 시 기존 프로그램·서비스 상태·방화벽·바로가기·등록 정보를 복구한다. 파일 잠금으로 복구까지 실패한 경우 백업을 남기고 실패를 알린다.
+
+무인 설치/유지관리 예:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-LanLink.ps1 `
-  -RelayHost relay.example.com -AuthenticationTokenFile C:\secure\auth.token
+.\LanLink-Setup-1.0.0-windows-x64.exe /VERYSILENT /MODE=install
+.\LanLink-Setup-1.0.0-windows-x64.exe /VERYSILENT /MODE=modify /Cli=0 /StartMenu=1 /Desktop=1
+.\LanLink-Setup-1.0.0-windows-x64.exe /VERYSILENT /MODE=repair
+.\LanLink-Setup-1.0.0-windows-x64.exe /VERYSILENT /MODE=uninstall
+# 데이터를 삭제할 때만 /RemoveData=1 추가
 ```
+
+`/NoStart=1`은 서비스 시작을 생략한다. 이전 서버 관련 인수는 받지 않는다. ZIP 수동 설치는 관리자 PowerShell에서 다음과 같이 실행한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-LanLink.ps1
+```
+
+ZIP 자체에는 Setup EXE가 없으므로 설치된 앱의 완전한 EXE 유지관리는 Setup EXE로 설치한 경우 제공한다. ZIP의 수정·복구는 외부에 압축 해제한 패키지의 스크립트를 `-Mode Modify` / `-Mode Repair`로 실행한다.
 
 ## Linux·macOS 클라이언트
 
 클라이언트 패키지를 압축 해제한 디렉터리에서 설치한다. Python 3과 관리자 권한이 필요하다. Linux 데스크톱은 systemd·PolicyKit·OpenGL 3.2가 필요하다.
 
 ```sh
-sudo python3 install-client.py --relay relay.example.com --port 4433 --token-file /absolute/auth.token --user YOUR_USER
+sudo python3 install-client.py --user YOUR_USER
 ```
 
 다시 로그인한 뒤 Linux에서는 `/opt/lanlink/bin/lanlink-ui`, macOS에서는 `/Applications/LanLink.app`을 연다. `lanlink` 그룹에 추가한 사용자는 로컬 서비스를 관리할 수 있다. GUI는 일반 사용자로 실행한다.
@@ -105,12 +124,12 @@ sudo python3 install-client.py --relay relay.example.com --port 4433 --token-fil
 
 ## 업그레이드와 제거
 
-새 Windows 설치 EXE를 실행한다. 기존 연결을 유지하려면 릴레이 주소와 토큰 파일을 비워 두고 원래 프로그램·데이터 디렉터리를 사용한다. 수동 설치는 새 패키지의 설치 스크립트를 기존 디렉터리에 대해 다시 실행한다. 릴레이도 새 패키지의 설치기를 다시 실행한다. 설정, 기기 인증 정보와 릴레이 데이터베이스를 유지한다.
+새 Windows 설치 EXE를 실행한다. 원래 프로그램·데이터 디렉터리와 저장된 연결 정보를 유지한다. Repair도 사용자 데이터를 덮어쓰지 않는다. 수동 설치는 새 패키지의 설치 스크립트를 기존 디렉터리에 대해 다시 실행한다. 릴레이도 새 패키지의 설치기를 다시 실행한다. 설정, 기기 인증 정보와 릴레이 데이터베이스를 유지한다.
 
-Windows는 설치된 앱 목록이나 `C:\Program Files\LanLink\Uninstall-LanLink.ps1`에서 제거한다. 릴레이는 `sudo bash /opt/lanlink/uninstall-relay.sh`로 제거한다. 기본 제거는 데이터를 남긴다. Windows의 `-RemoveData`, 릴레이의 `--remove-data`는 인증 정보와 저장 상태까지 삭제한다.
+Windows는 설치된 앱 목록, 같은 Setup의 Uninstall 또는 `C:\Program Files\LanLink\Uninstall-LanLink.ps1`에서 제거한다. 데이터 삭제를 선택하면 서비스 데이터와 현재 사용자 `HKCU\Software\LanLink`의 UI 설정을 삭제하며 다른 사용자의 UI 설정은 임의로 삭제하지 않는다. 릴레이는 `sudo bash /opt/lanlink/uninstall-relay.sh`로 제거한다. 기본 제거는 데이터를 남긴다. Windows의 `-RemoveData`, 릴레이의 `--remove-data`는 인증 정보와 저장 상태까지 삭제한다.
 
 ## 데스크톱 첫 실행과 언어
 
-첫 실행에서 표시 언어를 선택하고 서비스 인증 상태를 확인한 뒤 네트워크를 만들거나 초대 링크·코드로 참여한다. 왼쪽의 언어 선택은 설치 언어와 독립적이며 사용자별로 보존된다. 시작 안내는 다시 열 수 있다. 자체 릴레이의 주소·포트·인증 토큰은 설치 프로그램에서 설정하며 공식 계정은 필요하지 않다.
+첫 실행에서 표시 언어를 선택하고 서비스 인증 상태를 확인한 뒤 네트워크를 만들거나 초대 링크·코드로 참여한다. 왼쪽의 언어 선택은 설치 언어와 독립적이며 사용자별로 보존된다. 시작 안내는 다시 열 수 있다. 서버 미등록 상태에서도 안내를 끝내고 앱을 사용할 수 있다. 설치기는 서버 주소·포트·토큰을 받지 않는다. 앱 내 서버 등록 화면은 다음 Phase 2 범위다. 공식 계정이나 중앙 서버는 요구하지 않는다.
 
 비밀번호 방은 생성 창에서 비밀번호와 관리자 승인 여부를 설정한다. 초대 링크는 기본 15분·1회 사용이며 관리자가 남은 링크를 회수할 수 있다. 계정/기기 등록, Directory와 가입 정책은 README의 기능별 안내를 참고한다. 릴레이 데이터베이스는 스키마 6으로 자동 마이그레이션되므로 업그레이드 전 백업해야 한다.

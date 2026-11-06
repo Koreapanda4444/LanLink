@@ -8,7 +8,9 @@ Windows 서비스·Linux systemd·macOS launchd가 연결과 가상 어댑터를
 
 ## 설치
 
-[Releases](https://github.com/Koreapanda4444/LanLink/releases/latest)에서 Windows용 `LanLink-Setup-0.2.2-windows-x64.exe`를 실행한다. 릴레이 주소와 관리자가 전달한 인증 토큰 파일을 입력하면 서비스, UI, 런타임 라이브러리와 Wintun을 함께 설치한다. ZIP은 PowerShell로 수동 설치할 때 사용한다.
+현재 `main`은 [설치 구조 개편 Phase 1](docs/installation-redesign-phase1.md)을 적용한다. Windows Setup은 서버 주소·포트·토큰 입력 없이 앱, 서비스, Wintun과 런타임을 설치한다. 등록된 서버가 없어도 서비스와 GUI가 실행되며, 같은 Setup에서 수정·복구·제거를 선택할 수 있다. Linux/macOS도 서버 정보 없이 설치하고 시작한다.
+
+[공개 v1.0.0 프리릴리스](https://github.com/Koreapanda4444/LanLink/releases/tag/v1.0.0)는 개편 전 패키지다. 이 변경으로 기존 Release 첨부 파일을 교체하지 않는다. 새 동작을 확인하려면 최신 `main`의 CI 패키지를 사용한다. **앱 내 서버 등록·프로필 전환은 다음 Phase 2 범위이며 아직 구현하지 않았다.**
 
 릴레이는 특정 클라우드에 종속되지 않는다. Oracle Cloud, 다른 VPS, 자체 서버에서 운영할 수 있다. 배포 파일은 Linux x64용이며 glibc 2.34 이상과 systemd를 기준으로 한다. 같은 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검증한다. 서버 설치와 방화벽 설정은 [설치 안내](release/INSTALL.md)를 참고한다.
 
@@ -35,4 +37,4 @@ Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux/
 
 ## v1.0 개발
 
-현재 소스는 v1.0.0 릴리스 준비 단계(기획서 Commit 01~60)다. Windows·Linux·macOS native client와 한국어·영어 UI, Direct QUIC/Relay, LAN 검색·게임 진단, 선택 계정·서버 목록·비밀번호·초대, Mesh·Hub·ACL·Windows Gateway와 자체 서버 운영 도구를 제공한다. 실제 공유기·혼합 OS 실시간 통신·물리 host/guest 게임 검증은 남아 있으며 공개 안정판은 v0.2.2다. [로드맵](docs/v1-development.md), [v1.0 검증 범위](docs/verification-v1.0.md), [호환성 표](docs/compatibility-matrix.md), [보안 검토](docs/security-review.md), [성능 측정](docs/performance.md), [자체 서버 운영](docs/self-hosting.md), [Linux·macOS](docs/clients-posix.md), [고급 네트워크 관리](docs/managed-networks.md)를 참고한다.
+v1.0.0 프리릴리스 이후 설치·서버 연결·인증 구조를 단계적으로 개편하고 있다. 기존 Commit 01~60의 네트워크 기능과 새 Phase 1~4 작업은 구분한다. Windows·Linux·macOS native client와 한국어·영어 UI, Direct QUIC/Relay, LAN 검색·게임 진단, 선택 계정·서버 목록·비밀번호·초대, Mesh·Hub·ACL·Windows Gateway와 자체 서버 운영 도구를 제공한다. 실제 공유기·혼합 OS 실시간 통신·물리 host/guest 게임 검증은 남아 있으며 공개 안정판은 v0.2.2다. [로드맵](docs/v1-development.md), [v1.0 검증 범위](docs/verification-v1.0.md), [호환성 표](docs/compatibility-matrix.md), [보안 검토](docs/security-review.md), [성능 측정](docs/performance.md), [자체 서버 운영](docs/self-hosting.md), [Linux·macOS](docs/clients-posix.md), [고급 네트워크 관리](docs/managed-networks.md)를 참고한다.
