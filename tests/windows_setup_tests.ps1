@@ -13,6 +13,7 @@ $desktopShortcut = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirecto
 $registry = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink'
 function Assert-True([bool] $Condition, [string] $Message) { if (-not $Condition) { throw $Message } }
 function Invoke-Setup([string[]] $Arguments, [bool] $Success = $true) {
+    Write-Output ("Setup operation: " + ($Arguments -join " "))
     $information = [Diagnostics.ProcessStartInfo]::new([IO.Path]::GetFullPath($Installer))
     $information.UseShellExecute = $false
     foreach ($argument in @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$program", "/LOG=$root/setup.log") + $Arguments) {
@@ -30,12 +31,14 @@ function Invoke-Setup([string[]] $Arguments, [bool] $Success = $true) {
     } finally { $process.Dispose() }
 }
 function Invoke-Maintenance([string] $Mode, [switch] $RemoveData) {
+    Write-Output "Cached maintenance operation: $Mode (RemoveData=$RemoveData)"
+    Assert-True (Test-Path (Join-Path $program 'Maintenance-LanLink.ps1')) 'Installed maintenance script is missing before launch.'
     # Exercise the Installed Apps launcher and its cached copy of the same EXE.
     $arguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
         (Join-Path $program 'Maintenance-LanLink.ps1'), '-Mode', $Mode, '-Silent')
     if ($RemoveData) { $arguments += '-RemoveData' }
     & powershell.exe @arguments
-    Assert-True ($LASTEXITCODE -eq 0) 'Installed maintenance launcher failed.'
+    Assert-True ($LASTEXITCODE -eq 0) "Installed maintenance launcher failed: $Mode"
 }
 function Assert-Preserved {
     foreach ($entry in $script:saved.GetEnumerator()) {
@@ -109,8 +112,10 @@ public static class LanLinkIconResources {
     Assert-True ((Test-Path (Join-Path $program 'bin\lanlink-ui-cli.exe')) -and (Test-Path $shortcut) -and -not (Test-Path $desktopShortcut)) 'Modify did not restore optional components.'
     Invoke-Setup @('/MODE=install', '/NoStart=1')
     Assert-Preserved
-    # Lock an installed file to force a real repair failure and check rollback.
-    $locked = [IO.File]::Open((Join-Path $program 'bin\lanlink-ui.exe'), 'Open', 'Read', 'Read')
+    # Force a real late failure when Repair replaces an installed shortcut.
+    # The program tree has already been replaced at this point, so rollback
+    # must restore both the complete previous tree and the original shortcut.
+    $locked = [IO.File]::Open($shortcut, 'Open', 'Read', 'Read')
     try { Invoke-Setup @('/MODE=repair', '/NoStart=1') $false } finally { $locked.Dispose() }
     Assert-Preserved
     Assert-True ((Test-Path (Join-Path $program 'bin\wintun.dll')) -and (Get-Service LanLink).Status -eq 'Stopped') 'Failed repair did not restore the previous installation.'
@@ -122,6 +127,12 @@ public static class LanLinkIconResources {
     Invoke-Maintenance 'Uninstall' -RemoveData
     Assert-True (-not (Test-Path $state) -and -not (Test-Path $program) -and -not (Test-Path $shortcut)) 'Explicit data removal failed.'
     Write-Output 'Windows EXE: credential-free install/start/UI, Modify, cached Repair, file/service recovery, preservation, real failure rollback and Uninstall/purge passed.'
+} catch {
+    foreach ($name in 'setup.log.client.log', 'setup.log') {
+        $log = Join-Path $root $name
+        if (Test-Path $log) { Get-Content -LiteralPath $log -Tail 80 }
+    }
+    throw
 } finally {
     if (Test-Path (Join-Path $program 'installation.json')) {
         & (Join-Path $program 'Uninstall-LanLink.ps1') -InstallDirectory $program -RemoveData

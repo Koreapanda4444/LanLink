@@ -116,12 +116,14 @@ try {
         $serviceStopped = $true
         Stop-LanLinkService
     }
+    # Same-volume renames must be atomic. Move-Item can fall back to moving
+    # individual children and leave half a program tree after a sharing error.
     if ($hadProgram) {
-        Move-Item -LiteralPath $InstallDirectory -Destination $backup
+        [IO.Directory]::Move($InstallDirectory, $backup)
         $programBackedUp = $true
     }
     $programInstallStarted = $true
-    Move-Item -LiteralPath $staging -Destination $InstallDirectory
+    [IO.Directory]::Move($staging, $InstallDirectory)
     if (-not (Test-Path -LiteralPath $configPath)) { [IO.File]::WriteAllText($configPath, "$configuration`n", $encoding) }
     $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
     $serviceChanged = $true
@@ -158,7 +160,7 @@ try {
             if ($programInstallStarted -and (Test-Path -LiteralPath $InstallDirectory)) {
                 Remove-Item -LiteralPath $InstallDirectory -Recurse -Force
             }
-            if ($programBackedUp) { Move-Item -LiteralPath $backup -Destination $InstallDirectory }
+            if ($programBackedUp) { [IO.Directory]::Move($backup, $InstallDirectory) }
         },
         { if ($dataChanged) { Restore-LanLinkFile $configPath $oldConfig } },
         {
