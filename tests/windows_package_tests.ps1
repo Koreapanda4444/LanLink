@@ -68,8 +68,7 @@ function New-FailingPackage([string] $Name, [string] $Anchor) {
 function Assert-InstallFailure([string] $Installer, [string] $Name, [string] $TokenFile) {
     $failure = $null
     try {
-        & $Installer -RelayHost update.example -AuthenticationTokenFile $TokenFile `
-            -InstallDirectory $program -DataDirectory $state -NoStart
+        & $Installer -InstallDirectory $program -DataDirectory $state -NoStart
     } catch { $failure = $_ }
     Assert-True ($null -ne $failure) "The injected $Name failure was not reached."
     Assert-True ($failure.Exception.Message -eq "Injected package failure: $Name") "Unexpected installer or rollback failure: $failure"
@@ -78,6 +77,12 @@ function Assert-InstallFailure([string] $Installer, [string] $Name, [string] $To
 }
 
 try {
+    & $install -InstallDirectory $program -DataDirectory $state
+    Assert-True (-not (Test-Path (Join-Path $state 'auth.token'))) 'Fresh installation must not require or generate a server token.'
+    Assert-True (-not (Test-Path (Join-Path $state 'device.identity'))) 'Unconfigured service must not create a device identity.'
+    $status = & (Join-Path $program 'bin\lanlink-ui-cli.exe') status
+    Assert-True ($LASTEXITCODE -eq 0 -and ($status -join "`n").Contains('server configuration: unconfigured')) 'Fresh Windows service must start in the unconfigured state.'
+    & $uninstall -InstallDirectory $program -RemoveData
     Assert-Rejected { New-LanLinkClientConfig "relay.example`nrelay_port=1" 4433 $state }
     Assert-Rejected { Get-LanLinkFullPath 'C:\' }
     [IO.File]::WriteAllText($token, 'too-short', $encoding)
@@ -115,7 +120,7 @@ try {
     Remove-Item -LiteralPath $shortcutPath -Force
     Remove-Item -LiteralPath $registrationPath -Recurse -Force
 
-    & $install -RelayHost relay.example -AuthenticationTokenFile $token -InstallDirectory $program -DataDirectory $state -NoStart
+    & $install -InstallDirectory $program -DataDirectory $state -NoStart
     $service = Get-CimInstance Win32_Service -Filter "Name='LanLink'"
     Assert-True ($service.StartMode -eq 'Auto' -and $service.State -eq 'Stopped') 'Service must be installed for automatic start without running in this test.'
     Assert-True ($service.PathName.Contains('program files\bin\lanlink-service.exe')) 'The service executable path must be quoted and point at the package.'

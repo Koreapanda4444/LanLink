@@ -60,6 +60,15 @@ function New-LanLinkClientConfig([string] $RelayHost, [int] $RelayPort, [string]
     ) -join "`n"
 }
 
+function New-LanLinkUnconfiguredClientConfig([string] $DataDirectory) {
+    return @(
+        '# Server connections are managed separately in the LanLink app.'
+        "device_identity_file=$DataDirectory\device.identity"
+        "auth_token_file=$DataDirectory\auth.token"
+        "log_directory=$DataDirectory\logs"
+    ) -join "`n"
+}
+
 function Invoke-LanLinkServiceCommand([string] $Executable, [string[]] $Arguments) {
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "LanLink service command failed with exit code $LASTEXITCODE." }
@@ -205,7 +214,23 @@ function Register-LanLinkInstallation([string] $Directory, [string] $Version) {
     }.GetEnumerator()) {
         New-ItemProperty -Path $key -Name $entry.Key -Value $entry.Value -PropertyType String -Force | Out-Null
     }
-    New-ItemProperty -Path $key -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
+    $marker = Get-Content -LiteralPath (Join-Path $Directory 'installation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $setup = Join-Path $Directory 'maintenance\LanLink-Setup.exe'
+    if (Test-Path -LiteralPath $setup) {
+        $launcher = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $Directory 'Maintenance-LanLink.ps1') + '"'
+        New-ItemProperty -Path $key -Name UninstallString -Value ($launcher + ' -Mode Uninstall') -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $key -Name ModifyPath -Value ($launcher + ' -Mode Modify') -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $key -Name NoModify -Value 0 -PropertyType DWord -Force | Out-Null
+    } else {
+        # A ZIP contains no Setup EXE; its explicit PowerShell uninstaller can
+        # still offer data removal. Run the full Setup for EXE maintenance.
+        New-ItemProperty -Path $key -Name UninstallString -Value ($command + ' -PromptForData') -PropertyType String -Force | Out-Null
+        Remove-ItemProperty -Path $key -Name ModifyPath -ErrorAction SilentlyContinue
+        New-ItemProperty -Path $key -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
+    }
+    foreach ($entry in @{Cli = [int][bool]$marker.cli; StartMenu = [int][bool]$marker.start_menu; Desktop = [int][bool]$marker.desktop}.GetEnumerator()) {
+        New-ItemProperty -Path $key -Name $entry.Key -Value $entry.Value -PropertyType DWord -Force | Out-Null
+    }
     New-ItemProperty -Path $key -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
 }
 

@@ -1,7 +1,10 @@
 param(
-    [string] $RelayHost,
-    [int] $RelayPort = 4433,
-    [string] $AuthenticationTokenFile,
+    [ValidateSet('Install', 'Modify', 'Repair', 'Uninstall')] [string] $Mode = 'Install',
+    [string] $SetupExecutable,
+    [switch] $NoCli,
+    [switch] $NoStartMenu,
+    [switch] $DesktopShortcut,
+    [switch] $RemoveData,
     [Parameter(Mandatory)] [string] $InstallDirectory,
     [Parameter(Mandatory)] [string] $DataDirectory,
     [Parameter(Mandatory)] [string] $LogFile,
@@ -15,10 +18,13 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 Start-Transcript -LiteralPath $LogFile -Force | Out-Null
 $result = 0
 try {
-    $parameters = @{ InstallDirectory = $InstallDirectory; DataDirectory = $DataDirectory; RelayPort = $RelayPort; NoStart = $NoStart }
-    if ($RelayHost) { $parameters.RelayHost = $RelayHost }
-    if ($AuthenticationTokenFile) { $parameters.AuthenticationTokenFile = $AuthenticationTokenFile }
-    & (Join-Path $PSScriptRoot 'Install-LanLink.ps1') @parameters
+    if ($Mode -eq 'Uninstall') {
+        & (Join-Path $PSScriptRoot 'Uninstall-LanLink.ps1') -InstallDirectory $InstallDirectory -RemoveData:$RemoveData
+    } else {
+        $parameters = @{ InstallDirectory = $InstallDirectory; DataDirectory = $DataDirectory; NoStart = $NoStart
+            Mode = $Mode; SetupExecutable = $SetupExecutable; NoCli = $NoCli; NoStartMenu = $NoStartMenu; DesktopShortcut = $DesktopShortcut }
+        & (Join-Path $PSScriptRoot 'Install-LanLink.ps1') @parameters
+    }
 } catch {
     Write-Output ($_ | Out-String)
     $result = 1

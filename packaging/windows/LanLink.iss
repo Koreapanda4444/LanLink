@@ -51,13 +51,16 @@ Name: "ko"; MessagesFile: "languages\KoreanDefault.isl,languages\Korean.isl"
 Source: "{#PackageDir}\*"; DestDir: "{tmp}\LanLink"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Run]
-Filename: "{code:ProgramDirectory}\bin\lanlink-ui.exe"; Description: "{cm:OpenLanLink}"; Flags: postinstall nowait skipifsilent runasoriginaluser
+Filename: "{code:ProgramDirectory}\bin\lanlink-ui.exe"; Description: "{cm:OpenLanLink}"; Flags: postinstall nowait skipifsilent runasoriginaluser; Check: ShouldLaunch
 
 [Code]
 var
   ProgramPage: TInputDirWizardPage;
-  RelayPage: TInputQueryWizardPage;
-  TokenPage: TInputFileWizardPage;
+  MaintenancePage: TInputOptionWizardPage;
+  OptionsPage: TInputOptionWizardPage;
+  RemoveDataPage: TInputOptionWizardPage;
+  Installed: Boolean;
+  RequestedMode: String;
   DataPage: TInputDirWizardPage;
   InstallResult: Integer;
 
@@ -100,74 +103,110 @@ begin
   BrandLabel.Caption := 'LanLink  {#AppVersion}';
 end;
 
+function MaintenanceMode: String;
+begin
+  Result := RequestedMode;
+  if Result <> '' then Exit;
+  if not Installed then begin Result := 'install'; Exit; end;
+  case MaintenancePage.SelectedValueIndex of
+    1: Result := 'repair';
+    2: Result := 'uninstall';
+  else Result := 'modify';
+  end;
+end;
+
+function ShouldLaunch: Boolean;
+begin
+  Result := (InstallResult = 0) and (MaintenanceMode <> 'uninstall');
+end;
+
 procedure InitializeWizard;
 var
   DataDirectory: String;
+  Value: Cardinal;
 begin
+  InstallResult := 1;
   Log('LanLink setup language: ' + ActiveLanguage);
+  Installed := RegQueryStringValue(HKEY_LOCAL_MACHINE_64,
+    'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'InstallLocation', DataDirectory);
+  RequestedMode := Lowercase(ExpandConstant('{param:MODE|}'));
   StyleWizard;
-  ProgramPage := CreateInputDirPage(wpWelcome, CustomMessage('ProgramTitle'),
+  MaintenancePage := CreateInputOptionPage(wpWelcome, CustomMessage('MaintenanceTitle'),
+    CustomMessage('MaintenanceSubtitle'), CustomMessage('MaintenanceDescription'), True, False);
+  MaintenancePage.Add(CustomMessage('ModifyOption'));
+  MaintenancePage.Add(CustomMessage('RepairOption'));
+  MaintenancePage.Add(CustomMessage('UninstallOption'));
+  MaintenancePage.SelectedValueIndex := 0;
+  ProgramPage := CreateInputDirPage(MaintenancePage.ID, CustomMessage('ProgramTitle'),
     CustomMessage('ProgramSubtitle'), CustomMessage('ProgramDescription'), False, '');
   ProgramPage.Add(CustomMessage('ProgramDirectory'));
   ProgramPage.Values[0] := ExpandConstant('{param:DIR|}');
   if ProgramPage.Values[0] = '' then ProgramPage.Values[0] := DefaultProgramDirectory('');
-  RelayPage := CreateInputQueryPage(ProgramPage.ID, CustomMessage('RelayTitle'),
-    CustomMessage('RelaySubtitle'), CustomMessage('RelayDescription'));
-  RelayPage.Add(CustomMessage('RelayHost'), False);
-  RelayPage.Add(CustomMessage('RelayPort'), False);
-  RelayPage.Values[0] := ExpandConstant('{param:RelayHost|}');
-  RelayPage.Values[1] := ExpandConstant('{param:RelayPort|4433}');
-  TokenPage := CreateInputFilePage(RelayPage.ID, CustomMessage('TokenTitle'),
-    CustomMessage('TokenSubtitle'), CustomMessage('TokenDescription'));
-  TokenPage.Add(CustomMessage('TokenFile'), CustomMessage('AllFiles') + '|*.*', '');
-  TokenPage.Values[0] := ExpandConstant('{param:TokenFile|}');
-  DataPage := CreateInputDirPage(TokenPage.ID, CustomMessage('DataTitle'),
+  DataPage := CreateInputDirPage(ProgramPage.ID, CustomMessage('DataTitle'),
     CustomMessage('DataSubtitle'), CustomMessage('DataDescription'), False, '');
   DataPage.Add(CustomMessage('DataDirectory'));
   if not RegQueryStringValue(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'DataDirectory', DataDirectory) then
     DataDirectory := ExpandConstant('{commonappdata}\LanLink');
   DataPage.Values[0] := ExpandConstant('{param:DataDir|}');
   if DataPage.Values[0] = '' then DataPage.Values[0] := DataDirectory;
+  OptionsPage := CreateInputOptionPage(DataPage.ID, CustomMessage('OptionsTitle'),
+    CustomMessage('OptionsSubtitle'), CustomMessage('OptionsDescription'), False, False);
+  OptionsPage.Add(CustomMessage('CliOption'));
+  OptionsPage.Add(CustomMessage('StartMenuOption'));
+  OptionsPage.Add(CustomMessage('DesktopOption'));
+  OptionsPage.Values[0] := True;
+  OptionsPage.Values[1] := True;
+  OptionsPage.Values[2] := False;
+  if Installed then begin
+    if RegQueryDWordValue(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'Cli', Value) then OptionsPage.Values[0] := Value <> 0;
+    if RegQueryDWordValue(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'StartMenu', Value) then OptionsPage.Values[1] := Value <> 0;
+    if RegQueryDWordValue(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'Desktop', Value) then OptionsPage.Values[2] := Value <> 0;
+  end;
+  if ExpandConstant('{param:Cli|}') <> '' then OptionsPage.Values[0] := ExpandConstant('{param:Cli|1}') = '1';
+  if ExpandConstant('{param:StartMenu|}') <> '' then OptionsPage.Values[1] := ExpandConstant('{param:StartMenu|1}') = '1';
+  if ExpandConstant('{param:Desktop|}') <> '' then OptionsPage.Values[2] := ExpandConstant('{param:Desktop|0}') = '1';
+  RemoveDataPage := CreateInputOptionPage(OptionsPage.ID, CustomMessage('RemoveTitle'),
+    CustomMessage('RemoveSubtitle'), CustomMessage('RemoveDescription'), False, False);
+  RemoveDataPage.Add(CustomMessage('RemoveDataOption'));
+  RemoveDataPage.Values[0] := ExpandConstant('{param:RemoveData|0}') = '1';
 end;
 
-function ConfigurationError: String;
+function ShouldSkipPage(PageID: Integer): Boolean;
 var
-  Port, Index: Integer;
-  Host: String;
+  Mode: String;
 begin
+  Mode := MaintenanceMode;
+  Result := False;
+  if PageID = MaintenancePage.ID then Result := not Installed or (RequestedMode <> '')
+  else if (PageID = ProgramPage.ID) or (PageID = DataPage.ID) then Result := Installed or (Mode <> 'install')
+  else if PageID = OptionsPage.ID then Result := (Mode = 'repair') or (Mode = 'uninstall')
+  else if PageID = RemoveDataPage.ID then Result := Mode <> 'uninstall';
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Mode: String;
+begin
+  Mode := MaintenanceMode;
   Result := '';
-  Host := Trim(RelayPage.Values[0]);
-  Port := StrToIntDef(RelayPage.Values[1], 0);
-  if (Port < 1) or (Port > 65535) then Result := CustomMessage('PortError');
-  for Index := 1 to Length(Host) do
-    if Pos(Host[Index], ' "#=\/') > 0 then Result := CustomMessage('HostError');
-  if (Host = '') and not FileExists(DataPage.Values[0] + '\client.conf') then
-    Result := CustomMessage('HostRequired');
-  if (TokenPage.Values[0] = '') and not FileExists(DataPage.Values[0] + '\auth.token') then
-    Result := CustomMessage('TokenRequired');
-  if (TokenPage.Values[0] <> '') and not FileExists(TokenPage.Values[0]) then
-    Result := CustomMessage('TokenMissing');
+  if (Mode <> 'install') and (Mode <> 'modify') and (Mode <> 'repair') and (Mode <> 'uninstall') then
+    Result := CustomMessage('InvalidMode');
+  if (not Installed) and (Mode <> 'install') then Result := CustomMessage('NotInstalled');
+  // Server options have no meaning in Setup, including unattended installs.
+  if (ExpandConstant('{param:RelayHost|}') <> '') or (ExpandConstant('{param:TokenFile|}') <> '') or
+     (ExpandConstant('{param:RelayPort|}') <> '') then Result := CustomMessage('NoServerOptions');
 end;
 
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
-var
-  Relay, Token: String;
 begin
-  Relay := CustomMessage('KeepRelay');
-  if Trim(RelayPage.Values[0]) <> '' then Relay := Trim(RelayPage.Values[0]) + ':' + RelayPage.Values[1];
-  Token := CustomMessage('KeepToken');
-  if TokenPage.Values[0] <> '' then Token := ExtractFileName(TokenPage.Values[0]);
-  Result := CustomMessage('SummaryApp') + ':' + NewLine + Space + ProgramDirectory('') + NewLine + NewLine +
-    CustomMessage('SummaryRelay') + ':' + NewLine + Space + Relay + NewLine + NewLine +
-    CustomMessage('SummaryToken') + ':' + NewLine + Space + Token + NewLine + NewLine +
+  Result := CustomMessage('SummaryMode') + ': ' + MaintenanceMode + NewLine + NewLine +
+    CustomMessage('SummaryApp') + ':' + NewLine + Space + ProgramDirectory('') + NewLine + NewLine +
     CustomMessage('SummaryData') + ':' + NewLine + Space + DataPage.Values[0] + NewLine + NewLine +
     CustomMessage('SummaryComponents') + ':' + NewLine + Space + CustomMessage('Components');
-end;
-
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-begin
-  Result := ConfigurationError;
+  if MaintenanceMode = 'uninstall' then
+    if RemoveDataPage.Values[0] then Result := Result + NewLine + CustomMessage('DeleteDataSummary')
+    else Result := Result + NewLine + CustomMessage('PreserveDataSummary');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -183,17 +222,20 @@ begin
     Quote(ExpandConstant('{tmp}\LanLink\SetupClient.ps1')) +
     ' -InstallDirectory ' + Quote(ProgramDirectory('')) +
     ' -DataDirectory ' + Quote(DataPage.Values[0]) +
-    ' -RelayPort ' + RelayPage.Values[1] + ' -LogFile ' + Quote(LogPath);
-  if Trim(RelayPage.Values[0]) <> '' then Parameters := Parameters + ' -RelayHost ' + Quote(Trim(RelayPage.Values[0]));
-  if TokenPage.Values[0] <> '' then Parameters := Parameters + ' -AuthenticationTokenFile ' + Quote(TokenPage.Values[0]);
+    ' -Mode ' + MaintenanceMode + ' -SetupExecutable ' + Quote(ExpandConstant('{srcexe}')) +
+    ' -LogFile ' + Quote(LogPath);
+  if not OptionsPage.Values[0] then Parameters := Parameters + ' -NoCli';
+  if not OptionsPage.Values[1] then Parameters := Parameters + ' -NoStartMenu';
+  if OptionsPage.Values[2] then Parameters := Parameters + ' -DesktopShortcut';
+  if RemoveDataPage.Values[0] then Parameters := Parameters + ' -RemoveData';
   if ExpandConstant('{param:NoStart|0}') = '1' then Parameters := Parameters + ' -NoStart';
+  Log('LanLink maintenance mode: ' + MaintenanceMode);
   WizardForm.StatusLabel.Caption := CustomMessage('ConfigureStatus');
   WizardForm.FilenameLabel.Caption := CustomMessage('ConfigureDetails');
   WizardForm.ProgressGauge.Style := npbstMarquee;
   try
     if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
-        '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-      RaiseException(CustomMessage('CannotRun'));
+        '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then RaiseException(CustomMessage('CannotRun'));
     if ResultCode <> 0 then begin
       if LoadStringFromFile(LogPath, Transcript) then Log(String(Transcript));
       RaiseException(CustomMessage('InstallFailed') + #13#10 + LogPath);
@@ -207,4 +249,12 @@ end;
 function GetCustomSetupExitCode: Integer;
 begin
   Result := InstallResult;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and (MaintenanceMode = 'uninstall') then begin
+    WizardForm.FinishedHeadingLabel.Caption := CustomMessage('RemovedHeading');
+    WizardForm.FinishedLabel.Caption := CustomMessage('RemovedDetails');
+  end;
 end;

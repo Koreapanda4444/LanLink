@@ -35,6 +35,7 @@ if(LANLINK_PACKAGE_WINDOWS_CLIENT)
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Uninstall-LanLink.ps1"
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/ClientSetup.psm1"
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/SetupClient.ps1"
+        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/Maintenance-LanLink.ps1"
         DESTINATION . COMPONENT client)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt" "${PROJECT_VERSION}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"

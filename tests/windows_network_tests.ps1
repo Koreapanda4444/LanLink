@@ -161,8 +161,10 @@ try {
         }
         Invoke-Driver @('--tls-probe', '127.0.0.1', "$port", 'accept')
         Invoke-Driver @('--tls-probe', 'localhost', "$port", 'reject')
-        & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -RelayHost 127.0.0.1 -RelayPort $clientPort `
-            -AuthenticationTokenFile (Join-Path $root 'auth.token') -InstallDirectory $program -DataDirectory $state -NoStart
+        & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -InstallDirectory $program -DataDirectory $state -NoStart
+        # Simulate app-owned connection registration, separately from installation.
+        [IO.File]::WriteAllText((Join-Path $state 'client.conf'), (New-LanLinkClientConfig '127.0.0.1' $clientPort $state), $encoding)
+        Copy-Item -LiteralPath (Join-Path $root 'auth.token') -Destination (Join-Path $state 'auth.token')
         $installed = $program
         [IO.File]::AppendAllText((Join-Path $state 'client.conf'), "`nquic_handshake_timeout_ms=1000`nquic_idle_timeout_ms=5000`nquic_keep_alive_interval_ms=1000`nreconnect_initial_delay_ms=100`nreconnect_max_delay_ms=500`n", $encoding)
         & (Join-Path $program 'bin\lanlink-service.exe') --start
@@ -243,12 +245,11 @@ try {
                                 [IO.FileAccess]::Read, [IO.FileShare]::Read)
                             $caught = $null
                             try {
-                                & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -RelayHost replacement.example `
-                                    -AuthenticationTokenFile $replacementToken -InstallDirectory $program -DataDirectory $state -NoStart
+                                & $faultyInstaller -Mode Repair -InstallDirectory $program -DataDirectory $state -NoStart
                             } catch { $caught = $_ }
                             finally { $locked.Dispose() }
                             if ($null -eq $caught -or $caught.Exception.Message.Contains('rollback was incomplete')) { throw "Unexpected locked-file rollback result: $caught" }
-                            if ($caught.Exception.GetBaseException().HResult -ne -2147024864) { throw "The running upgrade did not reach the expected file-sharing violation: $caught" }
+                            if ($caught.Exception.Message -ne 'Injected running upgrade failure') { throw "The running repair did not reach the expected failure: $caught" }
                             if ((Get-CimInstance Win32_Service -Filter "Name='LanLink'").State -ne 'Running') { throw 'Locked-file rollback did not restart the previously running service.' }
                             if ((Get-FileHash (Join-Path $state 'device.identity')).Hash -ne $identityHash -or
                                 (Get-FileHash (Join-Path $state 'auth.token')).Hash -ne $tokenHash -or

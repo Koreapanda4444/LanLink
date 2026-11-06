@@ -1,8 +1,10 @@
 [CmdletBinding()]
 param(
-    [string] $RelayHost,
-    [ValidateRange(1, 65535)] [int] $RelayPort = 4433,
-    [string] $AuthenticationTokenFile,
+    [ValidateSet('Install', 'Modify', 'Repair')] [string] $Mode = 'Install',
+    [string] $SetupExecutable,
+    [switch] $NoCli,
+    [switch] $NoStartMenu,
+    [switch] $DesktopShortcut,
     [string] $InstallDirectory = "$env:ProgramFiles\LanLink",
     [string] $DataDirectory = "$env:ProgramData\LanLink",
     [switch] $NoStart
@@ -35,9 +37,15 @@ if ($hadProgram) {
         throw 'An upgrade must preserve the existing program and data directories.'
     }
 }
+if ($Mode -ne 'Install' -and -not $hadProgram) { throw 'Maintenance requires an existing LanLink installation.' }
+if ($Mode -eq 'Repair') {
+    $NoCli = $previous.PSObject.Properties['cli'] -and -not $previous.cli
+    $NoStartMenu = $previous.PSObject.Properties['start_menu'] -and -not $previous.start_menu
+    $DesktopShortcut = $previous.PSObject.Properties['desktop'] -and $previous.desktop
+}
 foreach ($file in 'bin\lanlink-service.exe', 'bin\lanlink-ui.exe', 'bin\lanlink-ui-cli.exe',
                   'bin\wintun.dll', 'package-version.txt', 'Uninstall-LanLink.ps1',
-                  'build-info.json', 'INSTALL.md', 'RELEASE-NOTES.md') {
+                  'build-info.json', 'INSTALL.md', 'RELEASE-NOTES.md', 'Maintenance-LanLink.ps1') {
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $file) -PathType Leaf)) {
         throw "The client package is incomplete: $file"
     }
@@ -45,14 +53,8 @@ foreach ($file in 'bin\lanlink-service.exe', 'bin\lanlink-ui.exe', 'bin\lanlink-
 if ($PSScriptRoot -eq $InstallDirectory) { throw 'Extract the new package outside the installed directory.' }
 $configPath = Join-Path $DataDirectory 'client.conf'
 $tokenPath = Join-Path $DataDirectory 'auth.token'
-if (-not (Test-Path -LiteralPath $configPath) -and [string]::IsNullOrWhiteSpace($RelayHost)) {
-    throw 'Specify -RelayHost for the first installation.'
-}
-if (-not (Test-Path -LiteralPath $tokenPath) -and [string]::IsNullOrWhiteSpace($AuthenticationTokenFile)) {
-    throw 'Specify -AuthenticationTokenFile for the first installation.'
-}
-$token = if ($AuthenticationTokenFile) { Get-LanLinkToken $AuthenticationTokenFile } else { Get-LanLinkToken $tokenPath }
-$configuration = if ($RelayHost) { New-LanLinkClientConfig $RelayHost $RelayPort $DataDirectory } else { $null }
+# Installation owns only local paths. It never accepts or rewrites server credentials.
+$configuration = New-LanLinkUnconfiguredClientConfig $DataDirectory
 $encoding = [Text.UTF8Encoding]::new($false)
 $staging = "$InstallDirectory.staging-$([Guid]::NewGuid().ToString('N'))"
 $backup = "$InstallDirectory.previous-$([Guid]::NewGuid().ToString('N'))"
@@ -71,11 +73,12 @@ if ($service) {
     $serviceStartMode = $serviceDetails.StartMode
 }
 $oldConfig = if (Test-Path -LiteralPath $configPath) { ,[IO.File]::ReadAllBytes($configPath) } else { $null }
-$oldToken = if (Test-Path -LiteralPath $tokenPath) { ,[IO.File]::ReadAllBytes($tokenPath) } else { $null }
 $oldDataAcl = if ($hadData) { Get-Acl -LiteralPath $DataDirectory } else { $null }
 $oldRegistration = Get-LanLinkRegistrationSnapshot
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'LanLink.lnk'
+$desktopPath = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'LanLink.lnk'
 $oldShortcut = if (Test-Path -LiteralPath $shortcutPath) { ,[IO.File]::ReadAllBytes($shortcutPath) } else { $null }
+$oldDesktop = if (Test-Path -LiteralPath $desktopPath) { ,[IO.File]::ReadAllBytes($desktopPath) } else { $null }
 $firewallBackups = @()
 $programBackedUp = $false
 $programInstallStarted = $false
@@ -91,12 +94,18 @@ try {
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'bin') -Destination $staging -Recurse
     foreach ($file in 'Install-LanLink.ps1', 'Uninstall-LanLink.ps1', 'ClientSetup.psm1', 'package-version.txt',
-                     'build-info.json', 'INSTALL.md', 'RELEASE-NOTES.md') {
+                     'build-info.json', 'INSTALL.md', 'RELEASE-NOTES.md', 'Maintenance-LanLink.ps1') {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $staging
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $staging -Recurse
     $version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'package-version.txt') -Raw).Trim()
-    $marker = @{ install_directory = $InstallDirectory; data_directory = $DataDirectory; version = $version } | ConvertTo-Json
+    if ($NoCli) { Remove-Item -LiteralPath (Join-Path $staging 'bin\lanlink-ui-cli.exe') -Force }
+    if ($SetupExecutable) {
+        New-Item -ItemType Directory -Path (Join-Path $staging 'maintenance') | Out-Null
+        Copy-Item -LiteralPath $SetupExecutable -Destination (Join-Path $staging 'maintenance\LanLink-Setup.exe')
+    }
+    $marker = @{ install_directory = $InstallDirectory; data_directory = $DataDirectory; version = $version
+        cli = -not $NoCli; start_menu = -not $NoStartMenu; desktop = [bool]$DesktopShortcut } | ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $staging 'installation.json'), $marker, $encoding)
     Set-LanLinkDirectoryAcl $staging -AllowUsers
     $firewallBackups = Backup-LanLinkFirewallRules
@@ -113,8 +122,7 @@ try {
     }
     $programInstallStarted = $true
     Move-Item -LiteralPath $staging -Destination $InstallDirectory
-    if ($AuthenticationTokenFile) { [IO.File]::WriteAllText($tokenPath, "$token`n", $encoding) }
-    if ($configuration) { [IO.File]::WriteAllText($configPath, "$configuration`n", $encoding) }
+    if (-not (Test-Path -LiteralPath $configPath)) { [IO.File]::WriteAllText($configPath, "$configuration`n", $encoding) }
     $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
     $serviceChanged = $true
     Push-Location $DataDirectory
@@ -122,7 +130,10 @@ try {
     $firewallChanged = $true
     Set-LanLinkFirewallRules $executable
     $shortcutChanged = $true
-    Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $shortcutPath)
+    if (-not $NoStartMenu) { Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $shortcutPath) }
+    elseif (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
+    if ($DesktopShortcut) { Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $desktopPath) }
+    elseif (Test-Path -LiteralPath $desktopPath) { Remove-Item -LiteralPath $desktopPath -Force }
     if (-not $NoStart) { Invoke-LanLinkServiceCommand $executable @('--start') }
     $registrationChanged = $true
     Register-LanLinkInstallation $InstallDirectory $version
@@ -143,7 +154,6 @@ try {
             if ($programBackedUp) { Move-Item -LiteralPath $backup -Destination $InstallDirectory }
         },
         { if ($dataChanged) { Restore-LanLinkFile $configPath $oldConfig } },
-        { if ($dataChanged) { Restore-LanLinkFile $tokenPath $oldToken } },
         {
             if ($dataChanged) {
                 if ($hadData) { Set-Acl -LiteralPath $DataDirectory -AclObject $oldDataAcl }
@@ -154,6 +164,7 @@ try {
         {
             if ($shortcutChanged) {
                 Restore-LanLinkFile $shortcutPath $oldShortcut
+                Restore-LanLinkFile $desktopPath $oldDesktop
             }
         },
         { if ($registrationChanged) { Restore-LanLinkRegistration $oldRegistration } },

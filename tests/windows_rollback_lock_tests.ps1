@@ -21,13 +21,26 @@ New-Item -ItemType Directory -Path $root | Out-Null
 [IO.File]::WriteAllText($replacement, 'lanlink-replacement-rollback-token-2026', $encoding)
 $locked = $null
 try {
-    & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -RelayHost original.example `
-        -AuthenticationTokenFile $token -InstallDirectory $program -DataDirectory $state -NoStart
+    if ($ExpectIncompleteRollback) {
+        & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -RelayHost original.example `
+            -AuthenticationTokenFile $token -InstallDirectory $program -DataDirectory $state -NoStart
+    } else {
+        & (Join-Path $PackageDirectory 'Install-LanLink.ps1') -InstallDirectory $program -DataDirectory $state -NoStart
+        [IO.File]::WriteAllText((Join-Path $state 'client.conf'), (New-LanLinkClientConfig 'original.example' 4433 $state), $encoding)
+        Copy-Item -LiteralPath $token -Destination (Join-Path $state 'auth.token')
+    }
     Set-Service -Name LanLink -StartupType Manual
     [IO.File]::WriteAllText((Join-Path $program 'previous-only.marker'), 'preserved', $encoding)
     [IO.File]::WriteAllText((Join-Path $state 'device.identity'), 'identity-must-survive', $encoding)
     Copy-Item -LiteralPath $PackageDirectory -Destination $candidate -Recurse
     [IO.File]::WriteAllText((Join-Path $candidate 'bin\candidate-only.marker'), 'replacement', $encoding)
+    if (-not $ExpectIncompleteRollback) {
+        $script = Join-Path $candidate 'Install-LanLink.ps1'
+        $source = [IO.File]::ReadAllText($script)
+        $anchor = 'Register-LanLinkInstallation $InstallDirectory $version'
+        if (-not $source.Contains($anchor)) { throw 'Repair rollback failure anchor is missing.' }
+        [IO.File]::WriteAllText($script, $source.Replace($anchor, $anchor + "`n    throw 'Injected locked-data repair failure'"), $encoding)
+    }
     $configPath = Join-Path $state 'client.conf'
     $tokenPath = Join-Path $state 'auth.token'
     $oldConfig = [IO.File]::ReadAllBytes($configPath)
@@ -50,8 +63,12 @@ try {
             [IO.FileAccess]::Read, [IO.FileShare]::Read)
         $failure = $null
         try {
-            & (Join-Path $candidate 'Install-LanLink.ps1') -RelayHost replacement.example `
-                -AuthenticationTokenFile $replacement -InstallDirectory $program -DataDirectory $state -NoStart
+            if ($ExpectIncompleteRollback) {
+                & (Join-Path $candidate 'Install-LanLink.ps1') -RelayHost replacement.example `
+                    -AuthenticationTokenFile $replacement -InstallDirectory $program -DataDirectory $state -NoStart
+            } else {
+                & (Join-Path $candidate 'Install-LanLink.ps1') -Mode Repair -InstallDirectory $program -DataDirectory $state -NoStart
+            }
         } catch { $failure = $_ }
         finally { $locked.Dispose(); $locked = $null }
         if ($null -eq $failure) { throw "A locked $name unexpectedly allowed installation." }
@@ -67,7 +84,7 @@ try {
             continue
         }
         if ($incomplete) { throw "Locked-file rollback did not finish: $failure" }
-        if ($failure.Exception.GetBaseException().HResult -ne -2147024864) { throw "Installation did not reach the expected file-sharing violation: $failure" }
+        if ($failure.Exception.Message -ne 'Injected locked-data repair failure') { throw "Repair did not reach the expected failure: $failure" }
         if ((Get-FileHash $configPath).Hash -ne $configHash -or (Get-FileHash $tokenPath).Hash -ne $tokenHash -or
             (Get-FileHash (Join-Path $state 'device.identity')).Hash -ne $identityHash) {
             throw "A locked $name changed persistent credentials or configuration."
