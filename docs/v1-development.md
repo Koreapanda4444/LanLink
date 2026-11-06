@@ -59,7 +59,7 @@
 | 53 | `feat(relay): recover sessions after relay failure` — 인증·네트워크 상태·키 재동기화, 데이터 중복/유실 복구 | 구현 |
 | 54 | `feat(relay): add quotas, accounting and abuse safeguards` — 전송량/연결/요청량 제한, 장애·비용 방지 및 운영 메트릭 | 구현 |
 | 55 | `feat(deploy): ship reproducible multi-region self-hosting` — Oracle Linux 9 등 기존 배포 경로 유지, 설정·롤백·백업 문서 | 구현 |
-| 56 | `fix(reliability): harden lifecycle, cancellation and concurrency` — 재접속·서비스 재시작·경로 전환·종료 시 race/leak/deadlock 제거 | 대기 |
+| 56 | `fix(reliability): harden lifecycle, cancellation and concurrency` — TLS 수신기 동시 시작·종료 직렬화, 중복 시작 거부·활성 연결 종료·재시작 회귀 | 구현 |
 | 57 | `perf(network): optimize buffering, allocations and forwarding` — 측정값 기반 성능 개선, 회귀 지표 제공 | 대기 |
 | 58 | `security(audit): verify protocol, auth, keys and permissions` — 위협 모델·악용 방지·의존성 점검·보안 회귀 테스트 | 대기 |
 | 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |

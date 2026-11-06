@@ -491,12 +491,23 @@ public:
     ~Impl() { stop(); }
 
     void start() {
+        std::lock_guard lock(lifecycle_mutex_);
+        if (accept_thread_.joinable()) {
+            throw std::logic_error("TLS listener is already running");
+        }
         socket_ = listen_socket(host_, port_);
         stopping_.store(false);
-        accept_thread_ = std::thread([this] { accept_loop(); });
+        try {
+            accept_thread_ = std::thread([this] { accept_loop(); });
+        } catch (...) {
+            stopping_.store(true);
+            socket_.reset();
+            throw;
+        }
     }
 
     void stop() noexcept {
+        std::lock_guard lock(lifecycle_mutex_);
         stopping_.store(true);
         if (socket_.get() != invalid_socket) {
             stop_socket(socket_.get());
@@ -580,6 +591,7 @@ private:
     std::shared_ptr<SSL_CTX> context_;
     TlsListenerLimits limits_;
     SendBudget handshakes_;
+    std::mutex lifecycle_mutex_;
     SocketOwner socket_;
     std::atomic_bool stopping_ = false;
     std::thread accept_thread_;

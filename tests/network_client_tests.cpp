@@ -926,6 +926,7 @@ void test_tls_backpressure(const std::filesystem::path& directory) {
                 }, [] { return true; }, [&] { closed.fetch_add(1); }};
         }, limits);
     listener.start();
+    expect_error([&] { listener.start(); }, "duplicate TLS start must not replace a joinable thread");
     std::atomic_bool stopping = false;
     const auto slow = transport::TlsChannel::connect("127.0.0.1", port, 2s, stopping);
     wait_until([&] { std::lock_guard lock(mutex); return channels.size() == 1; },
@@ -981,6 +982,21 @@ void test_tls_backpressure(const std::filesystem::path& directory) {
     healthy_worker.join();
     listener.stop();
     expect(closed.load() == 2, "both TLS sessions must close after recovery");
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        listener.start();
+        const auto peer = transport::TlsChannel::connect("127.0.0.1", port, 2s, stopping);
+        wait_until([&] { std::lock_guard lock(mutex); return channels.size() == static_cast<std::size_t>(3 + cycle); },
+                   "restarted TLS listener did not accept a session");
+        const auto began = std::chrono::steady_clock::now();
+        std::vector<std::jthread> stoppers;
+        for (int index = 0; index < 8; ++index) stoppers.emplace_back([&] { listener.stop(); });
+        stoppers.clear();
+        expect(std::chrono::steady_clock::now() - began < 3s, "concurrent TLS shutdown did not converge");
+        expect(closed.load() == 3 + cycle, "concurrent shutdown must close each session once");
+        peer->stop();
+        listener.stop();
+    }
+
 }
 
 void test_peer_paths(const std::filesystem::path& directory,const bool tls) {
