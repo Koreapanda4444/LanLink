@@ -39,7 +39,7 @@ foreach ($folder in 'CommonPrograms', 'CommonDesktopDirectory') {
 Remove-Item -LiteralPath $InstallDirectory -Recurse -Force
 if ($RemoveData) {
     if (Test-Path -LiteralPath $dataDirectory) { Remove-Item -LiteralPath $dataDirectory -Recurse -Force }
-    $preferences = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'LanLink'
+    $preferences = 'HKCU:\Software\LanLink'
     if (Test-Path -LiteralPath $preferences) { Remove-Item -LiteralPath $preferences -Recurse -Force }
 }
 Write-Output $(if ($RemoveData) { 'LanLink and its data were removed.' } else { "LanLink removed. Data preserved in $dataDirectory." })

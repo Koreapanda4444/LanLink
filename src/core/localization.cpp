@@ -3,6 +3,7 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Server credentials are missing or invalid","서버 인증 정보가 없거나 유효하지 않습니다"},
     Translation{"No server configured","등록된 서버 없음"},
     Translation{"Server connection error","서버 연결 오류"},
     Translation{"Choose English or Korean in the left panel. You can use LanLink without registering a server yet.","왼쪽에서 한국어 또는 영어를 선택하세요. 서버를 등록하지 않아도 LanLink를 실행할 수 있습니다."},

@@ -226,7 +226,7 @@ public:
             ImGui::Spacing();
             if (state.networks.empty()) {
                 ImGui::TextWrapped("%s", connected ? tr("Create a network or join one using its network ID.")
-                    : tr("Networks appear after the service connects to your relay."));
+                    : unconfigured ? tr("No server configured") : tr("Networks appear after the service connects to your relay."));
             }
             for (const auto& network : state.networks) {
                 const auto id = hex_id(network.network_id);
@@ -244,7 +244,7 @@ public:
             const auto device = hex_id(state.activity.device_id);
             const bool has_identity = std::any_of(state.activity.device_id.begin(), state.activity.device_id.end(),
                 [](std::byte value) { return value != std::byte{0}; });
-            ImGui::TextDisabled("%s", has_identity ? (device.substr(0, 20) + "...").c_str() : tr("Waiting for authentication"));
+            ImGui::TextDisabled("%s", has_identity ? (device.substr(0, 20) + "...").c_str() : unconfigured ? tr("No server configured") : tr("Waiting for authentication"));
             ImGui::BeginDisabled(!has_identity);
             if (ImGui::Button(tr("Copy device ID"))) ImGui::SetClipboardText(device.c_str());
             ImGui::EndDisabled();
@@ -519,7 +519,8 @@ public:
             if (ImGui::CollapsingHeader(tr("Connection details"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (state.diagnostics) {
                     const auto& d = *state.diagnostics;
-                    ImGui::Text(tr("Relay transport: %s   /   Reconnects: %u"), d.tcp_fallback ? tr("TLS over TCP") : tr("QUIC over UDP"), d.reconnects);
+                    if (unconfigured) ImGui::TextUnformatted(tr("No server configured"));
+                    else ImGui::Text(tr("Relay transport: %s   /   Reconnects: %u"), d.tcp_fallback ? tr("TLS over TCP") : tr("QUIC over UDP"), d.reconnects);
                     if (d.rtt_us) ImGui::Text(tr("Relay latency: %.1f ms"), *d.rtt_us / 1000.0);
                     ImGui::Text(tr("Upload %.1f KiB/s   /   Download %.1f KiB/s"), send_rate_ / 1024.0, receive_rate_ / 1024.0);
                     ImGui::TextDisabled(tr("Sent %s   /   Received %s"), format_bytes(d.sent_bytes).c_str(), format_bytes(d.received_bytes).c_str());

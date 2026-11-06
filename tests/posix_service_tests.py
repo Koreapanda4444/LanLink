@@ -69,6 +69,44 @@ with tempfile.TemporaryDirectory(prefix="lanlink-service-") as directory:
                 process.wait(timeout=5)
     (root / "token").write_text("lanlink-isolated-service-test-token\n")
     (root / "token").chmod(0o600)
+    # Register a valid connection by atomic file replacement while the idle
+    # service stays alive. There is no installer or service reinstall involved.
+    configuration.write_text(f"auth_token_file={root / 'token'}\ndevice_identity_file={root / 'identity'}\nlog_directory={root / 'logs'}\n")
+    process = subprocess.Popen([binary, "--console", str(configuration)], env=environment,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.monotonic() + 10
+        while not endpoint.exists():
+            assert process.poll() is None, process.communicate()[0].decode()
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        assert request(endpoint, 1)[3] == 1
+        replacement = root / "new.conf"
+        replacement.write_text(f"relay_host=127.0.0.1\nrelay_port=9\nauth_token_file={root / 'token'}\ndevice_identity_file={root / 'identity'}\nlog_directory={root / 'logs'}\n")
+        replacement.replace(configuration)
+        deadline = time.monotonic() + 15
+        while True:
+            assert process.poll() is None, process.communicate()[0].decode()
+            assert time.monotonic() < deadline, "idle service did not activate the new configuration"
+            try:
+                if request(endpoint, 1)[3] == 0:
+                    break
+            except (OSError, AssertionError):
+                pass  # Local endpoint is closed briefly while starting the engine.
+            time.sleep(0.05)
+        assert interfaces() - baseline, "configuration activation did not start a native tunnel"
+        assert (root / "identity").exists()
+        assert request(endpoint, 9) == b""
+        assert process.wait(timeout=10) == 0
+        assert not endpoint.exists()
+        deadline = time.monotonic() + 5
+        while interfaces() - baseline and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not interfaces() - baseline
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
     configuration = root / "client.conf"
     configuration.write_text(f"relay_host=127.0.0.1\nrelay_port=9\nauth_token_file={root / 'token'}\ndevice_identity_file={root / 'identity'}\nlog_directory={root / 'logs'}\n")
     endpoint = root / "control.sock"

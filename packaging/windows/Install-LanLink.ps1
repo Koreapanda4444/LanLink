@@ -134,7 +134,14 @@ try {
     elseif (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
     if ($DesktopShortcut) { Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $desktopPath) }
     elseif (Test-Path -LiteralPath $desktopPath) { Remove-Item -LiteralPath $desktopPath -Force }
-    if (-not $NoStart) { Invoke-LanLinkServiceCommand $executable @('--start') }
+    $preserveServiceMode = $hadService -and $Mode -ne 'Install'
+    if (-not $NoStart -and (-not $preserveServiceMode -or $wasRunning)) {
+        Invoke-LanLinkServiceCommand $executable @('--start')
+    }
+    if ($preserveServiceMode) {
+        $startupType = switch ($serviceStartMode) { 'Auto' { 'Automatic' }; 'Manual' { 'Manual' }; 'Disabled' { 'Disabled' } }
+        Set-Service -Name LanLink -StartupType $startupType
+    }
     $registrationChanged = $true
     Register-LanLinkInstallation $InstallDirectory $version
     $committed = $true

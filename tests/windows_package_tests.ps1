@@ -170,6 +170,13 @@ try {
     $filter = Get-NetFirewallRule -Name LanLink-Virtual-LAN | Get-NetFirewallAddressFilter
     Assert-True ($filter.RemoteAddress -contains '10.64.0.0/255.192.0.0' -or $filter.RemoteAddress -contains '10.64.0.0/10') 'Inbound access must be limited to the virtual address pool.'
     Assert-True ($filter.LocalAddress -contains '10.64.0.0/255.192.0.0' -or $filter.LocalAddress -contains '10.64.0.0/10') 'Inbound rules must target virtual LAN addresses before the adapter exists.'
+    Set-Service -Name LanLink -StartupType Manual
+    $wintunHash = (Get-FileHash (Join-Path $program 'bin\wintun.dll')).Hash
+    Remove-Item -LiteralPath (Join-Path $program 'bin\wintun.dll') -Force
+    & $install -Mode Repair -InstallDirectory $program -DataDirectory $state -NoStart
+    Assert-True ((Get-FileHash (Join-Path $program 'bin\wintun.dll')).Hash -eq $wintunHash) 'Repair must restore missing required libraries.'
+    Assert-True ((Get-CimInstance Win32_Service -Filter "Name='LanLink'").StartMode -eq 'Manual') 'Repair must preserve the selected service startup mode.'
+    Assert-True ((Get-FileHash (Join-Path $state 'client.conf')).Hash -eq $configHash -and (Get-FileHash (Join-Path $state 'auth.token')).Hash -eq $tokenHash) 'Repair must preserve configuration and credentials.'
     & $uninstall -InstallDirectory $program
     Assert-True (-not (Test-Path $program)) 'Uninstall must remove program files.'
     Assert-True (-not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink')) 'Uninstall must remove its Windows registration.'
