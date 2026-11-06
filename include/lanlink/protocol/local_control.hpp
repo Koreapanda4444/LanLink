@@ -43,10 +43,17 @@ struct LocalActivity {
     bool operator==(const LocalActivity&) const = default;
 };
 
+enum class ClientConfigurationState : std::uint8_t {
+    configured = 0,
+    unconfigured = 1,
+    invalid_credentials = 2,
+};
+
 struct LocalDiagnostics {
     bool connected = false;
     bool authenticated = false;
     bool tcp_fallback = false;
+    ClientConfigurationState configuration = ClientConfigurationState::configured;
     std::uint32_t active_networks = 0;
     std::optional<std::uint32_t> rtt_us;
     std::uint64_t sent_bytes = 0;

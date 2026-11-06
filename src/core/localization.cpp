@@ -3,6 +3,13 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"No server configured","등록된 서버 없음"},
+    Translation{"Server connection error","서버 연결 오류"},
+    Translation{"Choose English or Korean in the left panel. You can use LanLink without registering a server yet.","왼쪽에서 한국어 또는 영어를 선택하세요. 서버를 등록하지 않아도 LanLink를 실행할 수 있습니다."},
+    Translation{"Installation is complete. Server connections are managed separately from installation. A server is needed only when connecting to a network.","설치가 완료되었습니다. 서버 연결은 설치와 별도로 관리합니다. 네트워크에 연결할 때 서버가 필요합니다."},
+    Translation{"LanLink is ready. No server connection has been configured, and the background service is waiting.","LanLink가 준비되었습니다. 등록된 서버가 없어 백그라운드 서비스가 대기 중입니다."},
+    Translation{"The background service is unavailable. Start the service or repair the LanLink installation.","백그라운드 서비스를 사용할 수 없습니다. 서비스를 시작하거나 LanLink 설치를 복구하세요."},
+
     Translation{"Gateway forwarding is available on Windows.","Gateway 전달 기능은 Windows에서 사용할 수 있습니다."},
     Translation{"Blocked","차단됨"},
     Translation{"Network management","네트워크 관리"},

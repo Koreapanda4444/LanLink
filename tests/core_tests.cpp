@@ -187,6 +187,14 @@ void test_configuration() {
         expect(false, "service configuration");
     }
 
+    {
+        auto idle = lanlink::core::parse_config("log_level=info\n");
+        idle.auth_token_file.clear();
+        lanlink::core::validate_service_config(idle);
+        expect(idle.relay_host.empty(), "fresh client has no selected server");
+        idle.relay_host = "relay.example";
+        expect_error([&] { lanlink::core::validate_service_config(idle); }, "selected server requires credentials path");
+    }
     expect_error([] {
         lanlink::core::RuntimeConfig service_config;
         service_config.device_identity_file.clear();

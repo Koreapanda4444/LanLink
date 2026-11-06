@@ -61,8 +61,15 @@ int main() {
         diagnostics.last_error = "relay timeout";
         auto metrics = encode_local_diagnostics(diagnostics);
         require(decode_local_diagnostics(metrics) == diagnostics);
-        metrics[3] = std::byte{1};
+        metrics[3] = std::byte{3};
         rejects([&] { static_cast<void>(decode_local_diagnostics(metrics)); });
+        for (const auto configuration : {ClientConfigurationState::unconfigured, ClientConfigurationState::invalid_credentials}) {
+            LocalDiagnostics idle;
+            idle.configuration = configuration;
+            require(decode_local_diagnostics(encode_local_diagnostics(idle)) == idle);
+            idle.authenticated = true;
+            rejects([&] { static_cast<void>(encode_local_diagnostics(idle)); });
+        }
         LocalActivity activity;
         PathDiagnostics paths;
         paths.relay.kind = PathKind::relay_tls;

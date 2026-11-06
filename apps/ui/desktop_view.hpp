@@ -193,6 +193,11 @@ public:
                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
         ImGui::Begin("LanLink", nullptr, flags);
         const bool connected = state.service_online && state.diagnostics && state.diagnostics->authenticated;
+        const bool unconfigured = state.service_online && state.diagnostics &&
+            state.diagnostics->configuration == protocol::ClientConfigurationState::unconfigured;
+        const bool connection_error = state.diagnostics &&
+            (state.diagnostics->configuration == protocol::ClientConfigurationState::invalid_credentials ||
+             !state.diagnostics->last_error.empty());
         ImGui::Image(logo_, ImVec2(44, 44));
         ImGui::SameLine();
         ImGui::BeginGroup();
@@ -201,7 +206,7 @@ public:
         ImGui::EndGroup();
         ImGui::SameLine(ImGui::GetWindowWidth() - 240);
         ImGui::TextColored(connected ? ImVec4(0.35f, 0.87f, 0.65f, 1) : ImVec4(0.95f, 0.70f, 0.35f, 1),
-            "%s", connected ? tr("Connected") : state.service_online ? tr("Connecting to relay") : tr("Service unavailable"));
+            "%s", connected ? tr("Connected") : unconfigured ? tr("No server configured") : connection_error ? tr("Server connection error") : state.service_online ? tr("Connecting to relay") : tr("Service unavailable"));
         ImGui::Separator();
         if (ImGui::BeginChild("navigation", ImVec2(270, -40), ImGuiChildFlags_Borders)) {
             int language=preferences_.language==lanlink::core::UiLanguage::korean ? 1 : 0;
@@ -285,11 +290,11 @@ public:
                 ImGui::SeparatorText(tr("Welcome to LanLink"));
                 if(setup_step_==0) {
                     ImGui::TextUnformatted(tr("Choose your language"));
-                    ImGui::TextWrapped("%s", tr("Choose English or Korean in the left panel. Accounts are optional; your self-hosted relay keeps working with a token."));
+                    ImGui::TextWrapped("%s", tr("Choose English or Korean in the left panel. You can use LanLink without registering a server yet."));
                 } else if(setup_step_==1) {
                     ImGui::TextUnformatted(tr("Check your connection"));
-                    ImGui::TextWrapped("%s", tr("The installer configures the relay address, port and token file. Start the service on the left and wait for authentication."));
-                    ImGui::TextUnformatted(connected ? tr("Connected") : tr("Waiting for authentication"));
+                    ImGui::TextWrapped("%s", tr("Installation is complete. Server connections are managed separately from installation. A server is needed only when connecting to a network."));
+                    ImGui::TextUnformatted(connected ? tr("Connected") : unconfigured ? tr("No server configured") : tr("Waiting for authentication"));
                     if(ImGui::Button(tr("Retry connection check")))next_diagnostics_={};
                 } else {
                     ImGui::TextUnformatted(tr("Create or join your first network"));
@@ -297,7 +302,7 @@ public:
                 }
                 if(setup_step_>0 && ImGui::Button(tr("Back")))--setup_step_;
                 if(setup_step_>0)ImGui::SameLine();
-                ImGui::BeginDisabled(setup_step_==1 && !connected);
+                ImGui::BeginDisabled(false);
                 if(setup_step_<2) {if(ImGui::Button(tr("Next")))++setup_step_;}
                 else if(ImGui::Button(tr("Finish")))finish_setup();
                 ImGui::EndDisabled();ImGui::SameLine();
@@ -307,6 +312,10 @@ public:
             const auto selected = std::find_if(state.networks.begin(), state.networks.end(),
                 [&](const auto& network) { return selected_ && network.network_id == *selected_; });
             if (selected == state.networks.end()) {
+                if (unconfigured) {
+                    ImGui::SeparatorText(tr("No server configured"));
+                    ImGui::TextWrapped("%s", tr("LanLink is ready. No server connection has been configured, and the background service is waiting."));
+                }
                 ImGui::SeparatorText(tr("Connect your devices"));
                 ImGui::TextWrapped("%s", tr("LanLink connects your devices through a relay server. Create a network, share its ID, and approve the devices that should join."));
                 ImGui::Spacing();
@@ -523,7 +532,7 @@ public:
                         if(state.paths->truncated)ImGui::TextDisabled("%s", tr("Showing a limited number of peer paths."));
                     }
                     if (!d.last_error.empty()) ImGui::TextWrapped(tr("Last connection error: %s"), d.last_error.c_str());
-                } else ImGui::TextWrapped("%s", tr("The background service is unavailable. Start the service or run the LanLink installer to configure this device."));
+                } else ImGui::TextWrapped("%s", tr("The background service is unavailable. Start the service or repair the LanLink installation."));
             }
         }
         ImGui::EndChild();

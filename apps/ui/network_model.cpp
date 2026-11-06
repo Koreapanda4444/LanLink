@@ -78,7 +78,7 @@ void NetworkModel::process() {
             } else if (request.command == protocol::LocalCommand::diagnostics) {
                 auto diagnostics = protocol::decode_local_diagnostics(response.payload);
                 std::lock_guard lock(mutex_);
-                if(!diagnostics.authenticated) { state_.peers.reset(); state_.paths.reset(); state_.games.reset(); state_.management.reset();state_.management_supported=true; }
+                if(!diagnostics.authenticated) { state_.peers.reset(); state_.paths.reset(); state_.games.reset(); state_.management.reset();state_.management_supported=true; state_.networks.clear(); }
                 state_.diagnostics = std::move(diagnostics);
                 ++state_.diagnostics_generation;
                 state_.service_online = true;

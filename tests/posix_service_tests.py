@@ -36,6 +36,37 @@ def interfaces():
 with tempfile.TemporaryDirectory(prefix="lanlink-service-") as directory:
     root = Path(directory)
     root.chmod(0o700)
+    # A fresh client must be useful before credentials or a kernel tunnel exist.
+    configuration = root / "client.conf"
+    endpoint = root / "control.sock"
+    environment = dict(os.environ, LANLINK_CONTROL_SOCKET=str(endpoint))
+    baseline = interfaces()
+    for selected, expected in ((False, 1), (True, 2)):
+        configuration.write_text(("relay_host=127.0.0.1\n" if selected else "") +
+            f"auth_token_file={root / 'missing-token'}\ndevice_identity_file={root / 'identity'}\nlog_directory={root / 'logs'}\n")
+        process = subprocess.Popen([binary, "--console", str(configuration)], env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 10
+            while not endpoint.exists():
+                assert process.poll() is None, process.communicate()[0].decode()
+                assert time.monotonic() < deadline, "idle service IPC startup timed out"
+                time.sleep(0.05)
+            assert request(endpoint, 1) == bytes((0, 0, 0, expected, 0, 0, 0, 0))
+            metrics = request(endpoint, 10)
+            assert metrics[:4] == bytes((0, 0, 0, expected))
+            assert struct.unpack("<I", metrics[28:32])[0] == 0, "idle service retried a connection"
+            assert bool(metrics[34:]) == selected, "unconfigured service reported a connection error"
+            assert request(endpoint, 2) == b"\x00\x00"
+            assert not interfaces() - baseline, "idle client created a kernel tunnel"
+            assert not (root / "identity").exists(), "idle client loaded device credentials"
+            assert request(endpoint, 9) == b""
+            assert process.wait(timeout=10) == 0
+            assert not endpoint.exists()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
     (root / "token").write_text("lanlink-isolated-service-test-token\n")
     (root / "token").chmod(0o600)
     configuration = root / "client.conf"

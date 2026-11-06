@@ -305,7 +305,7 @@ void validate_config(const RuntimeConfig& config) {
             offset=end==host.npos?host.size():end+1;
         }
     }
-    if (invalid_host(config.relay_host)) {
+    if (!config.relay_host.empty() && invalid_host(config.relay_host)) {
         throw std::runtime_error("relay_host is invalid");
     }
 
@@ -425,7 +425,7 @@ void validate_service_config(const RuntimeConfig& config) {
         throw std::runtime_error("device_identity_file is required by the service");
     }
 
-    if (config.auth_token_file.empty()) {
+    if ((!config.relay_host.empty() || config.bootstrap_mode != "manual") && config.auth_token_file.empty()) {
         throw std::runtime_error("auth_token_file is required by the service");
     }
 }

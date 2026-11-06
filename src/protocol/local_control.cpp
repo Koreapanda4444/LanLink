@@ -94,7 +94,10 @@ LocalMessage decode_local_message(const std::span<const std::byte> bytes) {
 
 std::vector<std::byte> encode_local_diagnostics(
     const LocalDiagnostics& diagnostics) {
-    if (diagnostics.last_error.size() > 512) {
+    if (diagnostics.last_error.size() > 512 ||
+        diagnostics.configuration > ClientConfigurationState::invalid_credentials ||
+        (diagnostics.configuration != ClientConfigurationState::configured &&
+         (diagnostics.connected || diagnostics.authenticated || diagnostics.tcp_fallback || diagnostics.active_networks))) {
         throw std::invalid_argument("local diagnostic error is too long");
     }
     std::vector<std::byte> output;
@@ -102,7 +105,7 @@ std::vector<std::byte> encode_local_diagnostics(
     output.push_back(static_cast<std::byte>(diagnostics.connected));
     output.push_back(static_cast<std::byte>(diagnostics.authenticated));
     output.push_back(static_cast<std::byte>(diagnostics.tcp_fallback));
-    output.push_back(std::byte{0});
+    output.push_back(static_cast<std::byte>(diagnostics.configuration));
     const auto append = [&](const std::uint64_t value, const std::size_t count) {
         for (std::size_t i = 0; i < count; ++i) {
             output.push_back(static_cast<std::byte>((value >> (8 * i)) & 0xff));
@@ -123,7 +126,9 @@ std::vector<std::byte> encode_local_diagnostics(
 LocalDiagnostics decode_local_diagnostics(const std::span<const std::byte> payload) {
     if (payload.size() < 34 || payload[0] > std::byte{1} ||
         payload[1] > std::byte{1} || payload[2] > std::byte{1} ||
-        payload[3] != std::byte{0}) {
+        payload[3] > std::byte{2} ||
+        (payload[3] != std::byte{0} && (payload[0] != std::byte{0} ||
+         payload[1] != std::byte{0} || payload[2] != std::byte{0}))) {
         throw std::invalid_argument("invalid local diagnostics");
     }
     const auto read = [&](const std::size_t offset, const std::size_t count) {
@@ -141,7 +146,10 @@ LocalDiagnostics decode_local_diagnostics(const std::span<const std::byte> paylo
     result.connected = payload[0] == std::byte{1};
     result.authenticated = payload[1] == std::byte{1};
     result.tcp_fallback = payload[2] == std::byte{1};
+    result.configuration = static_cast<ClientConfigurationState>(payload[3]);
     result.active_networks = static_cast<std::uint32_t>(read(4, 4));
+    if (result.configuration != ClientConfigurationState::configured && result.active_networks)
+        throw std::invalid_argument("inactive service has active networks");
     const auto rtt = static_cast<std::uint32_t>(read(8, 4));
     if (rtt != std::numeric_limits<std::uint32_t>::max()) result.rtt_us = rtt;
     result.sent_bytes = read(12, 8);

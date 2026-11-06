@@ -21,7 +21,8 @@ struct RuntimeConfig {
     bool p2p_enabled=true;
     std::string p2p_stun_host;
     std::uint16_t p2p_stun_port=3478;
-    std::string relay_host = "127.0.0.1";
+    // No client server is selected on a fresh installation.
+    std::string relay_host;
     std::uint16_t relay_port = 4433;
     std::string listen_host = "0.0.0.0";
     std::filesystem::path tls_certificate_file;

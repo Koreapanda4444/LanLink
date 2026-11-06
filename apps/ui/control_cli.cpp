@@ -217,7 +217,7 @@ int run_cli(const int argc, wchar_t* argv[]) {
             }
             for (const auto& device:result.devices) std::cout << hex_id(device.device_id) << " " << device.label << (device.revoked ? " [revoked]" : "") << '\n';
         } else if (command == protocol::LocalCommand::status) {
-            if (response.payload.size() != 8 || response.payload[3] != std::byte{0}) {
+            if (response.payload.size() != 8 || response.payload[3] > std::byte{2}) {
                 throw std::runtime_error("invalid service status");
             }
             std::uint32_t networks = 0;
@@ -226,6 +226,7 @@ int run_cli(const int argc, wchar_t* argv[]) {
             }
             std::cout << "connected: " << (response.payload[0] != std::byte{0})
                       << "\nauthenticated: " << (response.payload[1] != std::byte{0})
+                      << "\nserver configuration: " << (response.payload[3] == std::byte{1} ? "unconfigured" : response.payload[3] == std::byte{2} ? "invalid credentials" : "configured")
                       << "\ntcp fallback: " << (response.payload[2] != std::byte{0})
                       << "\nactive networks: " << networks << '\n';
         } else if (command == protocol::LocalCommand::list) {
@@ -266,6 +267,7 @@ int run_cli(const int argc, wchar_t* argv[]) {
             const auto metrics = protocol::decode_local_diagnostics(response.payload);
             std::cout << "connected: " << metrics.connected
                       << "\nauthenticated: " << metrics.authenticated
+                      << "\nserver configuration: " << (metrics.configuration == protocol::ClientConfigurationState::unconfigured ? "unconfigured" : metrics.configuration == protocol::ClientConfigurationState::invalid_credentials ? "invalid credentials" : "configured")
                       << "\ntcp fallback: " << metrics.tcp_fallback
                       << "\nactive networks: " << metrics.active_networks
                       << "\nlatency: ";

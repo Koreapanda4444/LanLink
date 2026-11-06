@@ -36,6 +36,75 @@
 
 namespace lanlink::service {
 
+namespace {
+// Keep local control available without loading credentials, MsQuic or a kernel
+// adapter. An atomic client.conf replacement wakes this idle runtime; active
+// server switching is handled separately from installation.
+void wait_for_server(const lanlink::core::RuntimeConfig& config,
+                     const std::optional<std::filesystem::path>& config_path,
+                     const ServiceHooks& hooks, const std::string& credential_error) {
+    namespace protocol = lanlink::protocol;
+    const auto stamp = [](const std::filesystem::path& path) {
+        std::error_code error;
+        const auto time = std::filesystem::last_write_time(path, error);
+        return error ? std::filesystem::file_time_type::min() : time;
+    };
+    const auto original = config_path ? stamp(*config_path) : std::filesystem::file_time_type::min();
+    const auto token_stamp = stamp(config.auth_token_file);
+    const auto configuration = credential_error.empty()
+        ? protocol::ClientConfigurationState::unconfigured
+        : protocol::ClientConfigurationState::invalid_credentials;
+    lanlink::transport::LocalPipeServer pipe([&](const protocol::LocalMessage& request) {
+        std::vector<std::byte> payload;
+        switch (request.command) {
+        case protocol::LocalCommand::status:
+            if (!request.payload.empty()) throw std::invalid_argument("status does not accept a payload");
+            payload.resize(8);
+            payload[3] = static_cast<std::byte>(configuration);
+            break;
+        case protocol::LocalCommand::diagnostics: {
+            if (!request.payload.empty()) throw std::invalid_argument("diagnostics does not accept a payload");
+            protocol::LocalDiagnostics state;
+            state.configuration = configuration;
+            state.last_error = credential_error;
+            payload = protocol::encode_local_diagnostics(state);
+            break;
+        }
+        case protocol::LocalCommand::list:
+            static_cast<void>(protocol::decode_network_list_request(request.payload));
+            payload = protocol::encode_network_list_result({});
+            break;
+        case protocol::LocalCommand::activity:
+            if (!request.payload.empty()) throw std::invalid_argument("activity does not accept a payload");
+            payload = protocol::encode_local_activity({});
+            break;
+        case protocol::LocalCommand::path_diagnostics:
+            if (!request.payload.empty()) throw std::invalid_argument("path diagnostics does not accept a payload");
+            payload = protocol::encode_path_diagnostics({});
+            break;
+        case protocol::LocalCommand::game_diagnostics:
+            if (!request.payload.empty()) throw std::invalid_argument("game diagnostics does not accept a payload");
+            payload = protocol::encode_game_diagnostics({});
+            break;
+        case protocol::LocalCommand::stop:
+            if (!request.payload.empty()) throw std::invalid_argument("stop does not accept a payload");
+            hooks.request_stop();
+            break;
+        default:
+            throw std::runtime_error(credential_error.empty() ? "No server configured" : credential_error);
+        }
+        return protocol::LocalMessage{request.command, true, false, std::move(payload)};
+    });
+    hooks.ready();
+    while (!hooks.stop_requested()) {
+        if (config_path && stamp(*config_path) != original) break;
+        if (!credential_error.empty() && stamp(config.auth_token_file) != token_stamp) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds{200});
+    }
+    pipe.stop();
+}
+}
+
 void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
                       lanlink::core::Logger& logger,
                       const ServiceHooks& hooks) {
@@ -310,7 +379,7 @@ void run_runtime_impl(const lanlink::core::RuntimeConfig& config,
 
 void run_client(const std::optional<std::filesystem::path>& config_path,
                  const ServiceHooks& hooks) {
-    const auto config = config_path
+    auto config = config_path
         ? lanlink::core::load_config(*config_path)
         : lanlink::core::RuntimeConfig{};
     lanlink::core::validate_service_config(config);
@@ -318,6 +387,31 @@ void run_client(const std::optional<std::filesystem::path>& config_path,
         config.log_level, config.log_max_size_bytes, config.log_max_files);
     logger.info("starting");
     try {
+        while (!hooks.stop_requested()) {
+            std::string credential_error;
+            const bool selected = !config.relay_host.empty() || config.bootstrap_mode != "manual";
+            if (selected) {
+                try { static_cast<void>(lanlink::auth::AuthToken::load(config.auth_token_file)); }
+                catch (const std::exception&) {
+                    credential_error = "Server credentials are missing or invalid";
+                    logger.warning(credential_error);
+                }
+            }
+            if (selected && credential_error.empty()) break;
+            logger.info(credential_error.empty() ? "waiting: no server configured" : "waiting: invalid server credentials");
+            wait_for_server(config, config_path, hooks, credential_error);
+            if (hooks.stop_requested()) return;
+            // Never initiate a connection using a partially written or invalid
+            // configuration. Remain available for local diagnostics instead.
+            try {
+                auto updated = lanlink::core::load_config(*config_path);
+                lanlink::core::validate_service_config(updated);
+                config = std::move(updated);
+            } catch (const std::exception&) {
+                logger.warning("Ignored invalid client configuration update");
+            }
+        }
+        if (hooks.stop_requested()) return;
         run_runtime_impl(config, logger, hooks);
     } catch (const std::exception& error) {
         logger.error(std::string{"service failed: "} + error.what());
