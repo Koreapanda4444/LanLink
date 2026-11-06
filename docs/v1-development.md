@@ -62,7 +62,7 @@
 | 56 | `fix(reliability): harden lifecycle, cancellation and concurrency` — TLS 수신기 동시 시작·종료 직렬화, 중복 시작 거부·활성 연결 종료·재시작 회귀 | 구현 |
 | 57 | `perf(network): optimize buffering, allocations and forwarding` — 인증 헤더의 payload 복사·할당 제거, 크기별 직렬화 비교 지표 | 구현 |
 | 58 | `security(audit): verify protocol, auth, keys and permissions` — fd 경계 수정·실제 런타임 버전 하한·MsQuic 2.6.3/OpenSSL 3.6.4·위협 모델과 회귀 | 구현 |
-| 59 | `test(compat): validate NAT, games and cross-platform matrices` — 실제 시험 환경 증거·결과 표·미지원 사항 문서화 | 대기 |
+| 59 | `test(compat): validate NAT, games and cross-platform matrices` — 두 Linux NAT 라우터와 UDP 차단/TLS 시험·OS/게임 검증표, 물리 공유기/혼합 OS 실시간은 미검증 | 검증 중 |
 | 60 | `release(v1.0.0): prepare and verify production artifacts` — Windows/Linux/macOS 패키지, 체크섬, 업그레이드/롤백, 릴리스 노트; 실제 공개 발행은 승인 후 | 대기 |
 
 01~17의 검증은 [v0.4 기록](verification-v0.4.md), 18~25의 검증과 환경 제한은 [v0.5 기록](verification-v0.5.md)에 정리한다. 26~32는 v0.6.0으로 구현했으며 [검증 기록](verification-v0.6.md)에 범위와 제한을 정리한다. 33~41은 v0.7.0으로 구현했으며 [검증 기록](verification-v0.7.md)에 범위와 제한을 정리한다. 42~49는 v0.8.0으로 구현했으며 [검증 기록](verification-v0.8.md)에 native OS 검증과 물리 장비 시험의 제한을 정리한다. 50~51번은 서명된 지역별 Relay 등록과 인증된 상태·부하 신호를 구현했다. 52번은 실측 RTT·부하·유효한 상태를 이용한 선택과 안정화/수동 고정을 구현했다. 53번은 하나의 영구 authority를 공유하는 QUIC/TLS 지역 앞단과 지역/중앙 재시작 시 재인증·키/IP 복원을 구현했다. 54번은 중앙 전체/네트워크/장치별 바이트·전달·요청 제한, fanout 비용 계수와 aggregate 상태 지표를 구현했다. 55번은 v0.9.0으로 inventory 기반 지역 설정·서명 catalog 생성, 실제 노드 키 검증 설치와 snapshot 백업·차단된 빈 대상 복원을 구현했다. 50~55의 시험 항목과 환경 제한은 [v0.9 기록](verification-v0.9.md)에 정리한다. 56~60은 미착수다. Linux L2는 제한된 ARP/IPv4 Ethernet이며 다른 OS의 L2와 물리 LAN 브리지는 지원하지 않는다.

@@ -71,7 +71,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ninja-build pkg-config autoconf autoconf-archive automake libtool libltdl-dev linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk
+          sudo apt-get install --yes ninja-build pkg-config autoconf autoconf-archive automake libtool libltdl-dev linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk iproute2 iptables
       - name: Bootstrap vcpkg (Linux)
         if: runner.os == 'Linux'
         run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
@@ -109,6 +109,9 @@ jobs:
       - name: Verify native Linux TUN networking
         if: runner.os == 'Linux'
         run: sudo timeout 30 ./build/lanlink_posix_tun_tests
+      - name: Verify kernel NAT and UDP-blocked TLS fallback
+        if: runner.os == 'Linux'
+        run: sudo --preserve-env=GITHUB_SHA timeout 120 unshare --net python3 tests/nat_matrix.py build/lanlink_nat_peer build/lanlink-relay "$RUNNER_TEMP/lanlink-linux-compatibility.json"
       - name: Verify native Linux client lifecycle
         if: runner.os == 'Linux'
         run: sudo unshare --net python3 tests/posix_service_tests.py build/lanlink-service
@@ -151,6 +154,7 @@ jobs:
             build/artifacts/LanLink-*-linux-*.tar.gz
             ${{ runner.temp }}/lanlink-linux-*.png
             ${{ runner.temp }}/lanlink-linux-performance.csv
+            ${{ runner.temp }}/lanlink-linux-compatibility.json
           if-no-files-found: error
       - name: Package Windows client
         if: runner.os == 'Windows'
