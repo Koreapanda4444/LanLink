@@ -5,8 +5,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=lanlink
-Group=lanlink
+User=lanlink-relay
+Group=lanlink-relay
 WorkingDirectory=/var/lib/lanlink
 ExecStart=/opt/lanlink/bin/lanlink-relay /etc/lanlink/relay.conf
 Restart=on-failure

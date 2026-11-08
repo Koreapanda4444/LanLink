@@ -317,7 +317,7 @@ def test_package(archive):
         require(not list((root / "opt").glob(".lanlink-*")), "An upgrade left staging directories")
         unit = root / "etc/systemd/system/lanlink-relay.service"
         unit_content = unit.read_text()
-        for setting in ("User=lanlink\n", "Group=lanlink\n", "Restart=on-failure\n",
+        for setting in ("User=lanlink-relay\n", "Group=lanlink-relay\n", "Restart=on-failure\n",
                         "WantedBy=multi-user.target\n", "ProtectSystem=strict\n"):
             require(setting in unit_content, "The systemd unit lost its service policy")
         if shutil.which("systemd-analyze"):

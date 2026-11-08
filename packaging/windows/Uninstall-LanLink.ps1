@@ -32,6 +32,7 @@ if (Get-Service -Name LanLink -ErrorAction SilentlyContinue) {
 }
 Remove-LanLinkFirewallRules
 Unregister-LanLinkInstallation $InstallDirectory
+Unregister-LanLinkUrl $InstallDirectory
 foreach ($folder in 'CommonPrograms', 'CommonDesktopDirectory') {
     $shortcut = Join-Path ([Environment]::GetFolderPath($folder)) 'LanLink.lnk'
     if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force }

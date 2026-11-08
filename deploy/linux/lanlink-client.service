@@ -6,16 +6,16 @@ After=network-online.target
 [Service]
 Type=simple
 Group=lanlink
-ExecStart=/opt/lanlink/bin/lanlink-service --console /etc/lanlink/client.conf
+ExecStart=/opt/lanlink-client/bin/lanlink-service --console /etc/lanlink-client/client.conf
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=25
 UMask=0077
 RuntimeDirectory=lanlink
 RuntimeDirectoryMode=0755
-StateDirectory=lanlink
+StateDirectory=lanlink-client
 StateDirectoryMode=0700
-LogsDirectory=lanlink
+LogsDirectory=lanlink-client
 LogsDirectoryMode=0700
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=true
@@ -30,7 +30,7 @@ LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 DevicePolicy=closed
 DeviceAllow=/dev/net/tun rw
-ReadWritePaths=/var/lib/lanlink /var/log/lanlink /run/lanlink
+ReadWritePaths=/var/lib/lanlink-client /var/log/lanlink-client /run/lanlink
 
 [Install]
 WantedBy=multi-user.target

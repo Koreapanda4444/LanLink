@@ -75,6 +75,8 @@ if ($service) {
 $oldConfig = if (Test-Path -LiteralPath $configPath) { ,[IO.File]::ReadAllBytes($configPath) } else { $null }
 $oldDataAcl = if ($hadData) { Get-Acl -LiteralPath $DataDirectory } else { $null }
 $oldRegistration = Get-LanLinkRegistrationSnapshot
+$oldUrl = Get-LanLinkUrlSnapshot
+$urlChanged = $false
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'LanLink.lnk'
 $desktopPath = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'LanLink.lnk'
 $oldShortcut = if (Test-Path -LiteralPath $shortcutPath) { ,[IO.File]::ReadAllBytes($shortcutPath) } else { $null }
@@ -146,6 +148,9 @@ try {
     }
     $registrationChanged = $true
     Register-LanLinkInstallation $InstallDirectory $version
+    if ($null -ne $oldUrl -and (-not $oldUrl[''].ContainsKey('LanLinkOwnerPath') -or $oldUrl['']['LanLinkOwnerPath'].value -ne $InstallDirectory)) { throw 'The lanlink URL scheme belongs to another installation.' }
+    $urlChanged = $true
+    Register-LanLinkUrl $InstallDirectory
     $committed = $true
     Write-Output "LanLink $version installed in $InstallDirectory. Data: $DataDirectory"
 } catch {
@@ -177,6 +182,7 @@ try {
             }
         },
         { if ($registrationChanged) { Restore-LanLinkRegistration $oldRegistration } },
+        { if ($urlChanged) { Restore-LanLinkUrl $oldUrl } },
         {
             if ($hadService -and ($serviceChanged -or $serviceStopped)) {
                 $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'

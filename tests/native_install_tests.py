@@ -28,10 +28,10 @@ if mac:
     unit = Path("/Library/LaunchDaemons/com.lanlink.client.plist")
     desktop = Path("/Applications/LanLink.app")
 else:
-    prefix = Path("/opt/lanlink")
-    config = Path("/etc/lanlink/client.conf")
-    state = Path("/var/lib/lanlink")
-    logs = Path("/var/log/lanlink")
+    prefix = Path("/opt/lanlink-client")
+    config = Path("/etc/lanlink-client/client.conf")
+    state = Path("/var/lib/lanlink-client")
+    logs = Path("/var/log/lanlink-client")
     unit = Path("/etc/systemd/system/lanlink-client.service")
     desktop = Path("/usr/share/applications/lanlink.desktop")
 assert all(not item.exists() and not item.is_symlink() for item in (prefix, config.parent, state, logs, unit, desktop)), "A pre-existing installation must not be touched"

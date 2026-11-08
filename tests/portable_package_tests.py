@@ -22,7 +22,7 @@ assert subprocess.check_output([str(source / "bin/lanlink-service"), "--version"
 with tempfile.TemporaryDirectory(prefix="lanlink-install-") as directory:
     root = Path(directory) / "root"
     other_root = Path(directory) / "other-component"
-    other_program = other_root / ("Library/Application Support/LanLink" if mac else "opt/lanlink")
+    other_program = other_root / ("Library/Application Support/LanLink" if mac else "opt/lanlink-client")
     (other_program / "bin").mkdir(parents=True)
     (other_program / "build-info.json").write_text(json.dumps(metadata))
     relay = other_program / "bin/lanlink-relay"
@@ -39,9 +39,15 @@ with tempfile.TemporaryDirectory(prefix="lanlink-install-") as directory:
     token.write_text("lanlink-isolated-installer-test-token-2026\n")
     install = [sys.executable, str(source / "install-client.py"), "--root", str(root), "--no-start"]
     uninstall = [sys.executable, str(source / "uninstall-client.py"), "--root", str(root)]
+    # A colocated relay uses different program/config/state paths and survives client installation/removal.
+    relay_files=[]
+    if not mac:
+        for name in ("opt/lanlink/bin/lanlink-relay","etc/lanlink/relay.conf","var/lib/lanlink/relay.db","var/log/lanlink/server.log"):
+            path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b"relay-owned state");relay_files.append(path)
     subprocess.run(install, check=True)
-    config = root / ("Library/Preferences/LanLink/client.conf" if mac else "etc/lanlink/client.conf")
-    state = root / ("Library/Application Support/LanLinkData" if mac else "var/lib/lanlink")
+    assert all(p.read_bytes()==b"relay-owned state" for p in relay_files)
+    config = root / ("Library/Preferences/LanLink/client.conf" if mac else "etc/lanlink-client/client.conf")
+    state = root / ("Library/Application Support/LanLinkData" if mac else "var/lib/lanlink-client")
     assert "relay_host=" not in config.read_text(), "Fresh install must not select a server"
     assert not (state / "auth.token").exists(), "Installer must not invent server credentials"
     # Simulate app-owned connection data; reinstall must leave it byte-for-byte.
@@ -57,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix="lanlink-install-") as directory:
     assert protected[-1].stat().st_mode & 0o077 == 0
     subprocess.run(install, check=True)
     assert all(hashlib.sha256(p.read_bytes()).digest() == value for p, value in before.items())
-    installed = root / ("Library/Application Support/LanLink" if mac else "opt/lanlink")
+    installed = root / ("Library/Application Support/LanLink" if mac else "opt/lanlink-client")
     assert subprocess.check_output([str(installed / "bin/lanlink-service"), "--version"], text=True).strip() == metadata["version"]
     previous_binary = hashlib.sha256((installed / "bin/lanlink-service").read_bytes()).digest()
     broken = Path(directory) / "broken"
@@ -72,5 +78,6 @@ with tempfile.TemporaryDirectory(prefix="lanlink-install-") as directory:
     assert not installed.exists() and all(p.exists() for p in protected)
     subprocess.run(install, check=True)
     subprocess.run(uninstall + ["--purge"], check=True)
+    assert all(p.read_bytes()==b"relay-owned state" for p in relay_files)
     assert not config.exists() and not identity.exists()
 print("Portable package: native binaries, dependencies, install, upgrade preservation and explicit purge passed")

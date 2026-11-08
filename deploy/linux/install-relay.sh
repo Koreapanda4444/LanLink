@@ -156,7 +156,7 @@ dependency_report=$(LD_LIBRARY_PATH="$staging/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY
 [[ ! -d $config_directory ]] || cp -a -- "$config_directory" "$backup/config"
 [[ ! -f $unit_path ]] || cp -a -- "$unit_path" "$backup/unit"
 if (( !offline )); then
-    id lanlink >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/lanlink --shell "$(command -v nologin)" lanlink
+    id lanlink-relay >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/lanlink --shell "$(command -v nologin)" lanlink-relay
     if systemctl is-enabled --quiet lanlink-relay.service; then was_enabled=1; fi
     if systemctl is-active --quiet lanlink-relay.service; then
         was_active=1
@@ -197,7 +197,7 @@ if sys.argv[4]:
         if line.strip() and not line.lstrip().startswith('#'):
             key,value=line.split('=',1)
             settings[key.strip()]=value.strip()
-settings.update(listen_host=sys.argv[3],relay_port=sys.argv[2],
+settings.update(listen_host=sys.argv[3],relay_port=sys.argv[2],relay_require_device_registration='true',
     tls_certificate_file='/etc/lanlink/server.cert',tls_private_key_file='/etc/lanlink/server.key',
     auth_token_file='/etc/lanlink/auth.token',relay_database_file='/var/lib/lanlink/relay.db',
     log_directory='/var/log/lanlink')
@@ -208,8 +208,8 @@ chmod 0640 "$config_directory/relay.conf"
 install -m 0644 "$program_directory/lanlink-relay.service" "$unit_path"
 if (( !offline )); then
     chown -R root:root "$program_directory"
-    chown -R root:lanlink "$config_directory"
-    chown -R lanlink:lanlink "$prefix/var/lib/lanlink" "$prefix/var/log/lanlink"
+    chown -R root:lanlink-relay "$config_directory"
+    chown -R lanlink-relay:lanlink-relay "$prefix/var/lib/lanlink" "$prefix/var/log/lanlink"
     if command -v restorecon >/dev/null; then restorecon -RF "$program_directory" "$config_directory" /var/lib/lanlink /var/log/lanlink "$unit_path"; fi
     systemctl daemon-reload
     systemctl enable lanlink-relay.service

@@ -16,6 +16,7 @@ if(LANLINK_PACKAGE_RELAY)
         LIBRARY DESTINATION lib COMPONENT relay)
     install(PROGRAMS
         "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/install-relay.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/setup-relay.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/uninstall-relay.sh"
         DESTINATION . COMPONENT relay)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/lanlink-relay.service"

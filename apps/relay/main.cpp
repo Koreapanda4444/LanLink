@@ -7,6 +7,8 @@
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/auth/identity.hpp"
 #include "lanlink/relay/device_authority.hpp"
+#include "lanlink/protocol/server_profiles.hpp"
+#include "lanlink/protocol/join_target.hpp"
 #include "lanlink/transport/tls.hpp"
 #include "lanlink/transport/relay_probe.hpp"
 #include <atomic>
@@ -64,8 +66,18 @@ int main(const int argc, char* argv[]) {
             if(!c.relay_upstream_host.empty())throw std::invalid_argument("Manage registration on the central authority");
             lanlink::storage::RelayStore database(c.relay_database_file);auto master=lanlink::auth::AuthToken::load(c.auth_token_file);
             lanlink::relay::DeviceAuthority authority(database,master,c.relay_require_device_registration);
+            if(action=="--device-invite" && (argc==5 || argc==6)) {
+                lanlink::protocol::ServerInvitation invite;invite.server.name=argv[3];invite.server.host=argv[3];
+                std::size_t count=0;const std::string port=argv[4];const auto number=std::stoul(port,&count);
+                if(count!=port.size() || number<1 || number>65535)throw std::invalid_argument("Invalid public server port");
+                invite.server.port=static_cast<std::uint16_t>(number);invite.server.public_key_pin=lanlink::transport::server_public_key_fingerprint(c.tls_certificate_file);
+                if(argc==6){const auto join=lanlink::protocol::parse_join_target(argv[5]);invite.network_id=join.network_id;invite.network_invitation=join.invitation;}
+                lanlink::protocol::validate_server_profile(invite.server);
+                invite.registration_code=authority.issue_code(now_ms(),300);
+                std::cout<<lanlink::protocol::make_server_invitation(invite)<<'\n';return 0;
+            }
             if(action=="--device-code" && (argc==3 || argc==4)) {
-                const auto duration=argc==4?std::stoul(argv[3]):300UL;if(duration<1 || duration>86400)throw std::invalid_argument("Lifetime must be 1 to 86400 seconds");
+                std::size_t consumed=0;const std::string lifetime=argc==4?argv[3]:"300";const auto duration=std::stoul(lifetime,&consumed);if(consumed!=lifetime.size())throw std::invalid_argument("Invalid registration lifetime");if(duration<1 || duration>86400)throw std::invalid_argument("Lifetime must be 1 to 86400 seconds");
                 std::cout<<authority.issue_code(now_ms(),static_cast<std::uint32_t>(duration))<<'\n';return 0;
             }
             if(action=="--device-code-revoke" && argc==4){authority.revoke_code(argv[3]);std::cout<<"Registration code revoked\n";return 0;}

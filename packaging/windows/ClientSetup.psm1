@@ -245,3 +245,46 @@ function Unregister-LanLinkInstallation([string] $Directory) {
 }
 
 Export-ModuleMember -Function *-LanLink*
+
+function Get-LanLinkUrlSnapshot {
+    $path = 'HKLM:\SOFTWARE\Classes\lanlink'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $result = @{}
+    foreach ($key in @((Get-Item -LiteralPath $path)) + @(Get-ChildItem -LiteralPath $path -Recurse)) {
+        try {
+            $relative = $key.Name.Substring('HKEY_LOCAL_MACHINE\SOFTWARE\Classes\lanlink'.Length)
+            $values = @{}
+            foreach ($name in $key.GetValueNames()) { $values[$name] = @{ value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); kind = $key.GetValueKind($name) } }
+            $result[$relative] = $values
+        } finally { $key.Close() }
+    }
+    return $result
+}
+function Restore-LanLinkUrl($Snapshot) {
+    $path = 'HKLM:\SOFTWARE\Classes\lanlink'
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+    if ($null -eq $Snapshot) { return }
+    foreach ($relative in @($Snapshot.Keys | Sort-Object Length)) {
+        $key = New-Item -Path ($path + $relative) -Force
+        try { foreach ($entry in $Snapshot[$relative].GetEnumerator()) { $key.SetValue($entry.Key, $entry.Value.value, $entry.Value.kind) } } finally { $key.Close() }
+    }
+}
+function Register-LanLinkUrl([string] $InstallDirectory) {
+    $path = 'HKLM:\SOFTWARE\Classes\lanlink'
+    if (Test-Path -LiteralPath $path) {
+        $owner = (Get-ItemProperty -LiteralPath $path).PSObject.Properties['LanLinkOwnerPath']
+        if (-not $owner -or $owner.Value -ne $InstallDirectory) { throw 'The lanlink URL scheme belongs to another installation.' }
+    }
+    $key = New-Item -Path $path -Force
+    try { $key.SetValue('', 'URL:LanLink invitation'); $key.SetValue('URL Protocol', ''); $key.SetValue('LanLinkOwnerPath', $InstallDirectory) } finally { $key.Close() }
+    $key = New-Item -Path "$path\shell\open\command" -Force
+    try { $key.SetValue('', '"' + (Join-Path $InstallDirectory 'bin\lanlink-ui.exe') + '" --invite "%1"') } finally { $key.Close() }
+}
+function Unregister-LanLinkUrl([string] $InstallDirectory) {
+    $path = 'HKLM:\SOFTWARE\Classes\lanlink'
+    if (Test-Path -LiteralPath $path) {
+        $owner = (Get-ItemProperty -LiteralPath $path).PSObject.Properties['LanLinkOwnerPath']
+        if ($owner -and $owner.Value -eq $InstallDirectory) { Remove-Item -LiteralPath $path -Recurse -Force }
+    }
+}
+Export-ModuleMember -Function *-LanLink*

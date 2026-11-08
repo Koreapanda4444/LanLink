@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import configparser
 import grp
 import json
 import os
@@ -21,7 +22,7 @@ def layout(root):
         return (root / "Library/Application Support/LanLink", root / "Library/Preferences/LanLink/client.conf",
             root / "Library/Application Support/LanLinkData", root / "Library/Logs/LanLink",
             root / "Library/LaunchDaemons/com.lanlink.client.plist", root / "Applications/LanLink.app")
-    return (root / "opt/lanlink", root / "etc/lanlink/client.conf", root / "var/lib/lanlink", root / "var/log/lanlink",
+    return (root / "opt/lanlink-client", root / "etc/lanlink-client/client.conf", root / "var/lib/lanlink-client", root / "var/log/lanlink-client",
         root / "etc/systemd/system/lanlink-client.service", root / "usr/share/applications/lanlink.desktop")
 
 def run(arguments, check=True):
@@ -109,6 +110,25 @@ def restore_desktop(desktop, previous):
     else:
         desktop.write_bytes(previous)
 
+def mime_default(root, install):
+    path=root / "usr/share/applications/mimeapps.list"
+    previous=path.read_bytes() if path.exists() else None
+    parser=configparser.ConfigParser(interpolation=None,strict=True)
+    parser.optionxform=str
+    if previous:parser.read_string(previous.decode())
+    section="Default Applications";key="x-scheme-handler/lanlink"
+    if install:
+        if not parser.has_section(section):parser.add_section(section)
+        if not parser.has_option(section,key):parser[section][key]="lanlink.desktop;"
+    elif parser.has_option(section,key) and parser[section][key]=="lanlink.desktop;":
+        parser.remove_option(section,key)
+    else:return previous
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with path.open("w") as f:parser.write(f,space_around_delimiters=False)
+    path.chmod(0o644)
+    return previous
+
+
 def install_main():
     parser = argparse.ArgumentParser(description="Install the LanLink desktop client")
     parser.add_argument("--root", default="/", help="Staging root; services and user groups are untouched")
@@ -155,6 +175,9 @@ def install_main():
     backup = temporary.with_name(temporary.name + "-old")
     previous_unit = unit.read_bytes() if unit.exists() else None
     previous_desktop = save_desktop(desktop)
+    mime_path=root / "usr/share/applications/mimeapps.list"
+    previous_mime=mime_path.read_bytes() if not MAC and mime_path.exists() else None
+    mime_changed=False
     created = []
     installed = False
     was_active = live and active()
@@ -176,6 +199,9 @@ def install_main():
         if live and MAC:
             os.chown(unit, 0, 0)
         install_desktop(prefix, desktop)
+        if not MAC:
+            mime_changed=True
+            mime_default(root,True)
         if not config.exists():
             with config.open("x") as output:
                 created.append(config)
@@ -208,6 +234,9 @@ def install_main():
         else:
             unit.write_bytes(previous_unit)
         restore_desktop(desktop, previous_desktop)
+        if mime_changed:
+            if previous_mime is None:mime_path.unlink(missing_ok=True)
+            else:mime_path.write_bytes(previous_mime)
         for target in created:
             target.unlink(missing_ok=True)
         if live:
@@ -248,6 +277,7 @@ def uninstall_main():
             run(["/usr/bin/systemctl", "disable", "--now", "lanlink-client.service"])
     unit.unlink(missing_ok=True)
     desktop.unlink(missing_ok=True)
+    if not MAC:mime_default(root,False)
     shutil.rmtree(prefix)
     if live:
         reload_service()
