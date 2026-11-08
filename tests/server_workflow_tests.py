@@ -1,6 +1,6 @@
 """Run against real relay, local IPC, client service and native tunnel on an isolated CI host."""
 import hashlib
-from windows_certificate_fixture import import_certificate,remove_certificate
+from windows_certificate_fixture import prepare_certificate,remove_certificate
 import os
 from pathlib import Path
 import re
@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix="lanlink-server-workflow-") as directory
         for name in ("a","b"):
             folder=root/name;folder.mkdir();n=port()
             run(["openssl","req","-x509","-newkey","ec","-pkeyopt","ec_paramgen_curve:prime256v1","-nodes","-days","1","-subj","/CN=LanLink Workflow","-addext","subjectAltName=IP:127.0.0.1","-addext","basicConstraints=critical,CA:FALSE","-addext","extendedKeyUsage=serverAuth","-keyout",str(folder/"key.pem"),"-out",str(folder/"cert.pem")])
-            certificates.append(import_certificate(folder/"cert.pem",folder/"key.pem"))
+            certificates.append(prepare_certificate(folder/"cert.pem",folder/"key.pem"))
             token=folder/"master.token";token.write_text("server-administrator-token-must-never-leave-server-"+name+"\n")
             if sys.platform!="win32":token.chmod(0o600)
             config=folder/"relay.conf"
@@ -143,7 +143,7 @@ with tempfile.TemporaryDirectory(prefix="lanlink-server-workflow-") as directory
         folder,n,config,pin,server=servers[0]
         cert=(folder/"cert.pem").read_bytes();key=(folder/"key.pem").read_bytes();stop(server)
         run(["openssl","req","-x509","-newkey","ec","-pkeyopt","ec_paramgen_curve:prime256v1","-nodes","-days","1","-subj","/CN=Changed Relay","-addext","subjectAltName=IP:127.0.0.1","-keyout",str(folder/"key.pem"),"-out",str(folder/"cert.pem")])
-        certificates.append(import_certificate(folder/"cert.pem",folder/"key.pem"))
+        certificates.append(prepare_certificate(folder/"cert.pem",folder/"key.pem"))
         changed=spawn([relay,str(config)],root);wait(lambda:ready(n),"Changed-key relay did not restart")
         wait(lambda:not connected() and "changed" in control("diagnostics"),"Changed server key was not blocked")
         stop(changed);(folder/"cert.pem").write_bytes(cert);(folder/"key.pem").write_bytes(key)
