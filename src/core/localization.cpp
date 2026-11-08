@@ -3,6 +3,15 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Server registration code (optional)","서버 등록 코드 (선택)"},
+    Translation{"Copy server and network invitation","서버 및 네트워크 초대 복사"},
+    Translation{"Connecting to the invited server","초대받은 서버에 연결 중"},
+    Translation{"Device registration required","기기 등록 필요"},
+    Translation{"Device registered","기기가 등록되었습니다"},
+    Translation{"Joined invited network","초대받은 네트워크에 가입했습니다"},
+    Translation{"Waiting for network owner approval","네트워크 운영자 승인 대기 중"},
+    Translation{"Network invitation rejected or expired","네트워크 초대가 거부되었거나 만료되었습니다"},
+
     Translation{"Server credentials are missing or invalid","서버 인증 정보가 없거나 유효하지 않습니다"},
     Translation{"No server configured","등록된 서버 없음"},
     Translation{"Server connection error","서버 연결 오류"},
@@ -124,7 +133,7 @@ constexpr std::array catalog{
     Translation{"Cannot locate LanLink.","LanLink 실행 파일을 찾지 못했습니다."},
     Translation{"Service start was cancelled or could not be requested.","서비스 시작이 취소되었거나 시작을 요청하지 못했습니다."},
     Translation{"Account (optional)","계정 (선택 사항)"},
-    Translation{"Group your devices. A relay token works without an account.","계정으로 내 기기를 묶을 수 있습니다. 계정 없이 릴레이 토큰만으로도 사용할 수 있습니다."},
+    Translation{"Group your devices. Server registration works without an account.","계정으로 내 기기를 묶을 수 있습니다. 계정 없이 릴레이 토큰만으로도 사용할 수 있습니다."},
     Translation{"Refresh account","계정 새로고침"},
     Translation{"Account or device name","계정 또는 기기 이름"},
     Translation{"Create optional account","선택 계정 만들기"},

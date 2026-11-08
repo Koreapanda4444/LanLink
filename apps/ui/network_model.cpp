@@ -3,11 +3,13 @@
 #include "lanlink/transport/local_pipe.hpp"
 
 #include <stdexcept>
+#include <algorithm>
 #include <utility>
 
 namespace lanlink::ui {
 
 NetworkModel::NetworkModel() {
+    pending_.push_back({protocol::LocalCommand::server_profiles,false,false,protocol::encode_server_request({})});
     pending_.push_back({protocol::LocalCommand::list, false, false,
                         protocol::encode_network_list_request()});
     state_.busy = true;
@@ -31,7 +33,7 @@ void NetworkModel::submit(const protocol::LocalCommand command,
         command != protocol::LocalCommand::diagnostics && command != protocol::LocalCommand::path_diagnostics &&
         command != protocol::LocalCommand::game_diagnostics && command != protocol::LocalCommand::user_access &&
         command != protocol::LocalCommand::network_management && command != protocol::LocalCommand::routing_options &&
-        command != protocol::LocalCommand::peers && command != protocol::LocalCommand::activity) {
+        command != protocol::LocalCommand::peers && command != protocol::LocalCommand::activity && command != protocol::LocalCommand::server_profiles) {
         throw std::invalid_argument("unsupported desktop network command");
     }
     std::lock_guard lock(mutex_);
@@ -46,7 +48,7 @@ void NetworkModel::submit(const protocol::LocalCommand command,
             if (request.command == command) return;
         }
     }
-    pending_.push_back({command, false, false, std::move(payload)});
+    pending_.push_back({command, false, false, std::move(payload),state_.servers?state_.servers->connection_epoch:0});
     state_.busy = true;
     wake_.notify_one();
 }
@@ -59,17 +61,30 @@ NetworkSnapshot NetworkModel::snapshot() const {
 void NetworkModel::process() {
     for (;;) {
         protocol::LocalMessage request;
+        std::uint64_t epoch=0;
         {
             std::unique_lock lock(mutex_);
             wake_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
             if (stopping_) return;
+            epoch=pending_.front().epoch;
+            if(!epoch && state_.servers)epoch=state_.servers->connection_epoch;
             request = std::move(pending_.front());
             pending_.pop_front();
         }
 
         try {
-            const auto response = transport::local_pipe_request(request);
-            if (request.command == protocol::LocalCommand::list) {
+            auto response = transport::local_pipe_request(epoch && request.command!=protocol::LocalCommand::server_profiles
+                ? protocol::scope_local_request(epoch,request) : request);
+            if(epoch && request.command!=protocol::LocalCommand::server_profiles)response=protocol::unwrap_scoped_response(request.command,response);
+            if(request.command==protocol::LocalCommand::server_profiles) {
+                auto servers=protocol::decode_server_state(response.payload);
+                std::lock_guard lock(mutex_);
+                if(state_.servers && servers.connection_epoch!=state_.servers->connection_epoch) {
+                    state_.networks.clear();state_.peers.reset();state_.paths.reset();state_.games.reset();state_.management.reset();state_.access.reset();state_.diagnostics.reset();state_.activity={};state_.last_operation.reset();
+                    std::erase_if(pending_,[](const auto& q){return q.command!=protocol::LocalCommand::server_profiles;});
+                }
+                state_.servers=std::move(servers);++state_.server_generation;state_.service_online=true;state_.error.clear();
+            } else if (request.command == protocol::LocalCommand::list) {
                 auto networks = protocol::decode_network_list_result(response.payload);
                 std::lock_guard lock(mutex_);
                 state_.networks = std::move(networks.networks);
@@ -150,7 +165,8 @@ void NetworkModel::process() {
             }
         } catch (const std::exception& error) {
             std::lock_guard lock(mutex_);
-            if (request.command != protocol::LocalCommand::peers && request.command != protocol::LocalCommand::activity &&
+            const bool server_probe=request.command==protocol::LocalCommand::server_profiles && protocol::decode_server_request(request.payload).action==protocol::ServerAction::list;
+            if (!server_probe && request.command != protocol::LocalCommand::peers && request.command != protocol::LocalCommand::activity &&
                 request.command != protocol::LocalCommand::path_diagnostics && request.command != protocol::LocalCommand::game_diagnostics) {
                 state_.error = error.what();
                 state_.message.clear();

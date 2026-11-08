@@ -80,6 +80,7 @@ public:
     DesktopWindow(const DesktopWindow&) = delete;
     DesktopWindow& operator=(const DesktopWindow&) = delete;
 
+    void open_invitation(std::string uri){view_.open_invitation(std::move(uri));}
     void run() {
         desktop_mutex_ = CreateMutexW(nullptr, FALSE, L"LanLink.Desktop");
         if (!desktop_mutex_) throw std::runtime_error("Cannot create desktop lifetime marker.");
@@ -208,6 +209,13 @@ private:
         if (ImGui::GetCurrentContext() &&
             ImGui_ImplWin32_WndProcHandler(window, message, wparam, lparam)) {
             return 1;
+        }
+        if(message==WM_COPYDATA && self) {
+            const auto* data=reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+            if(!data || data->dwData!=0x4c4c || !data->lpData || data->cbData<2 || data->cbData>2049)return FALSE;
+            const auto* uri=static_cast<const char*>(data->lpData);
+            if(uri[data->cbData-1]!=0 || std::char_traits<char>::length(uri)!=data->cbData-1)return FALSE;
+            try{self->open_invitation(std::string(uri,data->cbData-1));ShowWindow(window,SW_RESTORE);SetForegroundWindow(window);return TRUE;}catch(...){return FALSE;}
         }
         if (message == WM_GETMINMAXINFO) {
             auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
@@ -343,7 +351,10 @@ int WINAPI wWinMain(const HINSTANCE instance, HINSTANCE, PWSTR, int) {
         int count = 0;
         auto** arguments = CommandLineToArgvW(GetCommandLineW(), &count);
         std::optional<lanlink::core::UiLanguage> language;
-        bool skip_setup=false,force_setup=false,management=false;
+        bool skip_setup=false,force_setup=false,management=false;std::string invitation;
+        const auto invitation_arg=[&](const wchar_t* raw){const std::wstring_view text(raw);if(text.size()>2048)throw std::invalid_argument("Invitation too long");std::string uri;for(auto ch:text){if(ch>127 || ch<33)throw std::invalid_argument("Invalid invitation URI");uri+=static_cast<char>(ch);}return uri;};
+        if(count==2 && std::wstring_view(arguments[1]).starts_with(L"lanlink://")){invitation=invitation_arg(arguments[1]);count=1;}
+        else if(count>=2 && std::wstring_view(arguments[1])==L"--invite"){if(count!=3)throw std::invalid_argument("--invite requires exactly one invitation URI");invitation=invitation_arg(arguments[2]);count=1;}
         for(int i=1;i<count;++i) {
             const std::wstring_view argument=arguments[i];
             if(argument==L"--screenshot" && i+1<count)screenshot=arguments[++i];
@@ -358,6 +369,14 @@ int WINAPI wWinMain(const HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
         LocalFree(arguments);
         DesktopWindow window(instance, screenshot,language,skip_setup,force_setup,management);
+        if(!invitation.empty()) {
+            window.open_invitation(invitation);
+            if(auto existing=FindWindowW(window_class,nullptr)) {
+                COPYDATASTRUCT data{0x4c4c,static_cast<DWORD>(invitation.size()+1),invitation.data()};DWORD_PTR delivered=0;
+                if(!SendMessageTimeoutW(existing,WM_COPYDATA,0,reinterpret_cast<LPARAM>(&data),SMTO_ABORTIFHUNG,3000,&delivered) || !delivered)throw std::runtime_error("Cannot deliver invitation to the running application");
+                return 0;
+            }
+        }
         window.run();
         return 0;
     } catch (const std::exception& error) {

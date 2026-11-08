@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/protocol/local_control.hpp"
+#include "lanlink/protocol/server_profiles.hpp"
 #include "lanlink/protocol/user_access.hpp"
 #include "lanlink/protocol/network_management.hpp"
 #include "lanlink/protocol/network_messages.hpp"
@@ -19,6 +20,8 @@
 namespace lanlink::ui {
 
 struct NetworkSnapshot {
+    std::optional<protocol::ServerState> servers;
+    std::uint64_t server_generation=0;
     std::vector<protocol::NetworkSummary> networks;
     std::string message;
     std::string error;
@@ -58,7 +61,12 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable wake_;
-    std::deque<protocol::LocalMessage> pending_;
+    struct Pending : protocol::LocalMessage {
+        std::uint64_t epoch=0;
+        Pending(protocol::LocalCommand c,bool response,bool error,std::vector<std::byte> p,std::uint64_t e=0)
+            :protocol::LocalMessage{c,response,error,std::move(p)},epoch(e){}
+    };
+    std::deque<Pending> pending_;
     NetworkSnapshot state_;
     bool paths_supported_=true;
     bool games_supported_ = true;

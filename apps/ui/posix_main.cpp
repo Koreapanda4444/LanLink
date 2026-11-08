@@ -84,7 +84,9 @@ struct Desktop {
 int main(int argc,char* argv[]) {
     try {
         std::optional<lanlink::core::UiLanguage> language;bool setup=false,skip=false,management=false;
-        std::filesystem::path screenshot;
+        std::filesystem::path screenshot;std::string invitation;
+        if(argc==2 && std::string_view(argv[1]).starts_with("lanlink://")){invitation=argv[1];argc=1;}
+        else if(argc>=2 && std::string_view(argv[1])=="--invite"){if(argc!=3)throw std::invalid_argument("--invite requires exactly one invitation URI");invitation=argv[2];argc=1;}
         for(int i=1;i<argc;++i) {
             const std::string_view option=argv[i];
             if(option=="--setup")setup=true;else if(option=="--skip-setup")skip=true;else if(option=="--management")management=true;
@@ -111,9 +113,10 @@ int main(int argc,char* argv[]) {
         if(!ImGui_ImplOpenGL3_Init("#version 150"))throw std::runtime_error("OpenGL desktop initialization failed");desktop.renderer=true;
         desktop.load_logo();
         lanlink::ui::DesktopView view(language,skip,setup,management,"Start service",start_service);view.set_logo(static_cast<ImTextureID>(desktop.logo));
+        if(!invitation.empty())view.open_invitation(invitation);
         const auto opened=std::chrono::steady_clock::now();bool running=true;
         while(running) {
-            SDL_Event event;while(SDL_PollEvent(&event)) {ImGui_ImplSDL3_ProcessEvent(&event);if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID==SDL_GetWindowID(desktop.window)))running=false;}
+            SDL_Event event;while(SDL_PollEvent(&event)) {ImGui_ImplSDL3_ProcessEvent(&event);if(event.type==SDL_EVENT_DROP_FILE && event.drop.data && std::string_view(event.drop.data).starts_with("lanlink://"))view.attempt([&]{view.open_invitation(event.drop.data);});if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID==SDL_GetWindowID(desktop.window)))running=false;}
             ImGui_ImplOpenGL3_NewFrame();ImGui_ImplSDL3_NewFrame();ImGui::NewFrame();view.render();ImGui::Render();
             int width=0,height=0;SDL_GetWindowSizeInPixels(desktop.window,&width,&height);glViewport(0,0,width,height);glClearColor(0.08f,0.1f,0.14f,1);glClear(GL_COLOR_BUFFER_BIT);ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             if(!screenshot.empty() && std::chrono::steady_clock::now()-opened>std::chrono::seconds{4}){desktop.capture(screenshot,width,height);break;}

@@ -1,5 +1,6 @@
 #include "lanlink/core/component.hpp"
 #include "lanlink/protocol/local_control.hpp"
+#include "lanlink/protocol/server_profiles.hpp"
 #include "lanlink/protocol/user_access.hpp"
 #include "lanlink/protocol/network_management.hpp"
 #include "lanlink/protocol/join_target.hpp"
@@ -78,6 +79,7 @@ std::string hex_id(const std::span<const std::byte> id) {
 
 lanlink::protocol::LocalCommand command_from(const std::wstring_view action) {
     using lanlink::protocol::LocalCommand;
+    if(action.starts_with(L"server-")) return LocalCommand::server_profiles;
     if (action == L"manage") return LocalCommand::network_management;
     if (action == L"routing") return LocalCommand::routing_options;
     if (action == L"invite-link" || action == L"revoke-links") return LocalCommand::user_access;
@@ -107,6 +109,31 @@ int run_cli(const int argc, wchar_t* argv[]) {
         const auto command = command_from(action);
         protocol::LocalMessage request{command, false, false, {}};
         switch (command) {
+        case protocol::LocalCommand::server_profiles: {
+            protocol::ServerRequest q;
+            const auto value=[&](int i){if(i>=argc)throw std::invalid_argument("Missing server command argument");return utf8(argv[i]);};
+            if(action==L"server-list") {if(argc!=2)throw std::invalid_argument("server-list takes no arguments");}
+            else if(action==L"server-add" || action==L"server-edit") {
+                const int offset=action==L"server-edit"?1:0;
+                if(argc!=5+offset && argc!=6+offset)throw std::invalid_argument("server-add NAME HOST PORT [SPKI_SHA256]; server-edit ID NAME HOST PORT [SPKI_SHA256]");
+                q.action=protocol::ServerAction::save;if(offset)q.profile.id=value(2);
+                q.profile.name=value(2+offset);q.profile.host=value(3+offset);
+                const auto port=value(4+offset);std::size_t consumed=0;const auto number=std::stoul(port,&consumed);
+                if(consumed!=port.size() || number<1 || number>65535)throw std::invalid_argument("Invalid server port");q.profile.port=static_cast<std::uint16_t>(number);
+                if(argc==6+offset)q.profile.public_key_pin=value(5+offset);
+            } else if(action==L"server-connect" || action==L"server-delete") {
+                if(argc!=3)throw std::invalid_argument("server-connect/server-delete requires a profile ID");q.profile.id=value(2);q.action=action==L"server-connect"?protocol::ServerAction::connect:protocol::ServerAction::remove;
+            } else if(action==L"server-disconnect") {if(argc!=2)throw std::invalid_argument("server-disconnect takes no arguments");q.action=protocol::ServerAction::disconnect;}
+            else if(action==L"server-enroll") {
+                if(argc!=5)throw std::invalid_argument("server-enroll ID CODE|- DEVICE_LABEL");q.action=protocol::ServerAction::enroll;q.profile.id=value(2);q.registration_code=value(3);q.device_label=value(4);
+                if(q.registration_code=="-")std::getline(std::cin,q.registration_code);
+            } else if(action==L"server-accept") {
+                if(argc<3)throw std::invalid_argument("server-accept URI [--confirm-switch] [--trust-pin]");q.action=protocol::ServerAction::accept_invitation;q.invitation_uri=value(2);
+                for(int i=3;i<argc;++i){const auto flag=value(i);if(flag=="--confirm-switch")q.approve_server_switch=true;else if(flag=="--trust-pin")q.trust_invitation_pin=true;else throw std::invalid_argument("Unknown invitation approval flag");}
+                q.expected_epoch=protocol::decode_server_state(lanlink::transport::local_pipe_request({protocol::LocalCommand::server_profiles,false,false,protocol::encode_server_request({})}).payload).connection_epoch;
+            } else throw std::invalid_argument("Unknown server command");
+            request.payload=protocol::encode_server_request(q);break;
+        }
         case protocol::LocalCommand::status:
         case protocol::LocalCommand::stop:
         case protocol::LocalCommand::diagnostics:
@@ -196,10 +223,19 @@ int run_cli(const int argc, wchar_t* argv[]) {
             break;
         }
 
-        const auto response = lanlink::transport::local_pipe_request(request);
+        std::uint64_t epoch=0;
+        if(command!=protocol::LocalCommand::server_profiles && command!=protocol::LocalCommand::stop) {
+            try{epoch=protocol::decode_server_state(lanlink::transport::local_pipe_request({protocol::LocalCommand::server_profiles,false,false,protocol::encode_server_request({})}).payload).connection_epoch;}catch(const std::exception&){}
+        }
+        auto response=lanlink::transport::local_pipe_request(epoch?protocol::scope_local_request(epoch,request):request);
+        if(epoch)response=protocol::unwrap_scoped_response(command,response);
         std::cout << "LanLink " << lanlink::core::component_name(
             lanlink::core::Component::ui) << " " << lanlink::core::project_version() << '\n';
-        if(request.command==protocol::LocalCommand::network_management) {
+        if(command==protocol::LocalCommand::server_profiles) {
+            const auto state=protocol::decode_server_state(response.payload);
+            std::cout<<"selected: "<<state.selected_id<<"\nepoch: "<<state.connection_epoch<<"\nresult: "<<state.result_profile_id<<"\nnotice: "<<state.notice<<'\n';
+            for(const auto& p:state.profiles)std::cout<<p.id<<" "<<p.name<<" "<<p.host<<":"<<p.port<<" registered="<<p.has_credential<<" pin="<<p.public_key_pin<<'\n';
+        } else if(request.command==protocol::LocalCommand::network_management) {
             const auto result=protocol::decode_management_result(response.payload);std::cout<<protocol::network_result_code_name(result.code)<<" revision="<<result.policy.revision<<" managed="<<result.policy.managed<<" hubs="<<result.policy.hubs.size()<<" rules="<<result.policy.rules.size()<<" routes="<<result.policy.routes.size()<<'\n';
             for(const auto& e:result.audit_events)std::cout<<e.sequence<<" "<<protocol::audit_kind_name(e.kind)<<" "<<hex_id(e.actor)<<" "<<protocol::network_result_code_name(e.result)<<'\n';
             if(result.code!=protocol::NetworkResultCode::success)return EXIT_FAILURE;

@@ -6,6 +6,7 @@
 #include "lanlink/protocol/network_overview.hpp"
 #include "network_model.hpp"
 #include "management_panel.hpp"
+#include "server_panel.hpp"
 #include "preferences.hpp"
 #include <imgui.h>
 #include <algorithm>
@@ -97,6 +98,7 @@ public:
         if(skip_setup)preferences_.setup_completed=true;
         if(force_setup)preferences_.setup_completed=false;
     }
+    void open_invitation(std::string uri){servers_.invitation(std::move(uri));}
     void set_logo(ImTextureID logo){logo_=logo;}
     template <typename Action>
     void attempt(Action&& action) {
@@ -120,6 +122,7 @@ public:
         const auto now = std::chrono::steady_clock::now();
         if (now >= next_diagnostics_) {
             attempt([&] {
+                networks_.submit(protocol::LocalCommand::server_profiles,protocol::encode_server_request({}));
                 networks_.submit(protocol::LocalCommand::diagnostics);
                 networks_.submit(protocol::LocalCommand::path_diagnostics);
                 networks_.submit(protocol::LocalCommand::game_diagnostics);
@@ -131,6 +134,14 @@ public:
             next_diagnostics_ = now + std::chrono::seconds{2};
         }
         const auto state = networks_.snapshot();
+        if(state.servers && server_epoch_!=state.servers->connection_epoch) {
+            if(server_epoch_) {
+                selected_.reset();selection_hint_.reset();account_.reset();enrollment_code_.clear();invitation_link_.clear();invitation_code_.clear();
+                close_create_=true;close_join_=true;close_confirmation_=true;confirmation_payload_.clear();
+                create_password_.fill(0);join_password_.fill(0);network_id_.fill(0);enrollment_input_.fill(0);server_registration_code_.fill(0);
+            }
+            server_epoch_=state.servers->connection_epoch;
+        }
         if(state.operation_generation!=operation_generation_ && state.last_operation) {
             operation_generation_=state.operation_generation;
             const auto& operation=*state.last_operation;
@@ -218,6 +229,7 @@ public:
                 attempt([&]{lanlink::ui::save_preferences(preferences_);});
             }
             if(ImGui::SmallButton(tr("Setup guide"))){preferences_.setup_completed=false;setup_step_=0;}
+            servers_.draw(networks_,state,preferences_.language);
             ImGui::SeparatorText(tr("Your networks"));
             ImGui::BeginDisabled(!connected || state.busy);
             if (ImGui::Button(tr("Create network"), ImVec2(-1, 0))) create_dialog_ = true;
@@ -255,7 +267,7 @@ public:
                 });
             }
             if(ImGui::CollapsingHeader(tr("Account (optional)"))) {
-                ImGui::TextWrapped("%s", tr("Group your devices. A relay token works without an account."));
+                ImGui::TextWrapped("%s", tr("Group your devices. Server registration works without an account."));
                 ImGui::BeginDisabled(!connected || state.busy);
                 if(ImGui::Button(tr("Refresh account")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_status;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
                 ImGui::SetNextItemWidth(-1);
@@ -345,6 +357,16 @@ public:
                 if(administrator && invitation_network_==selected->network_id && !invitation_link_.empty()) {
                     ImGui::TextWrapped("%s", tr("Invitation: one use, expires in 15 minutes. Share it privately."));
                     if(ImGui::Button(tr("Copy invitation link")))ImGui::SetClipboardText(invitation_link_.c_str());
+                    if(state.servers) {
+                        ImGui::InputText(tr("Server registration code (optional)"),server_registration_code_.data(),server_registration_code_.size(),ImGuiInputTextFlags_Password);
+                        if(ImGui::Button(tr("Copy server and network invitation")))attempt([&]{
+                            const auto& s=*state.servers;auto p=std::find_if(s.profiles.begin(),s.profiles.end(),[&](const auto& p){return p.id==s.selected_id;});
+                            if(p==s.profiles.end())throw std::runtime_error("Connect to a server first");
+                            protocol::ServerInvitation invite;invite.server=*p;invite.server.id.clear();invite.server.has_credential=false;invite.registration_code=server_registration_code_.data();invite.network_id=invitation_network_;
+                            invite.network_invitation=protocol::parse_join_target(invitation_link_).invitation;
+                            ImGui::SetClipboardText(protocol::make_server_invitation(invite).c_str());server_registration_code_.fill(0);
+                        });
+                    }
                     ImGui::SameLine();if(ImGui::Button(tr("Copy invitation code")))ImGui::SetClipboardText(invitation_code_.c_str());
                 }
                 ImGui::BeginDisabled(!connected || state.busy);
@@ -573,7 +595,7 @@ public:
             ImGui::InputTextWithHint("##joinpassword",tr("Network password (if required)"),join_password_.data(),join_password_.size(),ImGuiInputTextFlags_Password);
             ImGui::BeginDisabled(!connected || state.busy || network_id_[0] == 0);
             if (ImGui::Button(tr("Send join request"), ImVec2(200, 0))) {
-                attempt([&] {const auto request=protocol::join_network_command(network_id_.data(),join_password_.data());
+                attempt([&] {if(std::string_view(network_id_.data()).starts_with("lanlink://connect/")){open_invitation(network_id_.data());return;}const auto request=protocol::join_network_command(network_id_.data(),join_password_.data());
                     networks_.submit(request.command,request.payload);});
                 if(local_error_.empty())std::fill(join_password_.begin(),join_password_.end(),0);
             }
@@ -585,6 +607,7 @@ public:
             ImGui::EndPopup();
         }
         if (ImGui::BeginPopupModal(tr("Confirm network change"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if(close_confirmation_){ImGui::CloseCurrentPopup();close_confirmation_=false;}
             ImGui::TextUnformatted(tr(confirmation_text_.c_str()));
             ImGui::BeginDisabled(!connected || state.busy);
             if (ImGui::Button(tr("Confirm"), ImVec2(170, 0))) {
@@ -605,6 +628,10 @@ public:
     }
 
 private:
+    ServerPanel servers_;
+    std::uint64_t server_epoch_=0;
+    bool close_confirmation_=false;
+    std::array<char,41> server_registration_code_{};
     ImTextureID logo_=0;
     std::string start_label_;
     std::function<void()> start_service_;
@@ -615,7 +642,7 @@ private:
     unsigned setup_step_=0;
     std::optional<lanlink::protocol::NetworkId> selected_;
     std::array<char, 129> name_{};
-    std::array<char, 256> network_id_{};
+    std::array<char, 2049> network_id_{};
     std::array<char,129> create_password_{},join_password_{};
     bool require_approval_=true,close_create_=false,close_join_=false;
     std::optional<lanlink::protocol::NetworkId> selection_hint_;
