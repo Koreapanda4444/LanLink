@@ -18,6 +18,7 @@ AppPublisherURL=https://github.com/Koreapanda4444/LanLink
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 DisableFinishedPage=no
+DisableReadyPage=yes
 CreateAppDir=no
 Uninstallable=no
 PrivilegesRequired=admin
@@ -25,7 +26,7 @@ ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 MinVersion=10.0
 WizardStyle=modern
-WizardSizePercent=125,125
+WizardSizePercent=100,100
 WizardResizable=no
 ShowLanguageDialog=yes
 LanguageDetectionMethod=uilanguage
@@ -61,7 +62,7 @@ var
   RemoveDataPage: TInputOptionWizardPage;
   Installed: Boolean;
   RequestedMode: String;
-  DataPage: TInputDirWizardPage;
+  DataDirectory: String;
   InstallResult: Integer;
 
 function DefaultProgramDirectory(Param: String): String;
@@ -89,7 +90,7 @@ begin
   WizardForm.WelcomePage.Color := clWhite;
   WizardForm.FinishedPage.Color := clWhite;
   WizardForm.WelcomeLabel1.Font.Color := $00432110;
-  WizardForm.WelcomeLabel1.Font.Size := 22;
+  WizardForm.WelcomeLabel1.Font.Size := 18;
   WizardForm.WelcomeLabel1.Height := ScaleY(82);
   WizardForm.WelcomeLabel2.Top := WizardForm.WelcomeLabel1.Top + WizardForm.WelcomeLabel1.Height + ScaleY(12);
   WizardForm.WelcomeLabel2.Height := WizardForm.WelcomePage.ClientHeight - WizardForm.WelcomeLabel2.Top - ScaleY(16);
@@ -122,13 +123,13 @@ end;
 
 procedure InitializeWizard;
 var
-  DataDirectory: String;
+  ExistingLocation: String;
   Value: Cardinal;
 begin
   InstallResult := 1;
   Log('LanLink setup language: ' + ActiveLanguage);
   Installed := RegQueryStringValue(HKEY_LOCAL_MACHINE_64,
-    'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'InstallLocation', DataDirectory);
+    'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'InstallLocation', ExistingLocation);
   RequestedMode := Lowercase(ExpandConstant('{param:MODE|}'));
   StyleWizard;
   MaintenancePage := CreateInputOptionPage(wpWelcome, CustomMessage('MaintenanceTitle'),
@@ -142,14 +143,9 @@ begin
   ProgramPage.Add(CustomMessage('ProgramDirectory'));
   ProgramPage.Values[0] := ExpandConstant('{param:DIR|}');
   if ProgramPage.Values[0] = '' then ProgramPage.Values[0] := DefaultProgramDirectory('');
-  DataPage := CreateInputDirPage(ProgramPage.ID, CustomMessage('DataTitle'),
-    CustomMessage('DataSubtitle'), CustomMessage('DataDescription'), False, '');
-  DataPage.Add(CustomMessage('DataDirectory'));
   if not RegQueryStringValue(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'DataDirectory', DataDirectory) then
     DataDirectory := ExpandConstant('{commonappdata}\LanLink');
-  DataPage.Values[0] := ExpandConstant('{param:DataDir|}');
-  if DataPage.Values[0] = '' then DataPage.Values[0] := DataDirectory;
-  OptionsPage := CreateInputOptionPage(DataPage.ID, CustomMessage('OptionsTitle'),
+  OptionsPage := CreateInputOptionPage(ProgramPage.ID, CustomMessage('OptionsTitle'),
     CustomMessage('OptionsSubtitle'), CustomMessage('OptionsDescription'), False, False);
   OptionsPage.Add(CustomMessage('CliOption'));
   OptionsPage.Add(CustomMessage('StartMenuOption'));
@@ -178,7 +174,7 @@ begin
   Mode := MaintenanceMode;
   Result := False;
   if PageID = MaintenancePage.ID then Result := not Installed or (RequestedMode <> '')
-  else if (PageID = ProgramPage.ID) or (PageID = DataPage.ID) then Result := Installed or (Mode <> 'install')
+  else if PageID = ProgramPage.ID then Result := Installed or (Mode <> 'install')
   else if PageID = OptionsPage.ID then Result := (Mode = 'repair') or (Mode = 'uninstall')
   else if PageID = RemoveDataPage.ID then Result := Mode <> 'uninstall';
 end;
@@ -197,18 +193,6 @@ begin
      (ExpandConstant('{param:RelayPort|}') <> '') then Result := CustomMessage('NoServerOptions');
 end;
 
-function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
-  MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
-begin
-  Result := CustomMessage('SummaryMode') + ': ' + MaintenanceMode + NewLine + NewLine +
-    CustomMessage('SummaryApp') + ':' + NewLine + Space + ProgramDirectory('') + NewLine + NewLine +
-    CustomMessage('SummaryData') + ':' + NewLine + Space + DataPage.Values[0] + NewLine + NewLine +
-    CustomMessage('SummaryComponents') + ':' + NewLine + Space + CustomMessage('Components');
-  if MaintenanceMode = 'uninstall' then
-    if RemoveDataPage.Values[0] then Result := Result + NewLine + CustomMessage('DeleteDataSummary')
-    else Result := Result + NewLine + CustomMessage('PreserveDataSummary');
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Parameters, LogPath: String;
@@ -221,7 +205,7 @@ begin
   Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
     Quote(ExpandConstant('{tmp}\LanLink\SetupClient.ps1')) +
     ' -InstallDirectory ' + Quote(ProgramDirectory('')) +
-    ' -DataDirectory ' + Quote(DataPage.Values[0]) +
+    ' -DataDirectory ' + Quote(DataDirectory) +
     ' -Mode ' + MaintenanceMode + ' -SetupExecutable ' + Quote(ExpandConstant('{srcexe}')) +
     ' -LogFile ' + Quote(LogPath);
   if not OptionsPage.Values[0] then Parameters := Parameters + ' -NoCli';
