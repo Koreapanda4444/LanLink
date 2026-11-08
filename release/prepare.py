@@ -25,14 +25,14 @@ ARCHIVES = {
 }
 INSTALLER = f"LanLink-Setup-{VERSION}-windows-x64.exe"
 PACKAGES = set(ARCHIVES.values()) | {INSTALLER}
-COMMON = {"build-info.json", "INSTALL.md", "RELEASE-NOTES.md"}
+COMMON = {"build-info.json", "INSTALL.md", "SERVER-SETUP.md", "RELEASE-NOTES.md"}
 REQUIRED = {
     "windows": COMMON | {"bin/lanlink-service.exe", "bin/lanlink-ui.exe",
         "bin/lanlink-ui-cli.exe", "bin/wintun.dll", "bin/msquic.dll",
         "Install-LanLink.ps1", "Uninstall-LanLink.ps1", "ClientSetup.psm1",
         "SetupClient.ps1", "package-version.txt", "licenses/Wintun.txt", "licenses/msquic.txt",
         "licenses/openssl.txt", "licenses/sqlite3.txt", "licenses/imgui.txt"},
-    "relay": COMMON | {"bin/lanlink-relay", "install-relay.sh", "uninstall-relay.sh",
+    "relay": COMMON | {"bin/lanlink-relay", "install-relay.sh", "setup-relay.py", "uninstall-relay.sh",
         "lanlink-relay.service", "relay-version.txt", "bin/lanlink-directory-sign",
         "self-hosting/generate.py", "self-hosting/state.py", "self-hosting/common.py",
         "self-hosting/inventory.example.json", "self-hosting/serve.py", "self-hosting/directory.md", "self-hosting/README.md", "licenses/msquic.txt",
@@ -195,7 +195,7 @@ def inspect_native_package(path, commit):
     require(metadata["protocol_version"] == 5 and metadata["vcpkg_manifest"]["builtin-baseline"] == BASELINE and
             metadata["vcpkg_manifest"]["version-string"] == VERSION, "native dependency or protocol mismatch")
     architecture = metadata["architecture"]
-    required = {"build-info.json", "INSTALL.md", "client_setup.py", "install-client.py", "uninstall-client.py",
+    required = {"build-info.json", "INSTALL.md", "SERVER-SETUP.md", "client_setup.py", "install-client.py", "uninstall-client.py",
                 "bin/lanlink-service", "bin/lanlink-ui-cli"}
     required |= {f"licenses/{name}.txt" for name in ("msquic", "openssl", "sqlite3", "imgui", "sdl3", "libpng", "zlib")}
     if metadata["system"] == "Linux":

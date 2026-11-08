@@ -16,6 +16,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LANLINK_BUILD_DESKTOP)
         "${CMAKE_CURRENT_SOURCE_DIR}/deploy/linux/lanlink-client.service"
         "${CMAKE_CURRENT_BINARY_DIR}/build-info.json"
         DESTINATION . COMPONENT portable-client)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/server-onboarding.md"
+        DESTINATION . RENAME SERVER-SETUP.md COMPONENT portable-client)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/clients-posix.md"
         DESTINATION . RENAME INSTALL.md COMPONENT portable-client)
     foreach(dependency msquic openssl sqlite3 imgui sdl3 libpng zlib)
@@ -27,7 +29,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LANLINK_BUILD_DESKTOP)
         COMMAND ${CMAKE_COMMAND} --install "${CMAKE_CURRENT_BINARY_DIR}" --prefix "${CMAKE_CURRENT_BINARY_DIR}/portable-client" --component portable-client
         COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_CURRENT_BINARY_DIR}/portable-client"
             ${CMAKE_COMMAND} -E tar czf "${CMAKE_CURRENT_BINARY_DIR}/artifacts/LanLink-${PROJECT_VERSION}-linux-${LANLINK_PACKAGE_ARCHITECTURE}.tar.gz"
-            --format=gnutar bin lib share licenses build-info.json INSTALL.md client_setup.py install-client.py uninstall-client.py lanlink.desktop lanlink-client.service
+            --format=gnutar bin lib share licenses build-info.json INSTALL.md SERVER-SETUP.md client_setup.py install-client.py uninstall-client.py lanlink.desktop lanlink-client.service
         DEPENDS lanlink_service lanlink_ui lanlink_ui_cli)
 endif()
 
@@ -47,6 +49,8 @@ if(APPLE AND LANLINK_BUILD_DESKTOP)
         "${CMAKE_CURRENT_SOURCE_DIR}/packaging/posix/client_setup.py"
         "${CMAKE_CURRENT_SOURCE_DIR}/deploy/macos/com.lanlink.client.plist"
         "${CMAKE_CURRENT_BINARY_DIR}/build-info.json" DESTINATION . COMPONENT portable-client)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/server-onboarding.md"
+        DESTINATION . RENAME SERVER-SETUP.md COMPONENT portable-client)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/clients-posix.md"
         DESTINATION . RENAME INSTALL.md COMPONENT portable-client)
     foreach(dependency msquic openssl sqlite3 imgui sdl3 libpng zlib)

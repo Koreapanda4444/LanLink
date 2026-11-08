@@ -1,8 +1,8 @@
 # LanLink 설치 — 최신 main
 
-이 문서는 설치 구조 개편 Phase 1을 포함한 최신 main/CI 패키지 기준이다. 공개 v1.0.0 프리릴리스의 첨부 파일은 개편 전 설치 방식을 사용한다. 아직 새 Release를 발행하지 않았다. 실제 공유기·혼합 OS 실시간 통신·host/guest 게임 시험은 별도 검증으로 남는다. 전체 패키지를 사용하고 프로그램 일부 DLL/so만 교체하지 않는다.
+이 문서는 설치·서버 연결·개별 인증 개편을 포함한 최신 main/CI 패키지 기준이다. 공개 v1.0.0 프리릴리스의 첨부 파일은 개편 전 설치 방식을 사용한다. 아직 새 Release를 발행하지 않았다. 실제 공유기·혼합 OS 실시간 통신·host/guest 게임 시험은 별도 검증으로 남는다. 전체 패키지를 사용하고 프로그램 일부 DLL/so만 교체하지 않는다.
 
-Phase 1에서는 설치·서비스 대기·유지관리를 구현한다. 앱 내 서버 등록·전환은 Phase 2, 기기별 서버 등록 인증은 Phase 3 범위다. 새로 설치한 앱의 서버 미등록 표시는 정상 상태다.
+설치 후 앱에서 서버를 등록하고 운영자의 일회용 코드로 기기를 승인받은 뒤 연결한다. 서버 접속과 네트워크 가입 권한은 별개다. 새로 설치한 앱의 서버 미등록 표시는 정상 상태다. 자세한 흐름은 저장소의 `docs/server-onboarding.md`를 따른다.
 
 ## 파일 선택
 
@@ -35,7 +35,7 @@ sudo dnf install -y python3 openssl ca-certificates libstdc++
 
 클라이언트가 접속할 호스트명 또는 IP에 맞는 PEM 인증서와 개인 키를 준비한다. 인증서는 클라이언트 Windows에서 신뢰해야 한다. 사설 CA를 사용한다면 그 CA의 공개 인증서를 클라이언트의 신뢰할 수 있는 루트 저장소에 등록한다. 개인 키는 서버에 보관한다.
 
-기존 Relay 엔진은 아래 서버 인증 토큰을 사용한다. Phase 1에서 이 인증 구조를 변경하거나 관리 비밀 공유 문제를 해결했다고 보지 않는다. 기기별 등록 인증은 Phase 3에서 개선한다. 토큰은 명령행이나 로그에 노출하지 않는다.
+아래 토큰은 서버 관리자 전용 master secret이다. 클라이언트에게 전달하지 않는다. 신규 설치기는 개별 기기 등록을 필수로 설정한다. 자체 서명 인증서를 처음 만드는 운영자는 `sudo python3 setup-relay.py PUBLIC_HOST --port 4433`으로 인증서·관리 secret 생성과 설치를 한 번에 수행할 수도 있다. 완료 시 표시되는 5분·1회용 초대만 사용자에게 비공개로 전달한다.
 
 ```bash
 umask 077
@@ -73,6 +73,13 @@ relay_control_requests_per_second=32
 연결 한도는 QUIC·TCP와 인증 전 연결에 공통 적용한다. 제어 메시지에는 별도 큐 여유를 남기고, 출력 큐가 가득 차면 데이터 패킷을 버린다. 제어 상태를 갱신할 수 없는 클라이언트는 연결을 종료한 뒤 현재 상태로 재연결한다.
 
 다중 지역 구성·상태 snapshot·복원·순차 롤백은 Relay 패키지의 `self-hosting/README.md`를 따른다. 노드 키를 먼저 만들고 `--node-config`로 실제 공개 키와 대조한다. 지역 앞단에는 중앙 인증 토큰을 복사하지 않는다.
+
+등록 코드는 서버에서 다음과 같이 발급한다. 기기 목록·접속 철회는 `--device-list CONFIG`, `--device-revoke CONFIG DEVICE_ID`를 사용한다.
+
+```sh
+sudo -u lanlink-relay /opt/lanlink/bin/lanlink-relay --device-code /etc/lanlink/relay.conf
+sudo -u lanlink-relay /opt/lanlink/bin/lanlink-relay --device-invite /etc/lanlink/relay.conf PUBLIC_HOST 4433
+```
 
 ## Windows 클라이언트
 
@@ -116,11 +123,11 @@ ZIP 자체에는 Setup EXE가 없으므로 설치된 앱의 완전한 EXE 유지
 sudo python3 install-client.py --user YOUR_USER
 ```
 
-다시 로그인한 뒤 Linux에서는 `/opt/lanlink/bin/lanlink-ui`, macOS에서는 `/Applications/LanLink.app`을 연다. `lanlink` 그룹에 추가한 사용자는 로컬 서비스를 관리할 수 있다. GUI는 일반 사용자로 실행한다.
+다시 로그인한 뒤 Linux에서는 `/opt/lanlink-client/bin/lanlink-ui`, macOS에서는 `/Applications/LanLink.app`을 연다. `lanlink` 그룹에 추가한 사용자는 로컬 서비스를 관리할 수 있다. GUI는 일반 사용자로 실행한다.
 
-업그레이드는 새 패키지의 `sudo python3 install-client.py`로 수행한다. 기존 설정·장치 ID·토큰을 보존한다. 제거는 Linux의 `sudo python3 /opt/lanlink/uninstall-client.py` 또는 macOS의 `sudo python3 "/Library/Application Support/LanLink/uninstall-client.py"`로 실행한다. 기본 제거는 상태를 남기며 명시적 `--purge`만 설정·장치 ID·토큰·로그를 삭제한다.
+업그레이드는 새 패키지의 `sudo python3 install-client.py`로 수행한다. 기존 설정·장치 ID·토큰을 보존한다. 제거는 Linux의 `sudo python3 /opt/lanlink-client/uninstall-client.py` 또는 macOS의 `sudo python3 "/Library/Application Support/LanLink/uninstall-client.py"`로 실행한다. 기본 제거는 상태를 남기며 명시적 `--purge`만 설정·장치 ID·토큰·로그를 삭제한다.
 
-현재 Linux client와 Relay는 프로그램·설정·상태 경로를 공유하므로 서로 다른 호스트에 설치한다. 클라이언트 설치기는 기존 Relay 디렉터리를 덮어쓰지 않는다. macOS CI 패키지는 ad hoc 서명이다. Developer ID·Apple 공증과 Gatekeeper 설치 검증은 완료하지 않았다. 자세한 경로·서비스 명령·서명 절차는 각 클라이언트 압축 파일 안의 `INSTALL.md`를 참고한다.
+Linux client는 `/opt/lanlink-client`, `/etc/lanlink-client`, `/var/lib/lanlink-client`를 사용하고 Relay는 기존 `/opt/lanlink`, `/etc/lanlink`, `/var/lib/lanlink`를 사용한다. 같은 호스트에 설치·제거해도 서로의 파일과 서비스를 건드리지 않는다. macOS CI 패키지는 ad hoc 서명이다. Developer ID·Apple 공증과 Gatekeeper 설치 검증은 완료하지 않았다. 자세한 경로·서비스 명령·서명 절차는 각 클라이언트 압축 파일 안의 `INSTALL.md`를 참고한다.
 
 ## 업그레이드와 제거
 
@@ -130,6 +137,6 @@ Windows는 설치된 앱 목록, 같은 Setup의 Uninstall 또는 `C:\Program Fi
 
 ## 데스크톱 첫 실행과 언어
 
-첫 실행에서 표시 언어를 선택하고 서비스 인증 상태를 확인한 뒤 네트워크를 만들거나 초대 링크·코드로 참여한다. 왼쪽의 언어 선택은 설치 언어와 독립적이며 사용자별로 보존된다. 시작 안내는 다시 열 수 있다. 서버 미등록 상태에서도 안내를 끝내고 앱을 사용할 수 있다. 설치기는 서버 주소·포트·토큰을 받지 않는다. 앱 내 서버 등록 화면은 다음 Phase 2 범위다. 공식 계정이나 중앙 서버는 요구하지 않는다.
+첫 실행에서 표시 언어를 선택하고 서비스 인증 상태를 확인한 뒤 네트워크를 만들거나 초대 링크·코드로 참여한다. 왼쪽의 언어 선택은 설치 언어와 독립적이며 사용자별로 보존된다. 시작 안내는 다시 열 수 있다. 서버 미등록 상태에서도 안내를 끝내고 앱을 사용할 수 있다. 설치기는 서버 주소·포트·토큰을 받지 않는다. 앱의 서버 추가에서 이름·호스트/IP·포트와 필요한 신뢰 지문을 저장한다. 운영자의 일회용 코드로 기기를 등록하고 연결한 뒤 네트워크를 생성·가입한다. 여러 서버 프로필을 저장·전환할 수 있다. `lanlink://` 초대는 서버 전환과 신뢰 확인을 승인한 뒤 처리한다. 공식 계정이나 중앙 서버는 요구하지 않는다.
 
-비밀번호 방은 생성 창에서 비밀번호와 관리자 승인 여부를 설정한다. 초대 링크는 기본 15분·1회 사용이며 관리자가 남은 링크를 회수할 수 있다. 계정/기기 등록, Directory와 가입 정책은 README의 기능별 안내를 참고한다. 릴레이 데이터베이스는 스키마 6으로 자동 마이그레이션되므로 업그레이드 전 백업해야 한다.
+비밀번호 방은 생성 창에서 비밀번호와 관리자 승인 여부를 설정한다. 초대 링크는 기본 15분·1회 사용이며 관리자가 남은 링크를 회수할 수 있다. 선택 계정, 서버 기기 등록과 네트워크 가입 정책은 서로 구분한다. 릴레이 데이터베이스는 스키마 9로 자동 마이그레이션되므로 업그레이드 전 백업해야 한다.

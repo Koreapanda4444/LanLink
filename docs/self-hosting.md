@@ -2,7 +2,9 @@
 
 v1.0.0의 지역 Relay는 하나의 영구 중앙 authority를 공유한다. 중앙만 SQLite DB와 클라이언트 인증 토큰을 보관한다. 각 지역 앞단은 별도 TLS 인증서와 상태 서명 identity를 보관하고 원래 클라이언트의 인증 proof·제어·암호화 데이터를 중앙으로 중계한다. 지역 노드마다 독립 DB를 복사하는 방식은 사용하지 않는다. Direct P2P 데이터는 기존대로 Relay를 우회한다. 지역 상행은 TLS/TCP이므로 중앙까지의 지연과 TCP 대기 비용이 있다.
 
-패키지 지원 기준은 Linux x64/glibc 2.34다. 동일 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검사한다. 호스트에는 Python 3.9 이상, OpenSSL, ca-certificates, libstdc++와 systemd가 필요하다. 기존 `install-relay.sh`와 서비스 계정·방화벽 정책을 그대로 사용한다. Linux client와 Relay는 설치 경로를 공유하므로 서로 다른 호스트에 설치한다.
+패키지 지원 기준은 Linux x64/glibc 2.34다. 동일 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검사한다. 호스트에는 Python 3.9 이상, OpenSSL, ca-certificates, libstdc++와 systemd가 필요하다. 기존 `install-relay.sh`와 서비스 계정·방화벽 정책을 그대로 사용한다. Linux client는 `/opt/lanlink-client` 계열 경로를 사용하므로 Relay와 같은 호스트에 설치할 수 있다. Relay는 `lanlink-relay` 계정·그룹을 사용한다.
+
+단일 Relay의 빠른 설치와 개별 기기 승인·초대·철회는 [서버 등록·초대 안내](server-onboarding.md)를 따른다. `setup-relay.py HOST`가 자체 서명 인증서와 서버 전용 관리 secret을 만들고 일회용 초대를 발급한다. 아래 다중 지역·선택 Directory 도구는 기존 고급 운영 기능이며, 일반 사용자나 단일 서버 설치에 Directory를 요구하지 않는다. 신규 설치는 `relay_require_device_registration=true`로 운영하고 등록 명령은 중앙 authority의 `lanlink-relay` 계정에서 실행한다. 관리 token은 일반 사용자에게 전달하지 않는다.
 
 ## 1. 패키지와 키 준비
 

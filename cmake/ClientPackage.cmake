@@ -40,6 +40,8 @@ if(LANLINK_PACKAGE_WINDOWS_CLIENT)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt" "${PROJECT_VERSION}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"
         DESTINATION . COMPONENT client)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/server-onboarding.md"
+        DESTINATION . RENAME SERVER-SETUP.md COMPONENT client)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-info.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/release/INSTALL.md"
         DESTINATION . COMPONENT client)

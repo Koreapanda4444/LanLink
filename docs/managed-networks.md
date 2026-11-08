@@ -95,7 +95,7 @@ are appended after their existing operations; audit write failures do not undo a
 successful admission and are exposed as a manager troubleshooting counter. Failed
 access/policy events are limited to one per second per actor, with bounded tracking.
 
-SQLite schema 8 keeps at most 256 events per network, 10,000 overall and 30 days.
+SQLite schema 9 retains at most 256 events per network, 10,000 overall and 30 days.
 Authorized managers can retrieve the newest 64 events; ordinary/restricted members
 cannot read them. Age filtering also applies when reading an inactive network. This is
 a bounded operational history, not a tamper-proof compliance ledger. Relay operators

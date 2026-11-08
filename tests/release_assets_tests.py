@@ -87,7 +87,7 @@ def write_installer(directory, commit=COMMIT):
 
 
 def native_files(system, architecture):
-    required = {"build-info.json", "INSTALL.md", "client_setup.py", "install-client.py", "uninstall-client.py",
+    required = {"build-info.json", "INSTALL.md", "SERVER-SETUP.md", "client_setup.py", "install-client.py", "uninstall-client.py",
                 "bin/lanlink-service", "bin/lanlink-ui-cli"}
     required |= {f"licenses/{name}.txt" for name in ("msquic", "openssl", "sqlite3", "imgui", "sdl3", "libpng", "zlib")}
     if system == "Linux":
