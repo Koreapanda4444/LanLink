@@ -99,7 +99,7 @@ public:
         }
         registered_ = true;
         window_ = CreateWindowExW(0, window_class, L"LanLink",
-            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, lanlink::ui::design::default_width, lanlink::ui::design::default_height,
             nullptr, nullptr, instance_, this);
         if (!window_) throw std::runtime_error("CreateWindowExW failed");
 

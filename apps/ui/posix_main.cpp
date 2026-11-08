@@ -101,7 +101,7 @@ int main(int argc,char* argv[]) {
 #ifdef __APPLE__
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS,SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
-        desktop.window=SDL_CreateWindow("LanLink",720,520,SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY);
+        desktop.window=SDL_CreateWindow("LanLink",lanlink::ui::design::default_width,lanlink::ui::design::default_height,SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if(!desktop.window)throw std::runtime_error(SDL_GetError());
         SDL_SetWindowMinimumSize(desktop.window,640,440);
         desktop.context=SDL_GL_CreateContext(desktop.window);if(!desktop.context)throw std::runtime_error(SDL_GetError());

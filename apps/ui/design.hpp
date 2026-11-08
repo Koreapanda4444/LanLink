@@ -5,6 +5,8 @@
 #include <filesystem>
 
 namespace lanlink::ui::design {
+inline constexpr int default_width = 700;
+inline constexpr int default_height = 1050;
 inline ImFont* emphasis_font = nullptr;
 inline ImFont* title_font = nullptr;
 inline constexpr ImVec4 ink{.12f,.16f,.22f,1};

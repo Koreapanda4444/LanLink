@@ -333,7 +333,7 @@ public:
         if (ImGui::BeginChild("workspace", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_None)) {
             if (selected == state.networks.end()) {
                 const float center=ImGui::GetContentRegionAvail().x*.5f;
-                ImGui::Dummy(ImVec2(0,(std::max)(10.0f,ImGui::GetContentRegionAvail().y*.17f)));
+                ImGui::Dummy(ImVec2(0,(std::max)(10.0f,(ImGui::GetContentRegionAvail().y-220.0f)*.5f)));
                 const auto glyph=ImGui::GetCursorScreenPos();
                 const auto center_point=ImVec2(glyph.x+center,glyph.y+28);
                 ImGui::GetWindowDrawList()->AddCircleFilled(center_point,29,IM_COL32(237,243,252,255));
