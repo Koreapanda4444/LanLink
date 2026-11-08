@@ -40,16 +40,21 @@ function Write-Pem([string] $Path, [string] $Label, [byte[]] $Bytes, [switch] $A
 }
 
 function Get-FreePort([int[]] $Exclude = @()) {
-    for ($attempt = 0; $attempt -lt 32; $attempt++) {
-        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $failures = @{}
+    $tried = [Collections.Generic.HashSet[int]]::new()
+    for ($attempt = 0; $attempt -lt 256; $attempt++) {
+        # TCP's port-zero allocator can repeatedly select ports from a range
+        # reserved for UDP by Hyper-V/HNS. Probe both protocols on independently
+        # chosen candidates below the default dynamic range instead.
+        $port = Get-Random -Minimum 10000 -Maximum 49152
+        if ($port -in $Exclude -or -not $tried.Add($port)) { continue }
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
         $datagram = [Net.Sockets.Socket]::new(
             [Net.Sockets.AddressFamily]::InterNetwork,
             [Net.Sockets.SocketType]::Dgram, [Net.Sockets.ProtocolType]::Udp)
         try {
             $listener.ExclusiveAddressUse = $true
             $listener.Start()
-            $port = $listener.LocalEndpoint.Port
-            if ($port -in $Exclude) { continue }
             # Relay needs this port for both TLS/TCP and QUIC/UDP. Keep the TCP
             # reservation while checking UDP; a TCP-only probe misses UDP users.
             $datagram.ExclusiveAddressUse = $true
@@ -57,6 +62,9 @@ function Get-FreePort([int[]] $Exclude = @()) {
             return $port
         } catch [Net.Sockets.SocketException] {
             $code = $_.Exception.GetBaseException().SocketErrorCode
+            $name = [string]$code
+            if (-not $failures.ContainsKey($name)) { $failures[$name] = 0 }
+            $failures[$name]++
             if ($code -notin @([Net.Sockets.SocketError]::AddressAlreadyInUse,
                               [Net.Sockets.SocketError]::AccessDenied)) { throw }
         } finally {
@@ -64,7 +72,8 @@ function Get-FreePort([int[]] $Exclude = @()) {
             $listener.Stop()
         }
     }
-    throw 'Cannot find a loopback port available for both TCP and UDP.'
+    $detail = ($failures.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ", "
+    throw "Cannot find an exclusive TCP/UDP loopback port after $($tried.Count) independent candidates: $detail"
 }
 
 function Start-Child([string] $Executable, [string[]] $Arguments) {
