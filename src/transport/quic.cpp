@@ -593,7 +593,7 @@ private:
                         return accepted;
                     }
                     return false;
-                },[weak]{if(auto channel=weak.lock())channel->stop();});
+                },[]{}); // The listener drains queued replies when the upstream finishes.
             }
             if(frame.type!=protocol::MessageType::network_packet_send && !context.control_rate.allow())throw std::runtime_error("regional control rate exceeded");
             if(!context.bridge->send(frame))throw std::runtime_error("regional upstream backpressure");
@@ -832,7 +832,7 @@ private:
                     },
                     [this,context] {
                         if(context->handshake.authenticated() && options_.device_allowed && !options_.device_allowed(context->handshake.device_id()))return false;
-                        return (context->bridge?!context->bridge->finished():!context->handshake.expire()) &&
+                        return (context->bridge?(!context->bridge->finished() || context->channel->pending_output()):!context->handshake.expire()) &&
                                (!context->rejected || context->channel->pending_output());
                     },
                     [this, context] { close_tcp(*context); },
@@ -1532,8 +1532,17 @@ public:
         return negotiated_capabilities_;
     }
 
+    bool await_capability(protocol::Capability required,std::chrono::milliseconds timeout) {
+        std::unique_lock lock(peer_state_mutex_);
+        if(options_.enable_capability_negotiation && authenticated_.load() && !capabilities_received_) {
+            if(!capability_wake_.wait_for(lock,timeout,[&]{return capabilities_received_ || !authenticated_.load() || stop_requested_.load();}))
+                throw std::runtime_error("Server capability negotiation timed out");
+        }
+        return negotiated_capabilities_.supports(required);
+    }
+
     [[nodiscard]] protocol::ManagementResult manage_network(const protocol::ManagementRequest& request,const std::chrono::milliseconds timeout) {
-        if(!capabilities().supports(protocol::Capability::managed_networks))throw std::runtime_error("Relay does not support managed networks");
+        if(!await_capability(protocol::Capability::managed_networks,timeout))throw std::runtime_error("Relay does not support managed networks");
         const auto frame=request_control(protocol::MessageType::network_management_request,protocol::encode_management_request(request),protocol::NetworkOperation::list,timeout);
         const auto result=protocol::decode_management_result(frame.payload);
         if(result.action!=request.action || result.network_id!=request.network_id)throw std::runtime_error("management response mismatch");
@@ -1543,7 +1552,7 @@ public:
         const std::chrono::milliseconds timeout) {
         const auto required=(request.action>=protocol::AccessAction::invite_issue && request.action<=protocol::AccessAction::invite_revoke) ? protocol::Capability::invitation_codes :
                 request.action>=protocol::AccessAction::password_set ? protocol::Capability::password_networks : protocol::Capability::user_accounts;
-        if (!capabilities().supports(required))
+        if (!await_capability(required,timeout))
             throw std::runtime_error("This relay does not support the requested access feature.");
         const auto frame=request_control(protocol::MessageType::user_access_request,
             protocol::encode_access_request(request),protocol::NetworkOperation::list,timeout);
@@ -1769,6 +1778,7 @@ private:
         std::lock_guard lock(peer_state_mutex_);
         own_signed_key_.reset();
         negotiated_capabilities_ = {};
+        capabilities_received_=false;capability_wake_.notify_all();
         candidate_inbox_.clear();
         network_keys_.clear();
         peer_states_.clear();
@@ -2969,6 +2979,7 @@ private:
             }
             std::lock_guard lock(peer_state_mutex_);
             negotiated_capabilities_ = selected;
+            capabilities_received_=true;capability_wake_.notify_all();
             return;
         }
 
@@ -3132,6 +3143,8 @@ private:
     mutable std::mutex active_mutex_;
     std::weak_ptr<AttemptState> active_attempt_;
     protocol::NegotiatedCapabilities negotiated_capabilities_;
+    bool capabilities_received_=false;
+    std::condition_variable capability_wake_;
     std::vector<p2p::CandidateExchange> candidate_inbox_;
     std::atomic<std::uint32_t> next_request_id_ = 2;
     std::mutex event_handler_mutex_;
