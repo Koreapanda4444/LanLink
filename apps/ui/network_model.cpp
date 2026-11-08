@@ -83,6 +83,7 @@ void NetworkModel::process() {
                     state_.networks.clear();state_.peers.reset();state_.paths.reset();state_.games.reset();state_.management.reset();state_.access.reset();state_.diagnostics.reset();state_.activity={};state_.last_operation.reset();
                     std::erase_if(pending_,[](const auto& q){return q.command!=protocol::LocalCommand::server_profiles;});
                 }
+                if(const auto action=protocol::decode_server_request(request.payload).action;action!=protocol::ServerAction::list){state_.server_error.clear();state_.server_action=action;state_.server_result_id=servers.result_profile_id;++state_.server_operation_generation;}
                 state_.servers=std::move(servers);++state_.server_generation;state_.service_online=true;state_.error.clear();
             } else if (request.command == protocol::LocalCommand::list) {
                 auto networks = protocol::decode_network_list_result(response.payload);
@@ -134,7 +135,7 @@ void NetworkModel::process() {
                     if(creates || joins)pending_.push_back({protocol::LocalCommand::list,false,false,protocol::encode_network_list_request()});
                 } else {state_.message.clear();state_.error=std::string(protocol::network_result_code_name(result.code));}
                 if(result.action==protocol::AccessAction::account_status && result.code==protocol::NetworkResultCode::not_found) {
-                    state_.error.clear();state_.message="Accounts are optional. This device uses its relay token.";
+                    state_.error.clear();state_.message="Accounts are optional. This device is registered with the server.";
                 }
                 if(result.action==protocol::AccessAction::device_revoke && successful) {
                     protocol::AccessRequest refresh;refresh.action=protocol::AccessAction::account_status;
@@ -166,6 +167,7 @@ void NetworkModel::process() {
         } catch (const std::exception& error) {
             std::lock_guard lock(mutex_);
             const bool server_probe=request.command==protocol::LocalCommand::server_profiles && protocol::decode_server_request(request.payload).action==protocol::ServerAction::list;
+            if(request.command==protocol::LocalCommand::server_profiles && !server_probe)state_.server_error=error.what();
             if (!server_probe && request.command != protocol::LocalCommand::peers && request.command != protocol::LocalCommand::activity &&
                 request.command != protocol::LocalCommand::path_diagnostics && request.command != protocol::LocalCommand::game_diagnostics) {
                 state_.error = error.what();

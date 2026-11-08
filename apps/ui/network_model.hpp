@@ -22,6 +22,9 @@ namespace lanlink::ui {
 struct NetworkSnapshot {
     std::optional<protocol::ServerState> servers;
     std::uint64_t server_generation=0;
+    std::string server_error,server_result_id;
+    protocol::ServerAction server_action=protocol::ServerAction::list;
+    std::uint64_t server_operation_generation=0;
     std::vector<protocol::NetworkSummary> networks;
     std::string message;
     std::string error;

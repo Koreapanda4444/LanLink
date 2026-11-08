@@ -24,6 +24,11 @@ public:
         ImGui::SeparatorText(t("Servers","서버"));
         if(state.servers) {
             const auto& s=*state.servers;
+            if(await_saved_ && state.server_operation_generation>saved_generation_) {
+                await_saved_=false;
+                const auto found=std::find_if(s.profiles.begin(),s.profiles.end(),[&](const auto& p){return state.server_action==protocol::ServerAction::save && p.id==state.server_result_id;});
+                if(found!=s.profiles.end()){editing_=found->id;edit_=true;await_saved_=false;}
+            }
             if(s.selected_id.empty())ImGui::TextDisabled("%s",t("Disconnected","서버 미연결"));
             for(const auto& p:s.profiles) {
                 ImGui::PushID(p.id.c_str());
@@ -59,7 +64,7 @@ public:
                 ImGui::TextWrapped("%s",t("Leave blank to keep a saved credential. Never enter the operator's master token.","비워 두면 저장된 인증 정보가 유지됩니다. 운영자의 관리용 토큰을 입력하지 마세요."));
             }
             ImGui::BeginDisabled(state.busy || port_<1 || port_>65535 || (pin_[0] && !trust_));
-            if(ImGui::Button(t("Save server","서버 저장")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::save;r.profile={editing_,name_.data(),host_.data(),static_cast<std::uint16_t>(port_),pin_.data()};r.credential=credential_.data();send(r);credential_.fill(0);ImGui::CloseCurrentPopup();});
+            if(ImGui::Button(t("Save server","서버 저장")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::save;r.profile={editing_,name_.data(),host_.data(),static_cast<std::uint16_t>(port_),pin_.data()};r.credential=credential_.data();saved_generation_=state.server_operation_generation;await_saved_=editing_.empty();send(r);credential_.fill(0);ImGui::CloseCurrentPopup();});
             ImGui::EndDisabled();
             ImGui::SeparatorText(t("Register this device","이 기기 등록"));
             ImGui::TextWrapped("%s",t("Save the server first, then use a one-use code from its operator.","서버를 먼저 저장한 뒤 운영자가 발급한 일회용 등록 코드를 입력하세요."));
@@ -68,12 +73,16 @@ public:
             ImGui::BeginDisabled(state.busy || editing_.empty() || !code_[0] || !label_[0]);
             if(ImGui::Button(t("Register device","기기 등록")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::enroll;r.profile.id=editing_;r.registration_code=code_.data();r.device_label=label_.data();send(r);code_.fill(0);});
             ImGui::EndDisabled();
+            bool registered=false;if(state.servers)for(const auto& p:state.servers->profiles)if(p.id==editing_)registered=p.has_credential;
+            ImGui::BeginDisabled(state.busy || !registered);
+            if(ImGui::Button(t("Connect to saved server","저장한 서버에 연결")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::connect;r.profile.id=editing_;send(r);ImGui::CloseCurrentPopup();});
+            ImGui::EndDisabled();
             ImGui::BeginDisabled(state.busy || editing_.empty());
             ImGui::Checkbox(t("Confirm deletion of selected profile","선택한 서버 프로필 삭제 확인"),&remove_);
             if(remove_ && ImGui::Button(t("Delete server","서버 삭제")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::remove;r.profile.id=editing_;send(r);editing_.clear();remove_=false;ImGui::CloseCurrentPopup();});
             ImGui::EndDisabled();
             if(ImGui::Button(t("Close","닫기"))){credential_.fill(0);code_.fill(0);remove_=false;ImGui::CloseCurrentPopup();}
-            if(!state.error.empty())ImGui::TextWrapped("%s",state.error.c_str());
+            if(!state.server_error.empty())ImGui::TextWrapped("%s",core::localized_text(language,state.server_error).data());
             if(!error_.empty())ImGui::TextWrapped("%s",error_.c_str());
             ImGui::EndPopup();
         }
@@ -92,6 +101,7 @@ public:
             ImGui::EndDisabled();ImGui::SameLine();if(ImGui::Button(t("Cancel","취소"))){invitation_.clear();uri_.fill(0);ImGui::CloseCurrentPopup();}
             ImGui::EndPopup();
         }
+        if(!state.server_error.empty())ImGui::TextWrapped("%s",core::localized_text(language,state.server_error).data());
         if(!error_.empty())ImGui::TextWrapped("%s",error_.c_str());
     }
 private:
@@ -104,6 +114,8 @@ private:
     std::array<char,4097> credential_{};
     std::array<char,41> code_{};
     std::array<char,2049> uri_{};
+    std::uint64_t saved_generation_=0;
+    bool await_saved_=false;
     int port_=4433;
     bool legacy_=false,edit_=false,review_=false,trust_=false,switch_=false,remove_=false;
 };

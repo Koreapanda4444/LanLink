@@ -3,6 +3,12 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Registration code is invalid, expired, used, or revoked","등록 코드가 유효하지 않거나 만료·사용·철회되었습니다"},
+    Translation{"Device registration timed out","기기 등록 시간이 초과되었습니다"},
+    Translation{"Server certificate or public key does not match the trusted server; connection blocked","서버 인증서 또는 공개키가 신뢰 정보와 달라 연결을 차단했습니다"},
+    Translation{"Server certificate or public key changed. Connection blocked.","서버 인증서 또는 공개키가 변경되어 연결을 차단했습니다."},
+    Translation{"Server capability negotiation timed out","서버 기능 확인 시간이 초과되었습니다"},
+
     Translation{"Server registration code (optional)","서버 등록 코드 (선택)"},
     Translation{"Copy server and network invitation","서버 및 네트워크 초대 복사"},
     Translation{"Connecting to the invited server","초대받은 서버에 연결 중"},
@@ -261,7 +267,7 @@ constexpr std::array catalog{
     Translation{"Skip for now","지금은 건너뛰기"},
     Translation{"Network updated.","네트워크가 갱신되었습니다."},
     Translation{"Join request sent. Waiting for the network owner to approve this device.","참여 요청을 보냈습니다. 관리자의 승인을 기다리는 중입니다."},
-    Translation{"Accounts are optional. This device uses its relay token.","계정은 선택 사항입니다. 현재 기기는 릴레이 토큰으로 사용 중입니다."},
+    Translation{"Accounts are optional. This device is registered with the server.","계정은 선택 사항입니다. 현재 기기는 릴레이 토큰으로 사용 중입니다."},
     Translation{"permission_denied","권한이 없거나 입력한 비밀번호·초대가 올바르지 않습니다."},
     Translation{"invite_required","네트워크 비밀번호 또는 관리자의 초대가 필요합니다."},
     Translation{"not_found","대상을 찾을 수 없습니다."},
