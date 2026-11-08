@@ -806,7 +806,7 @@ void test_tls_tcp_fallback(const std::filesystem::path& directory) {
             600ms, stop_connect));
     } catch (const std::exception& error) {
         rejected_certificate =
-            std::string(error.what()) == "TLS relay handshake failed";
+            std::string(error.what()) == "TLS relay certificate verification or handshake failed";
     }
     expect(rejected_certificate,
            "TLS fallback must reject a relay certificate for the wrong hostname");
