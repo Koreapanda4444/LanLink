@@ -200,7 +200,7 @@ begin
      (ExpandConstant('{param:RelayPort|}') <> '') then Result := CustomMessage('NoServerOptions');
 end;
 
-function SetTimer(hWnd: HWND; nIDEvent: UINT_PTR; uElapse: UINT; lpTimerFunc: NativeInt): UINT_PTR;
+function SetTimer(hWnd: HWND; nIDEvent: UINT_PTR; uElapse: UINT; lpTimerFunc: UINT_PTR): UINT_PTR;
   external 'SetTimer@user32.dll stdcall';
 function KillTimer(hWnd: HWND; nIDEvent: UINT_PTR): Integer;
   external 'KillTimer@user32.dll stdcall';
