@@ -92,6 +92,7 @@ add_library(lanlink_protocol STATIC
     src/protocol/path_diagnostics.cpp
     src/protocol/capabilities.cpp
     src/protocol/codec.cpp
+    src/protocol/device_registration.cpp
     src/protocol/server_profiles.cpp
     src/protocol/local_control.cpp
     src/protocol/network_messages.cpp
@@ -151,6 +152,7 @@ target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET} PUBLIC la
 lanlink_enable_warnings(lanlink_storage)
 
 add_library(lanlink_relay_domain STATIC
+    src/relay/device_authority.cpp
     src/relay/forwarding_quota.cpp
     src/relay/network_control_channel.cpp
     src/relay/network_service.cpp
@@ -232,6 +234,7 @@ add_library(lanlink_transport STATIC
     src/transport/relay_probe.cpp
     src/transport/directory_fetch.cpp
     src/p2p/direct_quic.cpp
+    src/transport/device_registration.cpp
     src/transport/quic.cpp
     src/transport/reconnect.cpp
     src/transport/resource_limits.cpp
@@ -485,6 +488,17 @@ if(BUILD_TESTING)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LANLINK_WINTUN_DLL}"
                 "$<TARGET_FILE_DIR:lanlink_windows_network_tests>/wintun.dll")
     endif()
+    add_executable(lanlink_onboarding_transport_tests tests/onboarding_transport_tests.cpp)
+    target_link_libraries(lanlink_onboarding_transport_tests PRIVATE lanlink_transport OpenSSL::SSL)
+    lanlink_enable_warnings(lanlink_onboarding_transport_tests)
+    add_test(NAME lanlink-onboarding-transport COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/onboarding_transport.py $<TARGET_FILE:lanlink_onboarding_transport_tests>)
+    set_tests_properties(lanlink-onboarding-transport PROPERTIES TIMEOUT 45)
+
+    add_executable(lanlink_device_authority_tests tests/device_authority_tests.cpp)
+    target_link_libraries(lanlink_device_authority_tests PRIVATE lanlink_relay_domain)
+    lanlink_enable_warnings(lanlink_device_authority_tests)
+    add_test(NAME lanlink-device-authority COMMAND lanlink_device_authority_tests)
+
     add_executable(lanlink_server_profile_tests tests/server_profile_tests.cpp)
     target_link_libraries(lanlink_server_profile_tests PRIVATE lanlink_storage)
     lanlink_enable_warnings(lanlink_server_profile_tests)

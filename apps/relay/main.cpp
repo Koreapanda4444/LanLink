@@ -6,6 +6,8 @@
 #include "lanlink/storage/relay_store.hpp"
 #include "lanlink/transport/quic.hpp"
 #include "lanlink/auth/identity.hpp"
+#include "lanlink/relay/device_authority.hpp"
+#include "lanlink/transport/tls.hpp"
 #include "lanlink/transport/relay_probe.hpp"
 #include <atomic>
 #include <charconv>
@@ -55,6 +57,22 @@ int main(const int argc, char* argv[]) {
                      <<" capacity="<<result.health.capacity<<" rtt_us="<<result.rtt.count()<<'\n';
             return result.health.ready?0:2;
         }
+        if(argc==3 && std::string_view(argv[1])=="--certificate-pin") {std::cout<<lanlink::transport::server_public_key_fingerprint(argv[2])<<'\n';return 0;}
+        const auto now_ms=[] {return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();};
+        if(argc>=3 && std::string_view(argv[1]).starts_with("--device-")) {
+            const std::string_view action=argv[1];auto c=lanlink::core::load_config(argv[2]);lanlink::core::validate_relay_config(c);
+            if(!c.relay_upstream_host.empty())throw std::invalid_argument("Manage registration on the central authority");
+            lanlink::storage::RelayStore database(c.relay_database_file);auto master=lanlink::auth::AuthToken::load(c.auth_token_file);
+            lanlink::relay::DeviceAuthority authority(database,master,c.relay_require_device_registration);
+            if(action=="--device-code" && (argc==3 || argc==4)) {
+                const auto duration=argc==4?std::stoul(argv[3]):300UL;if(duration<1 || duration>86400)throw std::invalid_argument("Lifetime must be 1 to 86400 seconds");
+                std::cout<<authority.issue_code(now_ms(),static_cast<std::uint32_t>(duration))<<'\n';return 0;
+            }
+            if(action=="--device-code-revoke" && argc==4){authority.revoke_code(argv[3]);std::cout<<"Registration code revoked\n";return 0;}
+            if(action=="--device-list" && argc==3){for(const auto& d:database.server_devices())std::cout<<lanlink::auth::hex_encode(d.device_id)<<' '<<(d.revoked?"revoked":"approved")<<' '<<d.label<<'\n';return 0;}
+            if(action=="--device-revoke" && argc==4){database.revoke_server_device(lanlink::auth::parse_directory_key(argv[3]));std::cout<<"Device access revoked\n";return 0;}
+            throw std::invalid_argument("usage: --device-code CONFIG [SECONDS] | --device-code-revoke CONFIG CODE | --device-list CONFIG | --device-revoke CONFIG DEVICE_ID");
+        }
         const bool health_key=argc==3 && std::string_view(argv[1])=="--health-key";
         const bool check_config=argc==3 && std::string_view(argv[1])=="--check-config";
         if(argc>2 && !health_key && !check_config)throw std::invalid_argument("usage: lanlink-relay [config-path] | --health-key config-path | --check-config config-path | --version | --probe HOST PORT ID AUTHORITY CAPACITY PUBLIC_KEY");
@@ -99,6 +117,8 @@ int main(const int argc, char* argv[]) {
         std::unique_ptr<lanlink::storage::RelayStore> store;
         std::unique_ptr<lanlink::relay::NetworkService> network_service;
         std::unique_ptr<lanlink::relay::NetworkControlChannel> control_channel;
+        std::unique_ptr<lanlink::auth::AuthToken> registration_master;
+        std::unique_ptr<lanlink::relay::DeviceAuthority> device_authority;
         std::unique_ptr<lanlink::transport::QuicRelayServer> server;
         if(!config.relay_upstream_host.empty()) {
             lanlink::auth::RelayEndpoint home{config.relay_upstream_id,config.relay_upstream_host,config.relay_upstream_port};
@@ -108,6 +128,11 @@ int main(const int argc, char* argv[]) {
             server=std::make_unique<lanlink::transport::QuicRelayServer>(std::move(options),logger);
         }else {
             store=std::make_unique<lanlink::storage::RelayStore>(config.relay_database_file);
+            registration_master=std::make_unique<lanlink::auth::AuthToken>(lanlink::auth::AuthToken::load(config.auth_token_file));
+            device_authority=std::make_unique<lanlink::relay::DeviceAuthority>(*store,*registration_master,config.relay_require_device_registration);
+            options.verify_device=[&](const auto& key,auto transcript,const auto& proof){return device_authority->verify(key,transcript,proof);};
+            options.register_device=[&](auto payload){return device_authority->register_device(payload,now_ms());};
+            options.device_allowed=[&](const auto& id){return device_authority->allowed(id);};
             network_service=std::make_unique<lanlink::relay::NetworkService>(*store);
             lanlink::relay::ForwardingLimits limits;
             limits.device_bytes_per_second=config.relay_device_bytes_per_second;limits.network_bytes_per_second=config.relay_network_bytes_per_second;

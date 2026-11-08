@@ -332,6 +332,20 @@ public:
         }
 
         running_.store(true);
+        if(options_.device_allowed)revocation_monitor_=std::jthread([this](std::stop_token stop){
+            while(!stop.stop_requested()) {
+                {
+                    std::lock_guard lock(active_control_streams_mutex_);
+                    for(const auto& active:active_control_streams_) {
+                        bool allowed=false;try{allowed=options_.device_allowed(active.device_id);}catch(...){}
+                        if(allowed)continue;
+                        if(active.tcp)active.tcp->stop();
+                        else if(active.connection && active.context && !active.context->closed.load())api_->ConnectionShutdown(active.connection,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,authentication_shutdown_code);
+                    }
+                }
+                for(unsigned n=0;n<10 && !stop.stop_requested();++n)std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        });
         if(options_.upstream)authority_monitor_=std::jthread([this](std::stop_token stop){monitor_authority(stop);});
         log_noexcept(logger_, core::LogLevel::info,
                      "relay listening on TLS TCP" +
@@ -376,6 +390,7 @@ public:
         std::lock_guard lock(lifecycle_mutex_);
 
         bridge_stopping_=true;
+        revocation_monitor_.request_stop();if(revocation_monitor_.joinable())revocation_monitor_.join();
         authority_monitor_.request_stop();
         if(authority_monitor_.joinable())authority_monitor_.join();
         if (tls_listener_)tls_listener_->stop();
@@ -440,7 +455,7 @@ private:
               handshake(*owner_value->auth_token_,
                         reinterpret_cast<std::uintptr_t>(connection),
                         auth::ServerHandshake::Clock::now() +
-                            owner_value->options_.authentication_timeout),
+                            owner_value->options_.authentication_timeout, owner_value->options_.verify_device),
               sends(owner_value->options_.send_queue), admission(std::move(slot)),
               control_rate(owner_value->options_.control_requests_per_second) {
         }
@@ -487,7 +502,7 @@ private:
               handshake(*owner->auth_token_,
                         reinterpret_cast<std::uintptr_t>(channel.get()),
                         auth::ServerHandshake::Clock::now() +
-                            owner->options_.authentication_timeout),
+                            owner->options_.authentication_timeout, owner->options_.verify_device),
               control_rate(owner->options_.control_requests_per_second) {}
 
         std::shared_ptr<TlsChannel> channel;
@@ -586,6 +601,12 @@ private:
         }
         if (context.handshake.expire()) {
             throw std::runtime_error("TLS TCP authentication expired");
+        }
+        if(context.handshake.authenticated() && options_.device_allowed && !options_.device_allowed(context.handshake.device_id()))throw std::runtime_error("Device access revoked");
+        if(frame.type==protocol::MessageType::device_register_request && !context.handshake.authenticated()) {
+            if(!options_.register_device || !frame.request_id || !context.control_rate.allow())throw std::runtime_error("Device registration unavailable");
+            if(!context.channel->enqueue({protocol::MessageType::device_register_result,frame.request_id,options_.register_device(frame.payload)}))throw std::runtime_error("Registration response queue overflow");
+            context.rejected=true;return;
         }
         if (!context.handshake.authenticated()) {
             if(frame.type==protocol::MessageType::relay_health_request) {
@@ -809,7 +830,8 @@ private:
                     [this, context](const protocol::Frame& frame) {
                         handle_tcp_frame(*context, frame);
                     },
-                    [context] {
+                    [this,context] {
+                        if(context->handshake.authenticated() && options_.device_allowed && !options_.device_allowed(context->handshake.device_id()))return false;
                         return (context->bridge?!context->bridge->finished():!context->handshake.expire()) &&
                                (!context->rejected || context->channel->pending_output());
                     },
@@ -976,6 +998,9 @@ private:
                         break;
                     }
                     actor = context->handshake.device_id();
+                }
+                if(options_.device_allowed && !options_.device_allowed(actor)) {
+                    api_->ConnectionShutdown(connection,QUIC_CONNECTION_SHUTDOWN_FLAG_NONE,authentication_shutdown_code);break;
                 }
                 try {
                     const auto* buffer = event->DATAGRAM_RECEIVED.Buffer;
@@ -1240,6 +1265,7 @@ private:
                               ConnectionContext* context,
                               const auth::DeviceId& actor,
                               const protocol::Frame& frame) {
+        if(options_.device_allowed && !options_.device_allowed(actor))throw std::runtime_error("Device access revoked");
         if (frame.type == protocol::MessageType::network_packet_send) {
             if (frame.request_id != 0) {
                 throw std::runtime_error("encrypted packet request id must be zero");
@@ -1253,6 +1279,7 @@ private:
         if (!context->control_rate.allow()) {
             throw std::runtime_error("QUIC control request rate exceeded");
         }
+        if(options_.device_allowed && !options_.device_allowed(actor))throw std::runtime_error("Device access revoked");
         auto dispatch = control_channel_->handle_authenticated(actor, frame);
         const auto status = send_frame(api_, stream, dispatch.response, context->sends);
 
@@ -1268,7 +1295,7 @@ private:
     std::vector<std::shared_ptr<RelayBridge>> bridges_;
     std::atomic_bool bridge_stopping_=false,authority_verified_=false,authority_ready_=false;
     std::atomic<std::uint32_t> authority_rtt_us_=0;
-    std::jthread authority_monitor_;
+    std::jthread authority_monitor_,revocation_monitor_;
     std::unique_ptr<auth::DeviceIdentity> health_identity_;
     std::mutex health_mutex_;
     ControlRateLimit health_rate_;
@@ -1307,6 +1334,7 @@ public:
         : options_(std::move(options)),
           logger_(logger),
           reconnect_(options_.reconnect_initial_delay, options_.reconnect_maximum_delay) {
+        if(!options_.server_public_key_pin.empty())options_.force_tls=true;
         validate_client_options(options_);
         if(options_.relay_probe_interval<std::chrono::seconds(1))throw std::invalid_argument("relay probe interval too short");
         if(!options_.relay_pool.empty())pool_=std::make_unique<RelayPool>(options_.relay_pool);
@@ -1725,7 +1753,7 @@ private:
         const auto code = core::classify_error(message);
         std::lock_guard lock(diagnostics_mutex_);
         last_error_code_ = code;
-        last_error_ = core::error_summary(code);
+        last_error_ = message.find("public key")!=message.npos ? "Server certificate or public key changed. Connection blocked." : std::string(core::error_summary(code));
     }
 
     static void verify_peer_keys(const protocol::NetworkPeerState& state) {
@@ -2201,6 +2229,12 @@ private:
                 pool_->activate(selected->id,std::chrono::steady_clock::now());
                 log_noexcept(logger_,core::LogLevel::info,"selected relay "+selected->id+" region "+selected->region);
             }
+            if(options_.force_tls) {
+                static_cast<void>(run_tcp_attempt());
+                if(stop_requested_.load())break;
+                reconnect_count_.fetch_add(1);std::unique_lock lock(delay_mutex_);
+                delay_wake_.wait_for(lock,reconnect_.next_delay(),[this]{return stop_requested_.load();});continue;
+            }
             const auto state = std::make_shared<AttemptState>();
             if (start_attempt(state)) {
                 std::unique_lock lock(state->mutex);
@@ -2322,7 +2356,7 @@ private:
         std::thread probe_worker;
         try {
             auto tcp = TlsChannel::connect(options_.relay_host, options_.port,
-                                           options_.handshake_timeout, stop_requested_);
+                                           options_.handshake_timeout, stop_requested_, options_.server_public_key_pin);
             if (stop_requested_.load()) {
                 return false;
             }
@@ -2356,7 +2390,7 @@ private:
                 },
                 [this, &context, &cancel_probe, &probe_running, &udp_available,
                  &probe_worker, &next_probe] {
-                    if (context->handshake.authenticated() &&
+                    if (!options_.force_tls && context->handshake.authenticated() &&
                         !udp_available.load() &&
                         std::chrono::steady_clock::now() >= next_probe &&
                         !probe_running.load()) {
@@ -2377,6 +2411,7 @@ private:
                            (context->handshake.authenticated() ||
                             auth::ServerHandshake::Clock::now() < context->deadline);
                 });
+            if(!stop_requested_.load() && !context->handshake.authenticated() && std::chrono::steady_clock::now()>=context->deadline)throw std::runtime_error("Server authentication timed out");
         } catch (const std::exception& error) {
             tcp_failed = true;
             record_error("TLS TCP fallback failed: " + std::string(error.what()));

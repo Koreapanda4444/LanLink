@@ -25,6 +25,8 @@ enum class MessageType : std::uint16_t {
     heartbeat = 0x0003,
     heartbeat_ack = 0x0004,
     disconnect = 0x0005,
+    device_register_request = 0x0010,
+    device_register_result = 0x0011,
     client_auth = 0x0006,
     auth_result = 0x0007,
     network_create_request = 0x0100,

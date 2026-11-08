@@ -13,6 +13,8 @@
 
 namespace lanlink::transport {
 
+std::string server_public_key_fingerprint(const std::filesystem::path& certificate);
+
 struct TlsTrafficCounters {
     std::uint64_t sent_bytes = 0;
     std::uint64_t received_bytes = 0;
@@ -31,7 +33,8 @@ public:
 
     static std::shared_ptr<TlsChannel> connect(
         const std::string& host, std::uint16_t port,
-        std::chrono::milliseconds timeout, const std::atomic_bool& stopping);
+        std::chrono::milliseconds timeout, const std::atomic_bool& stopping,
+        const std::string& public_key_pin = {});
 
     ~TlsChannel();
     TlsChannel(const TlsChannel&) = delete;

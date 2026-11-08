@@ -5,6 +5,9 @@
 
 #include <openssl/ssl.h>
 #include <openssl/x509_vfy.h>
+#include <openssl/x509v3.h>
+#include <openssl/pem.h>
+#include <openssl/crypto.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -230,6 +233,17 @@ SocketOwner listen_socket(const std::string& host, const std::uint16_t port) {
     throw std::runtime_error("TLS TCP relay listen failed");
 }
 
+std::string public_key_fingerprint(X509* certificate) {
+    if(!certificate)throw std::runtime_error("Missing server certificate");
+    auto* key=X509_get_X509_PUBKEY(certificate);const int count=i2d_X509_PUBKEY(key,nullptr);
+    if(count<=0)throw std::runtime_error("Invalid server public key");
+    std::vector<unsigned char> der(static_cast<std::size_t>(count));auto* cursor=der.data();
+    if(i2d_X509_PUBKEY(key,&cursor)!=count)throw std::runtime_error("Invalid server public key encoding");
+    std::array<unsigned char,32> digest{};unsigned size=0;
+    if(EVP_Digest(der.data(),der.size(),digest.data(),&size,EVP_sha256(),nullptr)!=1 || size!=32)throw std::runtime_error("Server fingerprint failed");
+    std::string out;for(auto n:digest){out+="0123456789abcdef"[n>>4];out+="0123456789abcdef"[n&15];}return out;
+}
+
 std::shared_ptr<SSL_CTX> make_context(const bool server) {
     auto context = std::shared_ptr<SSL_CTX>(
         SSL_CTX_new(server ? TLS_server_method() : TLS_client_method()), SSL_CTX_free);
@@ -272,6 +286,12 @@ std::shared_ptr<SSL_CTX> make_context(const bool server) {
 
 }
 
+std::string server_public_key_fingerprint(const std::filesystem::path& certificate) {
+    std::unique_ptr<BIO,decltype(&BIO_free)> file(BIO_new_file(certificate.string().c_str(),"r"),BIO_free);
+    std::unique_ptr<X509,decltype(&X509_free)> cert(file?PEM_read_bio_X509(file.get(),nullptr,nullptr,nullptr):nullptr,X509_free);
+    return public_key_fingerprint(cert.get());
+}
+
 class TlsChannel::Impl {
 public:
     Impl(SocketOwner socket, std::shared_ptr<SSL_CTX> context, SendQueueLimits limits = {})
@@ -282,7 +302,32 @@ public:
         }
     }
 
-    void configure_client(const std::string& host) {
+    static int verify_pinned(int verified,X509_STORE_CTX* store) noexcept {
+        try {
+            auto* ssl=static_cast<SSL*>(X509_STORE_CTX_get_ex_data(store,SSL_get_ex_data_X509_STORE_CTX_idx()));
+            auto* self=ssl?static_cast<Impl*>(SSL_get_app_data(ssl)):nullptr;
+            if(!self || self->pin_.empty())return 0;
+            auto* leaf=X509_STORE_CTX_get0_cert(store);const auto actual=public_key_fingerprint(leaf);
+            if(actual.size()!=self->pin_.size() || CRYPTO_memcmp(actual.data(),self->pin_.data(),actual.size())!=0)return 0;
+            if(X509_cmp_current_time(X509_get0_notBefore(leaf))>=0 || X509_cmp_current_time(X509_get0_notAfter(leaf))<=0)return 0;
+            const int ip=X509_check_ip_asc(leaf,self->host_.c_str(),0);
+            if(ip>=0 ? ip!=1 : X509_check_host(leaf,self->host_.data(),self->host_.size(),X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS,nullptr)!=1)return 0;
+            if(verified)return 1;
+            switch(X509_STORE_CTX_get_error(store)) {
+            case X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
+            case X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN:
+            case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
+            case X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE: return 1;
+            default:return 0;
+            }
+        }catch(...){return 0;}
+    }
+
+    void configure_client(const std::string& host,const std::string& pin) {
+        if(!pin.empty() && (pin.size()!=64 || pin.find_first_not_of("0123456789abcdef")!=pin.npos))throw std::invalid_argument("Invalid server public key fingerprint");
+        host_=host;pin_=pin;
+        if(!pin_.empty()){SSL_set_app_data(ssl_.get(),this);SSL_set_verify(ssl_.get(),SSL_VERIFY_PEER,verify_pinned);}
+
         auto* parameters = SSL_get0_param(ssl_.get());
         if (X509_VERIFY_PARAM_set1_ip_asc(parameters, host.c_str()) != 1) {
             if (SSL_set1_host(ssl_.get(), host.c_str()) != 1 ||
@@ -317,7 +362,7 @@ public:
             }
             const auto error = SSL_get_error(ssl_.get(), result);
             if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
-                throw std::runtime_error("TLS relay handshake failed");
+                throw std::runtime_error(pin_.empty()?"TLS relay certificate verification or handshake failed":"Server certificate or public key does not match the trusted server; connection blocked");
             }
             static_cast<void>(wait_socket(socket_.get(), error == SSL_ERROR_WANT_READ,
                                           error == SSL_ERROR_WANT_WRITE));
@@ -426,6 +471,7 @@ public:
     }
 
     SocketOwner socket_;
+    std::string host_,pin_;
     std::shared_ptr<SSL_CTX> context_;
     std::unique_ptr<SSL, decltype(&SSL_free)> ssl_;
     mutable std::mutex queue_mutex_;
@@ -462,13 +508,13 @@ TlsTrafficCounters TlsChannel::traffic() const noexcept { return impl_->traffic(
 
 std::shared_ptr<TlsChannel> TlsChannel::connect(
     const std::string& host, const std::uint16_t port,
-    const std::chrono::milliseconds timeout, const std::atomic_bool& stopping) {
+    const std::chrono::milliseconds timeout, const std::atomic_bool& stopping,const std::string& public_key_pin) {
     const auto context = make_context(false);
     auto socket = connect_socket(host, port, std::chrono::steady_clock::now() + timeout,
                                  stopping);
     auto channel = std::shared_ptr<TlsChannel>(
         new TlsChannel(std::make_unique<Impl>(std::move(socket), context)));
-    channel->impl_->configure_client(host);
+    channel->impl_->configure_client(host,public_key_pin);
     channel->impl_->handshake(false, timeout, stopping);
     return channel;
 }

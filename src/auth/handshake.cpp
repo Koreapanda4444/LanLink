@@ -273,8 +273,8 @@ void ClientHandshake::close() noexcept {
 
 ServerHandshake::ServerHandshake(const AuthToken& token,
                                  const std::uintptr_t connection_binding,
-                                 const Clock::time_point deadline)
-    : token_(token), connection_binding_(connection_binding), deadline_(deadline) {
+                                 const Clock::time_point deadline, ProofVerifier verifier)
+    : token_(token), verifier_(std::move(verifier)), connection_binding_(connection_binding), deadline_(deadline) {
     if (connection_binding_ == 0) {
         throw std::invalid_argument("authentication connection binding must be non-zero");
     }
@@ -340,7 +340,7 @@ protocol::Frame ServerHandshake::handle_proof(const protocol::Frame& frame,
 
     try {
         const auto valid_signature = verify_signature(public_key_, transcript, proof.signature);
-        const auto valid_token = token_.verify(transcript, proof.token_proof);
+        const auto valid_token = verifier_ ? verifier_(public_key_,transcript,proof.token_proof) : token_.verify(transcript, proof.token_proof);
         accepted = valid_signature && valid_token;
 
         if (accepted) {

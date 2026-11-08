@@ -9,8 +9,8 @@ ErrorCode classify_error(std::string_view message) noexcept {
             return std::tolower(a) == std::tolower(b);
         }) != message.end();
     };
-    if (contains("auth") || contains("certificate") || contains("credential")) return ErrorCode::authentication_failed;
     if (contains("timeout") || contains("timed out")) return ErrorCode::timeout;
+    if (contains("auth") || contains("certificate") || contains("credential")) return ErrorCode::authentication_failed;
     if (contains("queue") || contains("backpressure")) return ErrorCode::backpressure;
     if (contains("revok") || contains("epoch")) return ErrorCode::revoked;
     if (contains("packet")) return ErrorCode::packet_rejected;

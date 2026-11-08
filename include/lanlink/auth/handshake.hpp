@@ -4,6 +4,7 @@
 #include "lanlink/protocol/message.hpp"
 
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -92,10 +93,11 @@ private:
 class ServerHandshake {
 public:
     using Clock = std::chrono::steady_clock;
+    using ProofVerifier = std::function<bool(const PublicKey&,std::span<const std::byte>,const TokenProof&)>;
 
     ServerHandshake(const AuthToken& token,
                     std::uintptr_t connection_binding,
-                    Clock::time_point deadline);
+                    Clock::time_point deadline, ProofVerifier verifier = {});
     ~ServerHandshake();
 
     ServerHandshake(const ServerHandshake&) = delete;
@@ -135,6 +137,7 @@ private:
     void require_active(Clock::time_point now);
 
     const AuthToken& token_;
+    ProofVerifier verifier_;
     std::uintptr_t connection_binding_ = 0;
     Clock::time_point deadline_{};
     PublicKey public_key_{};

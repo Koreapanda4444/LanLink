@@ -104,7 +104,11 @@ RuntimeConfig parse_config(const std::string_view content) {
                 fail(line_number, "duplicate key " + key);
             }
 
-            if (key=="bootstrap_mode") config.bootstrap_mode=value;
+            if(key=="relay_require_device_registration") {
+                if(value!="true" && value!="false")fail(line_number,"relay_require_device_registration must be true or false");
+                config.relay_require_device_registration=value=="true";
+            }
+            else if (key=="bootstrap_mode") config.bootstrap_mode=value;
             else if(key=="directory_url") config.directory_url=value;
             else if(key=="directory_public_key") config.directory_public_key=value;
             else if(key=="directory_relay_id") config.directory_relay_id=value;

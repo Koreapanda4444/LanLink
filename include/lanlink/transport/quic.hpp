@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lanlink/auth/network_keys.hpp"
+#include "lanlink/auth/handshake.hpp"
 #include "lanlink/auth/directory.hpp"
 #include "lanlink/protocol/network_messages.hpp"
 #include "lanlink/protocol/packet_messages.hpp"
@@ -43,6 +44,9 @@ struct QuicServerOptions {
     std::chrono::milliseconds idle_timeout{60'000};
     std::uint32_t keep_alive_interval_ms = 15'000;
     bool enable_quic = true;
+    auth::ServerHandshake::ProofVerifier verify_device;
+    std::function<std::vector<std::byte>(std::span<const std::byte>)> register_device;
+    std::function<bool(const auth::DeviceId&)> device_allowed;
     std::size_t max_connections = 128;
     std::size_t max_tls_handshakes = 16;
     SendQueueLimits send_queue;
@@ -55,6 +59,8 @@ struct QuicServerOptions {
 };
 
 struct QuicClientOptions {
+    bool force_tls = false;
+    std::string server_public_key_pin;
     bool enable_capability_negotiation = true;
     bool enable_policy_refresh = true; // Disabling renewal never disables managed lease expiry.
     std::string relay_host = "127.0.0.1";

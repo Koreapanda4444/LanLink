@@ -1067,11 +1067,33 @@ public:
         q.bind_blob(1,network.data(),network.size()); q.bind_blob(2,password->salt.data(),password->salt.size());
         q.bind_blob(3,password->digest.data(),password->digest.size()); q.bind_integer(4,password->require_approval ? 1 : 0); q.step_done();
     }
+    void issue_server_registration(const auth::DeviceId& digest,std::int64_t now,std::int64_t expires) {
+        require_device_id(digest);require_timestamp(now);
+        if(expires<=now || expires-now>86400000)throw std::invalid_argument("Registration expiry must be within 24 hours");
+        std::lock_guard lock(mutex_);
+        Statement clean(database_,"DELETE FROM server_registration WHERE expires_ms<=?;");clean.bind_integer(1,now);clean.step_done();
+        Statement q(database_,"INSERT INTO server_registration(digest,expires_ms,used) VALUES(?,?,0);");q.bind_blob(1,digest.data(),digest.size());q.bind_integer(2,expires);q.step_done();
+    }
+    bool register_server_device(const auth::DeviceId& digest,const auth::DeviceId& device,std::string_view label,std::int64_t now) {
+        require_device_id(digest);require_device_id(device);require_network_name(label);require_timestamp(now);
+        std::lock_guard lock(mutex_);Transaction tx(database_,true);
+        Statement existing(database_,"SELECT revoked FROM server_devices WHERE device_id=?;");existing.bind_blob(1,device.data(),device.size());
+        // Replaying a code must never resurrect a revoked device or rotate an existing credential.
+        if(existing.step_row() && existing.column_integer(0)!=0)return false;
+        Statement consume(database_,"UPDATE server_registration SET used=1 WHERE digest=? AND used=0 AND expires_ms>?;");consume.bind_blob(1,digest.data(),digest.size());consume.bind_integer(2,now);consume.step_done();
+        if(sqlite3_changes(database_)!=1)return false;
+        Statement q(database_,"INSERT INTO server_devices(device_id,label,registered_ms,revoked) VALUES(?,?,?,0) ON CONFLICT(device_id) DO UPDATE SET label=excluded.label;");q.bind_blob(1,device.data(),device.size());q.bind_text(2,label);q.bind_integer(3,now);q.step_done();tx.commit();return true;
+    }
+    void revoke_server_registration(const auth::DeviceId& digest){std::lock_guard lock(mutex_);Statement q(database_,"UPDATE server_registration SET used=1 WHERE digest=?;");q.bind_blob(1,digest.data(),digest.size());q.step_done();}
+    std::optional<bool> server_device_revoked(const auth::DeviceId& device)const{std::lock_guard lock(mutex_);Statement q(database_,"SELECT revoked FROM server_devices WHERE device_id=?;");q.bind_blob(1,device.data(),device.size());if(!q.step_row())return std::nullopt;return q.column_integer(0)!=0;}
+    void revoke_server_device(const auth::DeviceId& device){require_device_id(device);std::lock_guard lock(mutex_);Statement q(database_,"UPDATE server_devices SET revoked=1 WHERE device_id=?;");q.bind_blob(1,device.data(),device.size());q.step_done();}
+    std::vector<protocol::AccountDevice> server_devices()const{std::lock_guard lock(mutex_);Statement q(database_,"SELECT device_id,label,revoked FROM server_devices ORDER BY registered_ms,device_id LIMIT 4096;");std::vector<protocol::AccountDevice> out;while(q.step_row())out.push_back({q.column_blob<32>(0),q.column_text(1),q.column_integer(2)!=0});return out;}
     [[nodiscard]] bool device_revoked(const auth::DeviceId& device) const {
         std::lock_guard lock(mutex_);
-        Statement q(database_, "SELECT revoked FROM account_devices WHERE device_id=?;");
-        q.bind_blob(1, device.data(), device.size());
-        return q.step_row() && q.column_integer(0) != 0;
+        Statement q(database_, "SELECT revoked FROM account_devices WHERE device_id=? UNION ALL SELECT revoked FROM server_devices WHERE device_id=?;");
+        q.bind_blob(1, device.data(), device.size());q.bind_blob(2, device.data(), device.size());
+        while(q.step_row())if(q.column_integer(0)!=0)return true;
+        return false;
     }
     [[nodiscard]] std::optional<AccountRecord> account_for_device(const auth::DeviceId& device) const {
         std::lock_guard lock(mutex_);
@@ -1307,6 +1329,12 @@ private:
                 "CREATE INDEX network_audit_network_idx ON network_audit(network_id,sequence);CREATE INDEX network_audit_time_idx ON network_audit(timestamp_ms);PRAGMA user_version=8;");
             transaction.commit();version=8;
         }
+        if(version==8) {
+            Transaction tx(database_,true);
+            execute(database_,"CREATE TABLE server_registration(digest BLOB PRIMARY KEY CHECK(length(digest)=32),expires_ms INTEGER NOT NULL,used INTEGER NOT NULL CHECK(used IN(0,1)));"
+                "CREATE TABLE server_devices(device_id BLOB PRIMARY KEY CHECK(length(device_id)=32),label TEXT NOT NULL,registered_ms INTEGER NOT NULL,revoked INTEGER NOT NULL CHECK(revoked IN(0,1)));PRAGMA user_version=9;");
+            tx.commit();version=9;
+        }
         if (version != current_schema_version) {
             throw std::runtime_error("relay database has an unsupported schema version");
         }
@@ -1533,6 +1561,7 @@ private:
     }
 
     void validate_schema() {
+        if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN ('server_registration','server_devices');")!=2)throw std::runtime_error("relay device registration schema is incomplete");
         if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN ('network_policies','network_audit');")!=2)throw std::runtime_error("relay policy/audit schema is incomplete");
         if(query_integer(database_,"SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='invitation_links';")!=1)
             throw std::runtime_error("relay invitation schema is incomplete");
@@ -1692,6 +1721,12 @@ std::vector<JoinRequestRecord> RelayStore::list_join_requests_for_device(
     return impl_->list_join_requests_for_device(device_id);
 }
 
+void RelayStore::issue_server_registration(const auth::DeviceId& d,std::int64_t n,std::int64_t e){impl_->issue_server_registration(d,n,e);}
+bool RelayStore::register_server_device(const auth::DeviceId& h,const auth::DeviceId& d,std::string_view l,std::int64_t n){return impl_->register_server_device(h,d,l,n);}
+void RelayStore::revoke_server_registration(const auth::DeviceId& d){impl_->revoke_server_registration(d);}
+std::optional<bool> RelayStore::server_device_revoked(const auth::DeviceId& d)const{return impl_->server_device_revoked(d);}
+void RelayStore::revoke_server_device(const auth::DeviceId& d){impl_->revoke_server_device(d);}
+std::vector<protocol::AccountDevice> RelayStore::server_devices()const{return impl_->server_devices();}
 void RelayStore::issue_invite_link(const NetworkId& n,const auth::DeviceId& h,std::int64_t now,std::int64_t expires,std::uint16_t uses){impl_->issue_invite_link(n,h,now,expires,uses);}
 bool RelayStore::redeem_invite_link(const NetworkId& n,const auth::DeviceId& h,const auth::DeviceId& d,std::int64_t now){return impl_->redeem_invite_link(n,h,d,now);}
 void RelayStore::revoke_invite_links(const NetworkId& n){impl_->revoke_invite_links(n);}

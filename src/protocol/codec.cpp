@@ -50,6 +50,8 @@ bool is_known_message_type(const MessageType type) noexcept {
         case MessageType::heartbeat:
         case MessageType::heartbeat_ack:
         case MessageType::disconnect:
+        case MessageType::device_register_request:
+        case MessageType::device_register_result:
         case MessageType::client_auth:
         case MessageType::auth_result:
         case MessageType::network_create_request:
@@ -98,6 +100,8 @@ std::string_view message_type_name(const MessageType type) noexcept {
             return "heartbeat_ack";
         case MessageType::disconnect:
             return "disconnect";
+        case MessageType::device_register_request: return "device_register_request";
+        case MessageType::device_register_result: return "device_register_result";
         case MessageType::client_auth:
             return "client_auth";
         case MessageType::auth_result:

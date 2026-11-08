@@ -24,6 +24,7 @@ struct RuntimeConfig {
     // No client server is selected on a fresh installation.
     std::string relay_host;
     std::uint16_t relay_port = 4433;
+    bool relay_require_device_registration = false;
     std::string listen_host = "0.0.0.0";
     std::filesystem::path tls_certificate_file;
     std::filesystem::path tls_private_key_file;

@@ -17,7 +17,7 @@
 namespace lanlink::storage {
 
 inline constexpr std::size_t network_id_size = 16;
-inline constexpr int current_schema_version = 8;
+inline constexpr int current_schema_version = 9;
 inline constexpr std::uint32_t virtual_ipv4_pool_first = 0x0a400000U;
 inline constexpr std::uint32_t virtual_ipv4_pool_end = 0x0a800000U;
 inline constexpr std::uint32_t virtual_ipv4_subnet_size = 256;
@@ -171,6 +171,13 @@ public:
         const NetworkId& network_id) const;
     [[nodiscard]] std::vector<JoinRequestRecord> list_join_requests_for_device(
         const auth::DeviceId& device_id) const;
+
+    void issue_server_registration(const auth::DeviceId& digest, std::int64_t now_ms, std::int64_t expires_ms);
+    bool register_server_device(const auth::DeviceId& digest, const auth::DeviceId& device, std::string_view label, std::int64_t now_ms);
+    void revoke_server_registration(const auth::DeviceId& digest);
+    std::optional<bool> server_device_revoked(const auth::DeviceId& device) const;
+    void revoke_server_device(const auth::DeviceId& device);
+    std::vector<protocol::AccountDevice> server_devices() const;
 
     void issue_invite_link(const NetworkId& network, const auth::DeviceId& digest,
         std::int64_t now_ms, std::int64_t expires_ms, std::uint16_t max_uses);
