@@ -114,14 +114,6 @@ jobs:
           artifacts/*.zip
           artifacts/*.exe
         if-no-files-found: error
-    - name: Preserve Windows network diagnostics
-      if: failure() && runner.os == 'Windows'
-      uses: actions/upload-artifact@v4
-      with:
-        overwrite: true
-        name: LanLink-windows-network-diagnostics
-        path: ''
-        if-no-files-found: ignore
     - name: Upload Linux client
       if: runner.os == 'Linux'
       uses: actions/upload-artifact@v4

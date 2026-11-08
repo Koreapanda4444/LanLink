@@ -36,7 +36,6 @@ cmake --build build --config Release
 
 Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux/macOS 데스크톱은 `-DLANLINK_BUILD_DESKTOP=ON`으로 SDL3/OpenGL UI와 native client를 빌드한다. 설치와 지원 환경은 [Linux·macOS 클라이언트 안내](docs/clients-posix.md)를 참고한다. Linux 릴레이 패키지는 `VCPKG_ROOT`를 지정한 뒤 `bash deploy/linux/build-relay.sh`로 만든다. 직접 빌드하는 서버의 라이브러리·glibc 요구 사항은 해당 빌드 환경을 따른다.
 
-## v1.0 개발
-
+## 빌드·배포 확인
 
 빌드는 제품 실행 파일과 설치 패키지를 생성한다. 저장소의 자동 테스트·벤치마크·과거 검증 보고서는 유지관리 방침에 따라 제거했다. CI는 플랫폼별 컴파일, 패키징, 의존성·패키지 무결성 및 체크섬 생성을 수행한다.
