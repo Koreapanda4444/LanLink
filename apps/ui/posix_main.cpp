@@ -128,7 +128,7 @@ int main(int argc,char* argv[]) {
                     lanlink::ui::design::load_fonts(name,name,font_density);break;
                 }
                 if(io.Fonts->Fonts.empty())io.Fonts->AddFontDefault();
-                ImGui_ImplOpenGL3_DestroyFontsTexture();
+                ImGui_ImplOpenGL3_DestroyDeviceObjects();
             }
             ImGui_ImplOpenGL3_NewFrame();ImGui_ImplSDL3_NewFrame();ImGui::NewFrame();view.render();ImGui::Render();
             int width=0,height=0;SDL_GetWindowSizeInPixels(desktop.window,&width,&height);glViewport(0,0,width,height);glClearColor(0.08f,0.1f,0.14f,1);glClear(GL_COLOR_BUFFER_BIT);ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
