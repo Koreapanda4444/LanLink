@@ -694,7 +694,7 @@ void tls_probe(const std::string& host, std::uint16_t port, bool expected) {
         accepted = true;
     } catch (const std::exception& error) { failure = error.what(); }
     require(accepted == expected, "TLS trust or hostname verification returned the wrong result");
-    if (!expected) require(failure == "TLS relay handshake failed", "TLS rejection did not reach certificate validation: " + failure);
+    if (!expected) require(failure == "TLS relay certificate verification or handshake failed", "TLS rejection did not reach certificate validation: " + failure);
     std::cout << "Windows TLS trust probe: " << host << " " << (accepted ? "accepted" : "rejected") << '\n';
 }
 
