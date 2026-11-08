@@ -3,6 +3,8 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Network join interrupted. Retrying after reconnect.","네트워크 가입이 중단되었습니다. 다시 연결한 뒤 재시도합니다."},
+    Translation{"Network join interrupted. Review the invitation to try again.","네트워크 가입이 중단되었습니다. 초대를 확인하고 다시 시도하세요."},
     Translation{"Registration code is invalid, expired, used, or revoked","등록 코드가 유효하지 않거나 만료·사용·철회되었습니다"},
     Translation{"Device registration timed out","기기 등록 시간이 초과되었습니다"},
     Translation{"Server certificate or public key does not match the trusted server; connection blocked","서버 인증서 또는 공개키가 신뢰 정보와 달라 연결을 차단했습니다"},

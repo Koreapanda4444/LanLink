@@ -27,7 +27,7 @@ private:
     const ServiceHooks& hooks_;
     client::ProfileStore profiles_;
     bool managed_=false;
-    struct PendingJoin { std::string profile_id; protocol::ServerInvitation invitation; };
+    struct PendingJoin { std::string profile_id; protocol::ServerInvitation invitation; unsigned attempts=0; std::chrono::steady_clock::time_point retry_at{}; };
     std::optional<PendingJoin> pending_join_;
     std::string notice_,result_id_;
     void enroll_locked(std::string_view id,std::string_view code,std::string_view label);

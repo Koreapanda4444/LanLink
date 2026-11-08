@@ -64,17 +64,21 @@ public:
                 ImGui::TextWrapped("%s",t("Leave blank to keep a saved credential. Never enter the operator's master token.","비워 두면 저장된 인증 정보가 유지됩니다. 운영자의 관리용 토큰을 입력하지 마세요."));
             }
             ImGui::BeginDisabled(state.busy || port_<1 || port_>65535 || (pin_[0] && !trust_));
-            if(ImGui::Button(t("Save server","서버 저장")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::save;r.profile={editing_,name_.data(),host_.data(),static_cast<std::uint16_t>(port_),pin_.data()};r.credential=credential_.data();saved_generation_=state.server_operation_generation;await_saved_=editing_.empty();send(r);credential_.fill(0);ImGui::CloseCurrentPopup();});
+            if(ImGui::Button(t("Save server","서버 저장")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::save;r.profile={editing_,name_.data(),host_.data(),static_cast<std::uint16_t>(port_),pin_.data()};r.credential=credential_.data();protocol::validate_server_profile(r.profile);saved_generation_=state.server_operation_generation;await_saved_=editing_.empty();send(r);credential_.fill(0);ImGui::CloseCurrentPopup();});
             ImGui::EndDisabled();
+            bool saved=false;
+            if(state.servers && credential_[0]==0)for(const auto& p:state.servers->profiles)
+                if(p.id==editing_)saved=p.name==name_.data() && p.host==host_.data() && p.port==port_ && p.public_key_pin==pin_.data();
+            if(!saved)ImGui::TextWrapped("%s",t("Save changes before registering or connecting.","기기를 등록하거나 연결하기 전에 변경 내용을 저장하세요."));
             ImGui::SeparatorText(t("Register this device","이 기기 등록"));
             ImGui::TextWrapped("%s",t("Save the server first, then use a one-use code from its operator.","서버를 먼저 저장한 뒤 운영자가 발급한 일회용 등록 코드를 입력하세요."));
             ImGui::InputText(t("Registration code","등록 코드"),code_.data(),code_.size(),ImGuiInputTextFlags_Password);
             ImGui::InputText(t("Device label","기기 이름"),label_.data(),label_.size());
-            ImGui::BeginDisabled(state.busy || editing_.empty() || !code_[0] || !label_[0]);
+            ImGui::BeginDisabled(state.busy || !saved || editing_.empty() || !code_[0] || !label_[0]);
             if(ImGui::Button(t("Register device","기기 등록")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::enroll;r.profile.id=editing_;r.registration_code=code_.data();r.device_label=label_.data();send(r);code_.fill(0);});
             ImGui::EndDisabled();
             bool registered=false;if(state.servers)for(const auto& p:state.servers->profiles)if(p.id==editing_)registered=p.has_credential;
-            ImGui::BeginDisabled(state.busy || !registered);
+            ImGui::BeginDisabled(state.busy || !saved || !registered);
             if(ImGui::Button(t("Connect to saved server","저장한 서버에 연결")))safely([&]{protocol::ServerRequest r;r.action=protocol::ServerAction::connect;r.profile.id=editing_;send(r);ImGui::CloseCurrentPopup();});
             ImGui::EndDisabled();
             ImGui::BeginDisabled(state.busy || editing_.empty());
@@ -88,15 +92,22 @@ public:
         }
         if(review_){ImGui::OpenPopup("Invitation##server");review_=false;}
         if(ImGui::BeginPopupModal("Invitation##server",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted(t("Review server and network invitation","서버 및 네트워크 초대 확인"));
-            ImGui::TextWrapped("%s\n%s:%u",target_.server.name.c_str(),target_.server.host.c_str(),target_.server.port);
-            ImGui::TextWrapped("%s: %s",t("Server public key","서버 공개키"),target_.server.public_key_pin.empty()?t("Normal certificate validation","일반 인증서 검증"):target_.server.public_key_pin.c_str());
-            if(!target_.server.public_key_pin.empty())ImGui::Checkbox(t("I verified this server fingerprint","서버 공개키 지문을 확인했습니다"),&trust_);
-            ImGui::Checkbox(t("Approve switching to this server","이 서버로 연결 전환 승인"),&switch_);
+            if(legacy_) {
+                ImGui::TextUnformatted(t("Review network invitation","네트워크 초대 확인"));
+                ImGui::TextUnformatted(t("Join using the currently connected server.","현재 연결된 서버에서 네트워크에 가입합니다."));
+                if(state.servers)for(const auto& p:state.servers->profiles)if(p.id==state.servers->selected_id)
+                    ImGui::TextWrapped("%s / %s:%u",p.name.c_str(),p.host.c_str(),p.port);
+            } else {
+                ImGui::TextUnformatted(t("Review server and network invitation","서버 및 네트워크 초대 확인"));
+                ImGui::TextWrapped("%s\n%s:%u",target_.server.name.c_str(),target_.server.host.c_str(),target_.server.port);
+                ImGui::TextWrapped("%s: %s",t("Server public key","서버 공개키"),target_.server.public_key_pin.empty()?t("Normal certificate validation","일반 인증서 검증"):target_.server.public_key_pin.c_str());
+                if(!target_.server.public_key_pin.empty())ImGui::Checkbox(t("I verified this server fingerprint","서버 공개키 지문을 확인했습니다"),&trust_);
+                ImGui::Checkbox(t("Approve switching to this server","이 서버로 연결 전환 승인"),&switch_);
+            }
             std::string network;for(auto b:target_.network_id){const auto n=std::to_integer<unsigned>(b);network+="0123456789abcdef"[n>>4];network+="0123456789abcdef"[n&15];}
             ImGui::TextWrapped("%s: %s",t("Target network","대상 네트워크"),network==std::string(32,'0')?t("None","없음"):network.c_str());
             ImGui::TextUnformatted(t("Network access still requires the network owner's permission.","네트워크 가입에는 해당 네트워크의 권한이 필요합니다."));
-            ImGui::BeginDisabled(!state.servers || state.busy || (!target_.server.public_key_pin.empty() && !trust_) || !switch_);
+            ImGui::BeginDisabled(state.busy || (legacy_ ? (!state.service_online || !state.diagnostics || !state.diagnostics->authenticated) : (!state.servers || (!target_.server.public_key_pin.empty() && !trust_) || !switch_)));
             if(ImGui::Button(t("Accept invitation","초대 수락")))safely([&]{if(legacy_){const auto q=protocol::join_network_command(invitation_,"");model.submit(q.command,q.payload);invitation_.clear();ImGui::CloseCurrentPopup();return;}protocol::ServerRequest r;r.action=protocol::ServerAction::accept_invitation;r.expected_epoch=state.servers->connection_epoch;r.invitation_uri=invitation_;r.approve_server_switch=switch_;r.trust_invitation_pin=trust_;r.device_label=label_[0]?label_.data():"LanLink device";send(r);invitation_.clear();uri_.fill(0);ImGui::CloseCurrentPopup();});
             ImGui::EndDisabled();ImGui::SameLine();if(ImGui::Button(t("Cancel","취소"))){invitation_.clear();uri_.fill(0);ImGui::CloseCurrentPopup();}
             ImGui::EndPopup();

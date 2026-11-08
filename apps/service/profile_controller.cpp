@@ -43,6 +43,7 @@ protocol::ServerState ProfileController::server_request(const protocol::ServerRe
         if(id.empty())id=profiles_.save(invitation.server);
         if(!profiles_.get(id).profile.has_credential && !invitation.registration_code.empty())enroll_locked(id,invitation.registration_code,q.device_label.empty()?"Invited device":q.device_label);
         profiles_.select(id);managed_=true;result_id_=id;
+        pending_join_.reset();
         if(std::any_of(invitation.network_id.begin(),invitation.network_id.end(),[](auto b){return b!=std::byte{0};}))pending_join_=PendingJoin{id,std::move(invitation)};
         notice_=profiles_.get(id).profile.has_credential?"Connecting to the invited server":"Device registration required";
         break;
@@ -66,11 +67,27 @@ void ProfileController::join_pending(transport::QuicRelayClient& client) {
     if(selected!=pending_join_->profile_id){pending_join_.reset();return;}
     const auto p=profiles_.get(selected).profile;const auto& target=pending_join_->invitation.server;
     if(p.host!=target.host || p.port!=target.port || p.public_key_pin!=target.public_key_pin){pending_join_.reset();return;}
-    auto invitation=std::move(pending_join_->invitation);pending_join_.reset();
-    protocol::NetworkResultCode code;
-    if(invitation.network_invitation.empty())code=client.join_network(invitation.network_id).code;
-    else {protocol::AccessRequest request;request.action=protocol::AccessAction::invite_redeem;request.network_id=invitation.network_id;request.secret=invitation.network_invitation;code=client.access_request(request).code;}
-    notice_=code==protocol::NetworkResultCode::success?"Joined invited network":code==protocol::NetworkResultCode::pending_approval?"Waiting for network owner approval":"Network invitation rejected or expired";
+    if(std::chrono::steady_clock::now()<pending_join_->retry_at)return;
+    try {
+        const auto& invitation=pending_join_->invitation;
+        // A successful one-use redemption can lose its reply during a disconnect.
+        // Reconcile membership before retrying so the code is not redeemed twice.
+        if(pending_join_->attempts) {
+            const auto joined=client.list_networks();
+            if(joined.code!=protocol::NetworkResultCode::success)throw std::runtime_error("Cannot confirm invited network membership");
+            if(std::any_of(joined.result.networks.begin(),joined.result.networks.end(),[&](const auto& n){return n.network_id==invitation.network_id;})) {
+                notice_="Joined invited network";pending_join_.reset();return;
+            }
+        }
+        protocol::NetworkResultCode code;
+        if(invitation.network_invitation.empty())code=client.join_network(invitation.network_id).code;
+        else {protocol::AccessRequest request;request.action=protocol::AccessAction::invite_redeem;request.network_id=invitation.network_id;request.secret=invitation.network_invitation;code=client.access_request(request).code;}
+        notice_=code==protocol::NetworkResultCode::success?"Joined invited network":code==protocol::NetworkResultCode::pending_approval?"Waiting for network owner approval":"Network invitation rejected or expired";
+        pending_join_.reset();
+    }catch(const std::exception&) {
+        if(++pending_join_->attempts>=3){notice_="Network join interrupted. Review the invitation to try again.";pending_join_.reset();}
+        else {notice_="Network join interrupted. Retrying after reconnect.";pending_join_->retry_at=std::chrono::steady_clock::now()+std::chrono::seconds(pending_join_->attempts);}
+    }
 }
 protocol::LocalMessage ProfileController::dispatch(const protocol::LocalMessage& input) {
     namespace p=protocol;
