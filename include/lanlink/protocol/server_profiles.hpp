@@ -19,7 +19,7 @@ struct ServerRequest {
     std::string credential, registration_code, device_label;
 };
 struct ServerState {
-    std::uint64_t revision = 0;
+    std::uint64_t revision = 0, connection_epoch = 0;
     std::string selected_id;
     std::vector<ServerProfile> profiles;
     bool operator==(const ServerState&) const = default;

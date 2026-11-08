@@ -16,14 +16,14 @@ ProfileStore::ProfileStore(std::filesystem::path directory):directory_(std::move
     const auto data=auth::detail::read_private_blob(file);protocol::BinaryReader r(data);
     if(r.get<std::uint32_t>()!=0x4c4c5031)throw std::runtime_error("Invalid server profile store");
     const auto n=r.get<std::uint32_t>();const auto state=protocol::decode_server_state(r.bytes(n));
-    revision_=state.revision;selected_=state.selected_id;
+    revision_=state.revision;epoch_=state.connection_epoch;selected_=state.selected_id;
     for(auto profile:state.profiles){auto identity=get_text(r),credential=get_text(r);if(!identifier(identity) || (!credential.empty()&&!identifier(credential)))throw std::runtime_error("Invalid profile credential reference");auto id=profile.id;profiles_.emplace(id,StoredProfile{std::move(profile),std::move(identity),std::move(credential)});}
     r.finish();
 }
-protocol::ServerState ProfileStore::state()const {protocol::ServerState s;s.revision=revision_;s.selected_id=selected_;for(const auto& [id,p]:profiles_){static_cast<void>(id);s.profiles.push_back(p.profile);}return s;}
-void ProfileStore::persist(const std::map<std::string,StoredProfile>& profiles,std::string_view selected,std::uint64_t revision) {
+protocol::ServerState ProfileStore::state()const {protocol::ServerState s;s.revision=revision_;s.connection_epoch=epoch_;s.selected_id=selected_;for(const auto& [id,p]:profiles_){static_cast<void>(id);s.profiles.push_back(p.profile);}return s;}
+void ProfileStore::persist(const std::map<std::string,StoredProfile>& profiles,std::string_view selected,std::uint64_t revision,std::uint64_t epoch) {
     if(revision==std::numeric_limits<std::uint64_t>::max())throw std::runtime_error("Profile revision exhausted");
-    protocol::ServerState s;s.revision=revision;s.selected_id=selected;for(const auto& [id,p]:profiles){static_cast<void>(id);s.profiles.push_back(p.profile);}
+    protocol::ServerState s;s.revision=revision;s.connection_epoch=epoch;s.selected_id=selected;for(const auto& [id,p]:profiles){static_cast<void>(id);s.profiles.push_back(p.profile);}
     const auto encoded=protocol::encode_server_state(s);protocol::BinaryWriter w;w.put<std::uint32_t>(0x4c4c5031);w.put<std::uint32_t>(static_cast<std::uint32_t>(encoded.size()));w.append(encoded);
     for(const auto& [id,p]:profiles){static_cast<void>(id);put(w,p.identity);put(w,p.credential);}
     auth::detail::write_private_blob(directory_/"servers.state",std::move(w).finish());
@@ -46,12 +46,15 @@ std::string ProfileStore::save(protocol::ServerProfile p,std::string_view creden
             record.credential=auth::random_access_code();created=directory_/p.id/(record.credential+".credential");
             auth::AuthToken::store_credential(created,credential);
         }
-        record.profile.has_credential=!record.credential.empty();next[p.id]=record;
-        persist(next,selected_,revision_+1);profiles_=std::move(next);++revision_;
+        record.profile.has_credential=!record.credential.empty();
+        const bool changes_connection=selected_==p.id && (previous==next.end() || previous->second.identity!=record.identity || previous->second.credential!=record.credential);
+        next[p.id]=record;
+        const auto epoch=epoch_+(changes_connection?1U:0U);
+        persist(next,selected_,revision_+1,epoch);profiles_=std::move(next);++revision_;epoch_=epoch;
     }catch(...){if(!created.empty()){std::error_code ignored;std::filesystem::remove(created,ignored);}throw;}
     return p.id;
 }
 void ProfileStore::save_device_credential(std::string_view id,std::string_view secret){static_cast<void>(save(get(id).profile,secret));}
-void ProfileStore::erase(std::string_view id){static_cast<void>(get(id));auto next=profiles_;next.erase(std::string(id));auto selected=selected_==id?std::string{}:selected_;persist(next,selected,revision_+1);profiles_=std::move(next);selected_=selected;++revision_;std::error_code ignored;std::filesystem::remove_all(directory_/std::string(id),ignored);}
-void ProfileStore::select(std::string_view id){if(!id.empty())static_cast<void>(get(id));persist(profiles_,id,revision_+1);selected_=id;++revision_;}
+void ProfileStore::erase(std::string_view id){static_cast<void>(get(id));auto next=profiles_;next.erase(std::string(id));auto selected=selected_==id?std::string{}:selected_;const auto epoch=epoch_+(selected_==id?1U:0U);persist(next,selected,revision_+1,epoch);profiles_=std::move(next);selected_=selected;++revision_;epoch_=epoch;std::error_code ignored;std::filesystem::remove_all(directory_/std::string(id),ignored);}
+void ProfileStore::select(std::string_view id){if(!id.empty())static_cast<void>(get(id));persist(profiles_,id,revision_+1,epoch_+1);selected_=id;++revision_;++epoch_;}
 }
