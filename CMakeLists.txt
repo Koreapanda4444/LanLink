@@ -304,7 +304,7 @@ if(WIN32)
     lanlink_enable_warnings(lanlink_local_ipc)
 
     add_library(lanlink_client_runtime STATIC apps/service/client_runtime.cpp apps/service/profile_controller.cpp src/platform/windows_adapter.cpp)
-    target_link_libraries(lanlink_client_runtime PUBLIC lanlink_storage lanlink_session lanlink_local_ipc)
+    target_link_libraries(lanlink_client_runtime PUBLIC lanlink_storage lanlink_session lanlink_local_ipc PRIVATE OpenSSL::Crypto)
     lanlink_enable_warnings(lanlink_client_runtime)
 
     add_executable(lanlink_service
@@ -339,7 +339,7 @@ if(UNIX)
     target_link_libraries(lanlink_local_ipc PUBLIC lanlink_protocol Threads::Threads)
     lanlink_enable_warnings(lanlink_local_ipc)
     add_library(lanlink_client_runtime STATIC apps/service/client_runtime.cpp apps/service/profile_controller.cpp src/platform/posix_adapter.cpp)
-    target_link_libraries(lanlink_client_runtime PUBLIC lanlink_storage lanlink_session lanlink_local_ipc lanlink_native_tun)
+    target_link_libraries(lanlink_client_runtime PUBLIC lanlink_storage lanlink_session lanlink_local_ipc lanlink_native_tun PRIVATE OpenSSL::Crypto)
     lanlink_enable_warnings(lanlink_client_runtime)
     add_executable(lanlink_service apps/service/posix_main.cpp)
     target_link_libraries(lanlink_service PRIVATE lanlink_client_runtime)
