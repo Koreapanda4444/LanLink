@@ -107,8 +107,9 @@ int main(int argc,char* argv[]) {
         desktop.context=SDL_GL_CreateContext(desktop.window);if(!desktop.context)throw std::runtime_error(SDL_GetError());
         SDL_GL_MakeCurrent(desktop.window,desktop.context);SDL_GL_SetSwapInterval(1);
         IMGUI_CHECKVERSION();ImGui::CreateContext();desktop.imgui=true;lanlink::ui::configure_desktop_style();
+        float font_density=SDL_GetWindowPixelDensity(desktop.window);
         for(const auto* name:{"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc","/System/Library/Fonts/AppleSDGothicNeo.ttc"})if(std::filesystem::is_regular_file(name)) {
-            lanlink::ui::design::load_fonts(name,name);break;
+            lanlink::ui::design::load_fonts(name,name,font_density);break;
         }
         if(!ImGui_ImplSDL3_InitForOpenGL(desktop.window,desktop.context))throw std::runtime_error("SDL desktop initialization failed");desktop.platform=true;
         if(!ImGui_ImplOpenGL3_Init("#version 150"))throw std::runtime_error("OpenGL desktop initialization failed");desktop.renderer=true;
@@ -118,6 +119,17 @@ int main(int argc,char* argv[]) {
         const auto opened=std::chrono::steady_clock::now();bool running=true;
         while(running) {
             SDL_Event event;while(SDL_PollEvent(&event)) {ImGui_ImplSDL3_ProcessEvent(&event);if(event.type==SDL_EVENT_DROP_FILE && event.drop.data && std::string_view(event.drop.data).starts_with("lanlink://"))view.attempt([&]{view.open_invitation(event.drop.data);});if(event.type==SDL_EVENT_QUIT || (event.type==SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID==SDL_GetWindowID(desktop.window)))running=false;}
+            const auto density=SDL_GetWindowPixelDensity(desktop.window);
+            if(std::abs(density-font_density)>.001f) {
+                font_density=density;
+                auto& io=ImGui::GetIO();io.FontDefault=nullptr;io.Fonts->Clear();
+                lanlink::ui::design::emphasis_font=nullptr;lanlink::ui::design::title_font=nullptr;
+                for(const auto* name:{"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc","/System/Library/Fonts/AppleSDGothicNeo.ttc"})if(std::filesystem::is_regular_file(name)) {
+                    lanlink::ui::design::load_fonts(name,name,font_density);break;
+                }
+                if(io.Fonts->Fonts.empty())io.Fonts->AddFontDefault();
+                ImGui_ImplOpenGL3_DestroyFontsTexture();
+            }
             ImGui_ImplOpenGL3_NewFrame();ImGui_ImplSDL3_NewFrame();ImGui::NewFrame();view.render();ImGui::Render();
             int width=0,height=0;SDL_GetWindowSizeInPixels(desktop.window,&width,&height);glViewport(0,0,width,height);glClearColor(0.08f,0.1f,0.14f,1);glClear(GL_COLOR_BUFFER_BIT);ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             if(!screenshot.empty() && std::chrono::steady_clock::now()-opened>std::chrono::seconds{4}){desktop.capture(screenshot,width,height);break;}

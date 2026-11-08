@@ -70,58 +70,67 @@ std::string format_bytes(const std::uint64_t bytes) {
 }
 
 }
-inline void configure_desktop_style() {
-    ImGui::StyleColorsLight();
+inline void configure_desktop_style(float scale=1) {
+    design::dpi_scale=scale;
+    ImGui::GetStyle()=ImGuiStyle{};
+    ImGui::StyleColorsDark();
     ImGui::GetIO().IniFilename = nullptr;
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     auto& style = ImGui::GetStyle();
-    style.WindowPadding = ImVec2(10, 10);
-    style.FramePadding = ImVec2(7, 4);
-    style.ItemSpacing = ImVec2(6, 7);
-    style.CellPadding = ImVec2(5, 6);
+    style.WindowPadding = ImVec2(14, 12);
+    style.FramePadding = ImVec2(10, 7);
+    style.ItemSpacing = ImVec2(8, 9);
+    style.CellPadding = ImVec2(7, 9);
     style.WindowRounding = 0;
-    style.ChildRounding = 0;
-    style.FrameRounding = 1;
-    style.PopupRounding = 0;
+    style.ChildRounding = 3;
+    style.FrameRounding = 3;
+    style.PopupRounding = 4;
     style.FrameBorderSize = 1;
     style.WindowBorderSize = 1;
     style.PopupBorderSize = 1;
-    style.ScrollbarSize = 14;
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(.94f,.94f,.94f,1);
-    style.Colors[ImGuiCol_ChildBg] = ImVec4(1,1,1,1);
-    style.Colors[ImGuiCol_PopupBg] = ImVec4(.97f,.97f,.97f,1);
-    style.Colors[ImGuiCol_Text] = ImVec4(.10f,.10f,.10f,1);
-    style.Colors[ImGuiCol_TextDisabled] = ImVec4(.43f,.43f,.43f,1);
-    style.Colors[ImGuiCol_Border] = ImVec4(.68f,.68f,.68f,1);
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(1,1,1,1);
-    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(.97f,.98f,.99f,1);
-    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(1,1,1,1);
-    style.Colors[ImGuiCol_Button] = ImVec4(.96f,.96f,.96f,1);
-    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(.88f,.92f,.97f,1);
-    style.Colors[ImGuiCol_ButtonActive] = ImVec4(.80f,.87f,.95f,1);
-    style.Colors[ImGuiCol_Header] = ImVec4(.90f,.92f,.95f,1);
-    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(.84f,.90f,.97f,1);
-    style.Colors[ImGuiCol_HeaderActive] = ImVec4(.76f,.85f,.96f,1);
-    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(.94f,.94f,.94f,1);
-    style.Colors[ImGuiCol_TitleBg] = ImVec4(.94f,.94f,.94f,1);
-    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(.94f,.94f,.94f,1);
-    style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(.94f,.94f,.94f,1);
-    style.Colors[ImGuiCol_TableRowBg] = ImVec4(1,1,1,1);
-    style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(1,1,1,1);
-    style.Colors[ImGuiCol_TableBorderLight] = ImVec4(.86f,.86f,.86f,1);
-    style.Colors[ImGuiCol_Separator] = ImVec4(.76f,.76f,.76f,1);
-    style.Colors[ImGuiCol_Tab] = ImVec4(.94f,.94f,.94f,1);
-    style.Colors[ImGuiCol_TabHovered] = ImVec4(.87f,.91f,.96f,1);
-    style.Colors[ImGuiCol_TabSelected] = ImVec4(1,1,1,1);
+    style.ScrollbarSize = 12;
+    style.ScrollbarRounding = 3;
+    style.Colors[ImGuiCol_WindowBg] = design::surface;
+    style.Colors[ImGuiCol_ChildBg] = ImVec4(.055f,.075f,.115f,1);
+    style.Colors[ImGuiCol_PopupBg] = ImVec4(.09f,.12f,.18f,1);
+    style.Colors[ImGuiCol_Text] = design::ink;
+    style.Colors[ImGuiCol_TextDisabled] = design::muted;
+    style.Colors[ImGuiCol_Border] = design::border;
+    style.Colors[ImGuiCol_FrameBg] = ImVec4(.045f,.065f,.10f,1);
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(.10f,.16f,.24f,1);
+    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(.11f,.20f,.31f,1);
+    style.Colors[ImGuiCol_Button] = ImVec4(.12f,.20f,.30f,1);
+    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(.13f,.30f,.46f,1);
+    style.Colors[ImGuiCol_ButtonActive] = ImVec4(.07f,.36f,.58f,1);
+    style.Colors[ImGuiCol_Header] = ImVec4(.09f,.24f,.38f,1);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(.10f,.31f,.48f,1);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(.08f,.38f,.60f,1);
+    style.Colors[ImGuiCol_MenuBarBg] = ImVec4(.055f,.075f,.115f,1);
+    style.Colors[ImGuiCol_TitleBg] = ImVec4(.055f,.075f,.115f,1);
+    style.Colors[ImGuiCol_TitleBgActive] = design::raised;
+    style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(.10f,.14f,.21f,1);
+    style.Colors[ImGuiCol_TableRowBg] = ImVec4(.055f,.075f,.115f,1);
+    style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(.07f,.095f,.14f,1);
+    style.Colors[ImGuiCol_TableBorderLight] = design::border;
+    style.Colors[ImGuiCol_Separator] = design::border;
+    style.Colors[ImGuiCol_Tab] = design::surface;
+    style.Colors[ImGuiCol_TabHovered] = ImVec4(.12f,.27f,.42f,1);
+    style.Colors[ImGuiCol_TabSelected] = design::raised;
     style.Colors[ImGuiCol_TabSelectedOverline] = design::accent;
-    style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(.1f,.1f,.1f,.16f);
-    style.Colors[ImGuiCol_CheckMark] = ImVec4(.15f,.32f,.60f,1);
-
+    style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(.055f,.075f,.115f,1);
+    style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(.20f,.29f,.40f,1);
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(.26f,.38f,.52f,1);
+    style.Colors[ImGuiCol_CheckMark] = design::accent;
+    style.Colors[ImGuiCol_SliderGrab] = design::accent;
+    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(.25f,.76f,1,1);
+    style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(.08f,.40f,.68f,.65f);
+    style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0,0,0,.55f);
+    style.ScaleAllSizes(scale);
 }
 inline void prepare_desktop_popup(float width = 520) {
     const auto available = ImGui::GetMainViewport()->WorkSize;
-    width = (std::min)(width, (std::max)(240.0f, available.x - 24));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, (std::max)(200.0f, available.y - 24)));
+    width = (std::min)(design::px(width), (std::max)(design::px(240), available.x - design::px(24)));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, (std::max)(design::px(200), available.y - design::px(24))));
     const auto origin=ImGui::GetMainViewport()->WorkPos;
     ImGui::SetNextWindowPos(ImVec2(origin.x+available.x*.5f,origin.y+available.y*.5f),ImGuiCond_Always,ImVec2(.5f,.5f));
 }
@@ -270,8 +279,24 @@ public:
             if(!active && !state.servers->profiles.empty())active=&state.servers->profiles.front();
         }
         const bool connection_requested=state.servers && !state.servers->selected_id.empty();
-        ImGui::AlignTextToFramePadding();ImGui::TextUnformatted(tr("Server"));ImGui::SameLine();
-        ImGui::SetNextItemWidth((std::max)(100.0f,ImGui::GetContentRegionAvail().x-88));
+        const auto top=ImGui::GetCursorScreenPos();
+        const auto strip_width=ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddRectFilled(top,ImVec2(top.x+strip_width,top.y+design::px(106)),
+            ImGui::GetColorU32(design::raised),design::px(3));
+        ImGui::SetCursorScreenPos(ImVec2(top.x+design::px(12),top.y+design::px(12)));
+        if(logo_)ImGui::Image(logo_,design::size(36,36));
+        else ImGui::Dummy(design::size(36,36));
+        ImGui::SameLine(0,design::px(10));
+        ImGui::BeginGroup();
+        design::emphasis("LanLink");
+        design::status(connected?tr("Connected"):connection_error?tr("Connection error"):
+            !state.service_online?tr("Service unavailable"):connection_requested?tr("Connecting"):tr("Disconnected"),connected,connection_error);
+        ImGui::EndGroup();
+        if(!state.service_online) {
+            ImGui::SameLine();if(ImGui::SmallButton(tr("Retry")))attempt([&]{start_service_();next_diagnostics_={};});
+        }
+        ImGui::SetCursorScreenPos(ImVec2(top.x+design::px(12),top.y+design::px(62)));
+        ImGui::SetNextItemWidth(strip_width-design::px(112));
         if(ImGui::BeginCombo("##active-server",active?active->name.c_str():tr("Select server"))) {
             if(state.servers)for(const auto& p:state.servers->profiles) {
                 ImGui::PushID(p.id.c_str());ImGui::BeginDisabled(state.busy);
@@ -290,19 +315,14 @@ public:
         }
         if(active && ImGui::IsItemHovered())ImGui::SetTooltip("%s:%u",active->host.c_str(),active->port);
         ImGui::SameLine();ImGui::BeginDisabled(state.busy || !active);
-        if(ImGui::Button(tr(connection_requested?"Disconnect":"Connect"),ImVec2(80,0)))attempt([&]{
+        if(design::button(tr(connection_requested?"Disconnect":"Connect"),ImVec2(80,0),!connection_requested))attempt([&]{
             if(!connection_requested && active && !active->has_credential){servers_.edit_server(*active);return;}
             protocol::ServerRequest request;request.action=connection_requested?protocol::ServerAction::disconnect:protocol::ServerAction::connect;
             if(active)request.profile.id=active->id;
             networks_.submit(protocol::LocalCommand::server_profiles,protocol::encode_server_request(request));
         });
         ImGui::EndDisabled();
-        ImGui::TextUnformatted(connected?tr("Connected"):connection_error?tr("Connection error"):
-            !state.service_online?tr("Service unavailable"):connection_requested?tr("Connecting"):tr("Disconnected"));
-        if(!state.service_online) {
-            ImGui::SameLine();if(ImGui::SmallButton(tr("Retry")))attempt([&]{start_service_();next_diagnostics_={};});
-        }
-        ImGui::Separator();
+        ImGui::SetCursorScreenPos(ImVec2(top.x,top.y+design::px(120)));
         if (!selected_ && !state.networks.empty()) {
             selected_ = state.networks.front().network_id;
             attempt([&] { networks_.submit(protocol::LocalCommand::peers,
@@ -310,7 +330,7 @@ public:
         }
         const auto selected = std::find_if(state.networks.begin(), state.networks.end(),
             [&](const auto& network) { return selected_ && network.network_id == *selected_; });
-        ImGui::AlignTextToFramePadding();ImGui::TextUnformatted(tr("Network"));
+        ImGui::AlignTextToFramePadding();design::emphasis(tr("Network"));
         if(!state.networks.empty()) {
             ImGui::SameLine();ImGui::SetNextItemWidth(-1);
             if(ImGui::BeginCombo("##networks",selected!=state.networks.end()?selected->name.c_str():tr("Your networks"))) {
@@ -325,12 +345,12 @@ public:
             if (selected == state.networks.end()) {
                 ImGui::TextDisabled("%s",!state.service_online?tr("Service unavailable"):!connected?tr("No server connected"):tr("No networks yet"));
                 if(state.service_online && !connected) {
-                    if(ImGui::Button(tr("Add server")))servers_.add_server();
-                    ImGui::SameLine();if(ImGui::Button(tr("Use invitation")))servers_.paste_invitation();
+                    if(design::button(tr("Add server"),ImVec2(0,32),true))servers_.add_server();
+                    ImGui::SameLine();if(design::button(tr("Use invitation"),ImVec2(0,32)))servers_.paste_invitation();
                 } else if(connected) {
                     ImGui::BeginDisabled(state.busy);
-                    if(ImGui::Button(tr("Create network")))create_dialog_=true;
-                    ImGui::SameLine();if(ImGui::Button(tr("Join network")))join_dialog_=true;
+                    if(design::button(tr("Create network"),ImVec2(0,32),true))create_dialog_=true;
+                    ImGui::SameLine();if(design::button(tr("Join network"),ImVec2(0,32)))join_dialog_=true;
                     ImGui::EndDisabled();
                 }
 
@@ -345,8 +365,8 @@ public:
                     const auto own = ipv4(peers.own_address);
                     const auto* current_paths=state.paths && now-state.paths_updated_at<std::chrono::seconds(6) ? &*state.paths : nullptr;
                     const auto overview=protocol::network_overview(peers,current_paths,connected,state.activity.device_id);
-                    ImGui::AlignTextToFramePadding();ImGui::TextDisabled("%s",tr("My virtual IP"));ImGui::SameLine(0,12);
-                    design::emphasis(own.c_str());ImGui::SameLine(0,8);
+                    ImGui::AlignTextToFramePadding();ImGui::TextDisabled("%s",tr("My virtual IP"));ImGui::SameLine(0,design::px(12));
+                    design::emphasis(own.c_str());ImGui::SameLine(0,design::px(8));
                     if(ImGui::SmallButton(tr("Copy IP")))ImGui::SetClipboardText(own.c_str());
                     ImGui::Spacing();
                     design::emphasis(tr("Devices"));ImGui::SameLine();
@@ -355,9 +375,9 @@ public:
 
                     if (ImGui::BeginTable("devices", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
                         ImGui::TableSetupColumn(tr("Device"));
-                        ImGui::TableSetupColumn(tr("Virtual IP"),ImGuiTableColumnFlags_WidthFixed,110);
-                        ImGui::TableSetupColumn(tr("Status"),ImGuiTableColumnFlags_WidthFixed,60);
-                        ImGui::TableSetupColumn(tr("Path"),ImGuiTableColumnFlags_WidthFixed,85);
+                        ImGui::TableSetupColumn(tr("Virtual IP"),ImGuiTableColumnFlags_WidthFixed,design::px(110));
+                        ImGui::TableSetupColumn(tr("Status"),ImGuiTableColumnFlags_WidthFixed,design::px(60));
+                        ImGui::TableSetupColumn(tr("Path"),ImGuiTableColumnFlags_WidthFixed,design::px(85));
                         ImGui::TableHeadersRow();
                         const auto row = [&](const protocol::NetworkDeviceId& device_id, std::uint32_t address, bool online, bool own_device) {
                             const auto device_text = hex_id(device_id);
@@ -390,7 +410,7 @@ public:
                             const auto kind=path && path->path.lifecycle==protocol::PathLifecycle::authenticated ? path->path.kind : protocol::PathKind::none;
                             const bool blocked=!own_device && peers.policy && !protocol::policy_allows(*peers.policy,state.activity.device_id,device_id);
                             const char* label=blocked?tr("Blocked"):own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
-                            ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.10f,.48f,.32f,1):ImVec4(.25f,.35f,.48f,1),"%s",label);
+                            ImGui::TextColored(kind==protocol::PathKind::direct_quic?design::green:design::muted,"%s",label);
                             if(blocked && ImGui::IsItemHovered())ImGui::SetTooltip("%s",tr("Blocked by policy"));
                             if(!blocked && path && ImGui::IsItemHovered()) {
                                 ImGui::BeginTooltip();ImGui::TextUnformatted(tr(protocol::path_reason_name(path->path.reason).data()));

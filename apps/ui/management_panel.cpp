@@ -1,4 +1,5 @@
 #include "management_panel.hpp"
+#include "design.hpp"
 #include <imgui.h>
 #include <algorithm>
 #include <ctime>
@@ -26,7 +27,7 @@ void ManagementPanel::draw(NetworkModel& model,const NetworkSnapshot& state,cons
     if(ImGui::Button(tr("Network management")))open_=true;
     if(open_){ImGui::OpenPopup("Network management###management");open_=false;refresh_={};}
     const auto size=ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowSize(ImVec2((std::min)(820.0f,size.x-40),(std::min)(650.0f,size.y-60)),ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2((std::min)(design::px(820),size.x-design::px(40)),(std::min)(design::px(650),size.y-design::px(60))),ImGuiCond_FirstUseEver);
     const auto title=std::string(tr("Network management"))+"###management";
     if(!ImGui::BeginPopupModal(title.c_str(),nullptr,ImGuiWindowFlags_NoSavedSettings))return;
     if(network_!=selected.network_id){network_=selected.network_id;draft_={};dirty_=false;generation_=0;refresh_={};route_gateway_={};error_.clear();}
@@ -51,7 +52,7 @@ void ManagementPanel::draw(NetworkModel& model,const NetworkSnapshot& state,cons
     const auto subject_combo=[&](const char* id,PolicySubject& subject){if(ImGui::BeginCombo(id,subject_label(subject).c_str())){if(ImGui::Selectable(tr("All members"),subject==PolicySubject{}))subject={};for(const auto& group:std::vector<std::string>{"members"})if(ImGui::Selectable(group.c_str(),subject.group==group))subject={{},group};for(const auto& group:draft_.groups)if(ImGui::Selectable(group.c_str(),subject.group==group))subject={{},group};for(const auto& device:devices)if(ImGui::Selectable(device_label(device).c_str(),subject.device==device))subject={device,{}};ImGui::EndCombo();}};
     const auto group_combo=[&](const char* id,std::string& value,bool any){bool changed=false;if(ImGui::BeginCombo(id,value.empty()?tr("All permitted groups"):value.c_str())){if(any && ImGui::Selectable(tr("All permitted groups"),value.empty())){value.clear();changed=true;}for(const auto& group:std::vector<std::string>{"members"})if(ImGui::Selectable(group.c_str(),value==group)){value=group;changed=true;}for(const auto& group:draft_.groups)if(ImGui::Selectable(group.c_str(),value==group)){value=group;changed=true;}ImGui::EndCombo();}return changed;};
     bool show_preview=false,show_local=false;
-    ImGui::BeginChild("management-body",ImVec2(0,-100),ImGuiChildFlags_Borders);
+    ImGui::BeginChild("management-body",design::size(0,-100),ImGuiChildFlags_Borders);
     if(ImGui::BeginTabBar("management-tabs")) {
         if(ImGui::BeginTabItem(tr("Topology"))) {
             ImGui::TextWrapped("%s",tr("Managed networks use default deny. A matching allow is required; every matching deny takes priority."));
@@ -97,8 +98,8 @@ void ManagementPanel::draw(NetworkModel& model,const NetworkSnapshot& state,cons
                 auto role=policy_role(draft_,d);std::string group(policy_group(draft_,d));bool changed=false;
                 ImGui::BeginDisabled(!owner || d==selected.owner_device_id);
                 const auto role_name=[&](AccessRole r){return r==AccessRole::administrator?tr("Administrator"):r==AccessRole::restricted?tr("Restricted member"):tr("Member");};
-                ImGui::SetNextItemWidth(210);if(ImGui::BeginCombo("##member-role",d==selected.owner_device_id?tr("Owner"):role_name(role))){for(const auto r:{AccessRole::member,AccessRole::administrator,AccessRole::restricted})if(ImGui::Selectable(role_name(r),role==r)){role=r;changed=true;}ImGui::EndCombo();}ImGui::EndDisabled();
-                ImGui::SameLine();ImGui::SetNextItemWidth(200);changed|=group_combo("##member-group",group,false);
+                ImGui::SetNextItemWidth(design::px(210));if(ImGui::BeginCombo("##member-role",d==selected.owner_device_id?tr("Owner"):role_name(role))){for(const auto r:{AccessRole::member,AccessRole::administrator,AccessRole::restricted})if(ImGui::Selectable(role_name(r),role==r)){role=r;changed=true;}ImGui::EndCombo();}ImGui::EndDisabled();
+                ImGui::SameLine();ImGui::SetNextItemWidth(design::px(200));changed|=group_combo("##member-group",group,false);
                 if(changed){auto found=std::find_if(draft_.members.begin(),draft_.members.end(),[&](const auto& m){return m.device==d;});if(found==draft_.members.end())draft_.members.push_back({d,role,group});else{found->role=role;found->group=group;}dirty_=true;}
                 if(owner && std::any_of(draft_.members.begin(),draft_.members.end(),[&](const auto& m){return m.device==d;})){ImGui::SameLine();if(ImGui::SmallButton(tr("Clear assignment"))){std::erase_if(draft_.members,[&](const auto& m){return m.device==d;});dirty_=true;}}
                 ImGui::PopID();

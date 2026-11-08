@@ -102,6 +102,18 @@ public:
             WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, lanlink::ui::design::default_width, lanlink::ui::design::default_height,
             nullptr, nullptr, instance_, this);
         if (!window_) throw std::runtime_error("CreateWindowExW failed");
+        pending_scale_=ImGui_ImplWin32_GetDpiScaleForHwnd(window_);
+        SetWindowPos(window_,nullptr,0,0,
+            static_cast<int>(lanlink::ui::design::default_width*pending_scale_),
+            static_cast<int>(lanlink::ui::design::default_height*pending_scale_),SWP_NOMOVE|SWP_NOZORDER);
+        if(auto library=LoadLibraryExW(L"dwmapi.dll",nullptr,LOAD_LIBRARY_SEARCH_SYSTEM32)) {
+            using SetAttribute=HRESULT(WINAPI*)(HWND,DWORD,LPCVOID,DWORD);
+            if(auto attribute=reinterpret_cast<SetAttribute>(GetProcAddress(library,"DwmSetWindowAttribute"))) {
+                const BOOL dark=TRUE;
+                if(FAILED(attribute(window_,20,&dark,sizeof(dark))))attribute(window_,19,&dark,sizeof(dark));
+            }
+            FreeLibrary(library);
+        }
 
         DXGI_SWAP_CHAIN_DESC description{};
         description.BufferCount = 2;
@@ -131,18 +143,7 @@ public:
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
-        lanlink::ui::configure_desktop_style();
-        wchar_t windows_directory[MAX_PATH]{};
-        if (GetWindowsDirectoryW(windows_directory, MAX_PATH)) {
-            for (const auto* face : {L"malgun.ttf", L"segoeui.ttf", L"arial.ttf"}) {
-                const auto path = std::filesystem::path(windows_directory) / L"Fonts" / face;
-                if (std::filesystem::is_regular_file(path)) {
-                    const auto bold=std::filesystem::path(windows_directory)/L"Fonts"/(std::wstring_view(face)==L"malgun.ttf"?L"malgunbd.ttf":L"seguisb.ttf");
-                    lanlink::ui::design::load_fonts(path,bold);
-                    break;
-                }
-            }
-        }
+        apply_scale();
         if (!ImGui_ImplWin32_Init(window_)) {
             throw std::runtime_error("ImGui Win32 initialization failed");
         }
@@ -175,6 +176,7 @@ public:
                 create_target();
             }
 
+            if(std::abs(pending_scale_-scale_)>.001f)apply_scale();
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
@@ -218,7 +220,15 @@ private:
         }
         if (message == WM_GETMINMAXINFO) {
             auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
-            limits->ptMinTrackSize = POINT{460, 560};
+            const auto dpi=self?self->pending_scale_:1.0f;
+            limits->ptMinTrackSize = POINT{static_cast<LONG>(460*dpi),static_cast<LONG>(560*dpi)};
+            return 0;
+        }
+        if(message==WM_DPICHANGED && self) {
+            self->pending_scale_=static_cast<float>(HIWORD(wparam))/96.0f;
+            const auto* bounds=reinterpret_cast<const RECT*>(lparam);
+            SetWindowPos(window,nullptr,bounds->left,bounds->top,bounds->right-bounds->left,
+                bounds->bottom-bounds->top,SWP_NOZORDER|SWP_NOACTIVATE);
             return 0;
         }
         if (message == WM_SIZE && self && wparam != SIZE_MINIMIZED) {
@@ -230,6 +240,30 @@ private:
             return 0;
         }
         return DefWindowProcW(window, message, wparam, lparam);
+    }
+
+    void apply_scale() {
+        scale_=pending_scale_;
+        if(dx11_ready_)ImGui_ImplDX11_InvalidateDeviceObjects();
+        auto& io=ImGui::GetIO();
+        io.FontDefault=nullptr;
+        io.Fonts->Clear();
+        lanlink::ui::design::emphasis_font=nullptr;
+        lanlink::ui::design::title_font=nullptr;
+        lanlink::ui::configure_desktop_style(scale_);
+        wchar_t windows_directory[MAX_PATH]{};
+        if(GetWindowsDirectoryW(windows_directory,MAX_PATH)) {
+            for(const auto* face:{L"malgun.ttf",L"segoeui.ttf",L"arial.ttf"}) {
+                const auto directory=std::filesystem::path(windows_directory)/L"Fonts";
+                const auto path=directory/face;
+                if(std::filesystem::is_regular_file(path)) {
+                    const auto bold=directory/(std::wstring_view(face)==L"malgun.ttf"?L"malgunbd.ttf":L"seguisb.ttf");
+                    lanlink::ui::design::load_fonts(path,bold);
+                    break;
+                }
+            }
+        }
+        if(io.Fonts->Fonts.empty())io.Fonts->AddFontDefault();
     }
 
     void create_target() {
@@ -328,6 +362,7 @@ private:
     HANDLE desktop_mutex_ = nullptr;
     HINSTANCE instance_;
     HWND window_ = nullptr;
+    float scale_=0, pending_scale_=1;
     bool registered_ = false;
     bool resized_ = false;
     bool win32_ready_ = false;
@@ -345,6 +380,7 @@ private:
 
 int WINAPI wWinMain(const HINSTANCE instance, HINSTANCE, PWSTR, int) {
     std::filesystem::path screenshot;
+    ImGui_ImplWin32_EnableDpiAwareness();
     try {
         require(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED), "COM initialization");
         int count = 0;

@@ -34,8 +34,8 @@ public:
         const auto safely=[&](auto fn){try{fn();error_.clear();}catch(const std::exception& e){error_=e.what();}};
         const auto prepare_popup=[](float width) {
             const auto size=ImGui::GetMainViewport()->WorkSize;
-            width=(std::min)(width,(std::max)(240.0f,size.x-24));
-            ImGui::SetNextWindowSizeConstraints(ImVec2(width,0),ImVec2(width,(std::max)(200.0f,size.y-24)));
+            width=(std::min)(design::px(width),(std::max)(design::px(240),size.x-design::px(24)));
+            ImGui::SetNextWindowSizeConstraints(ImVec2(width,0),ImVec2(width,(std::max)(design::px(200),size.y-design::px(24))));
             const auto origin=ImGui::GetMainViewport()->WorkPos;
             ImGui::SetNextWindowPos(ImVec2(origin.x+size.x*.5f,origin.y+size.y*.5f),ImGuiCond_Always,ImVec2(.5f,.5f));
         };
@@ -55,7 +55,7 @@ public:
         prepare_popup(520);
         bool manager_visible=true;
         if(ImGui::BeginPopupModal(manager_title.c_str(),&manager_visible,ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
-            if(ImGui::BeginChild("server-list",ImVec2(0,180),ImGuiChildFlags_Borders)) {
+            if(ImGui::BeginChild("server-list",design::size(0,180),ImGuiChildFlags_Borders)) {
                 if(state.servers)for(const auto& p:state.servers->profiles) {
                     ImGui::PushID(p.id.c_str());
                     if(ImGui::Selectable(p.name.c_str(),editing_==p.id)) {
