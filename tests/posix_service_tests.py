@@ -123,6 +123,8 @@ with tempfile.TemporaryDirectory(prefix="lanlink-service-") as directory:
                     assert time.monotonic() < deadline, "service startup timed out"
                     time.sleep(0.05)
                 assert len(request(endpoint, 1)) == 8
+                deadline=time.monotonic()+15
+                while not interfaces()-baseline and time.monotonic()<deadline:time.sleep(0.05)
                 assert interfaces() - baseline, "native service did not create a tunnel interface"
                 current_identity = (root / "identity").read_bytes()
                 assert identity is None or identity == current_identity, "service restart changed device identity"

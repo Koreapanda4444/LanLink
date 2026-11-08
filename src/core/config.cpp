@@ -108,6 +108,7 @@ RuntimeConfig parse_config(const std::string_view content) {
                 if(value!="true" && value!="false")fail(line_number,"relay_require_device_registration must be true or false");
                 config.relay_require_device_registration=value=="true";
             }
+            else if(key=="server_public_key_pin")config.server_public_key_pin=value;
             else if (key=="bootstrap_mode") config.bootstrap_mode=value;
             else if(key=="directory_url") config.directory_url=value;
             else if(key=="directory_public_key") config.directory_public_key=value;
@@ -296,6 +297,7 @@ void validate_config(const RuntimeConfig& config) {
        !std::all_of(config.directory_public_key.begin(),config.directory_public_key.end(),[](unsigned char c){return std::isxdigit(c)!=0;}) ||
        config.directory_public_key==std::string(64,'0')))
         throw std::runtime_error("directory bootstrap requires an HTTPS URL and pinned Ed25519 public key");
+    if(!config.server_public_key_pin.empty() && (config.server_public_key_pin.size()!=64 || config.server_public_key_pin.find_first_not_of("0123456789abcdef")!=std::string::npos))throw std::runtime_error("invalid server public key fingerprint");
     if (config.virtual_mtu < 576 || config.virtual_mtu > 9000) throw std::runtime_error("invalid virtual MTU");
     if(!config.p2p_stun_port)throw std::runtime_error("invalid STUN port");
     if(!config.p2p_stun_host.empty()) {

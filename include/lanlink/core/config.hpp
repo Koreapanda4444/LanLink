@@ -23,6 +23,7 @@ struct RuntimeConfig {
     std::uint16_t p2p_stun_port=3478;
     // No client server is selected on a fresh installation.
     std::string relay_host;
+    std::string server_public_key_pin;
     std::uint16_t relay_port = 4433;
     bool relay_require_device_registration = false;
     std::string listen_host = "0.0.0.0";

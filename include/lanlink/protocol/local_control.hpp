@@ -34,6 +34,8 @@ enum class LocalCommand : std::uint8_t {
     user_access = 15,
     network_management = 16,
     routing_options = 17,
+    server_profiles = 18,
+    scoped_request = 19,
 };
 
 struct LocalActivity {
@@ -72,6 +74,9 @@ struct LocalMessage {
 
     bool operator==(const LocalMessage&) const = default;
 };
+
+[[nodiscard]] LocalMessage scope_local_request(std::uint64_t epoch,const LocalMessage& request);
+[[nodiscard]] LocalMessage unwrap_scoped_response(LocalCommand expected,const LocalMessage& response);
 
 [[nodiscard]] std::vector<std::byte> encode_local_message(const LocalMessage& message);
 [[nodiscard]] LocalMessage decode_local_message(std::span<const std::byte> bytes);

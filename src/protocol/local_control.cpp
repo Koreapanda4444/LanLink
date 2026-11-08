@@ -1,4 +1,5 @@
 #include "lanlink/protocol/local_control.hpp"
+#include "lanlink/protocol/binary.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -11,10 +12,19 @@ constexpr std::byte magic[]{std::byte{'L'}, std::byte{'L'},
                             std::byte{'C'}, std::byte{'P'}};
 
 bool valid_command(const LocalCommand command) {
-    return command >= LocalCommand::status && command <= LocalCommand::routing_options;
+    return command >= LocalCommand::status && command <= LocalCommand::scoped_request;
 }
 
 
+}
+
+LocalMessage scope_local_request(std::uint64_t epoch,const LocalMessage& request) {
+    if(request.response || request.error || request.command==LocalCommand::scoped_request || request.command==LocalCommand::server_profiles || request.command==LocalCommand::stop)throw std::invalid_argument("Invalid scoped request");
+    const auto encoded=encode_local_message(request);BinaryWriter w;w.put(epoch);w.put<std::uint32_t>(static_cast<std::uint32_t>(encoded.size()));w.append(encoded);return {LocalCommand::scoped_request,false,false,std::move(w).finish()};
+}
+LocalMessage unwrap_scoped_response(LocalCommand expected,const LocalMessage& response) {
+    if(response.command!=LocalCommand::scoped_request || !response.response || response.error)throw std::runtime_error("Invalid scoped response");
+    auto result=decode_local_message(response.payload);if(result.command!=expected || !result.response || result.error)throw std::runtime_error("Invalid scoped operation response");return result;
 }
 
 std::vector<std::byte> encode_local_activity(const LocalActivity& activity) {

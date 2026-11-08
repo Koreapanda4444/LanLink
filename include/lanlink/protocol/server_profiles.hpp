@@ -12,15 +12,17 @@ struct ServerProfile {
     bool has_credential = false;
     bool operator==(const ServerProfile&) const = default;
 };
-enum class ServerAction : std::uint8_t { list, save, remove, connect, disconnect, enroll };
+enum class ServerAction : std::uint8_t { list, save, remove, connect, disconnect, enroll, accept_invitation };
 struct ServerRequest {
     ServerAction action = ServerAction::list;
     ServerProfile profile;
-    std::string credential, registration_code, device_label;
+    std::string credential, registration_code, device_label, invitation_uri;
+    std::uint64_t expected_epoch = 0;
+    bool approve_server_switch = false, trust_invitation_pin = false;
 };
 struct ServerState {
     std::uint64_t revision = 0, connection_epoch = 0;
-    std::string selected_id;
+    std::string selected_id, result_profile_id, notice;
     std::vector<ServerProfile> profiles;
     bool operator==(const ServerState&) const = default;
 };

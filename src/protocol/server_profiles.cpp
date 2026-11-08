@@ -27,18 +27,18 @@ void validate_server_profile(const ServerProfile& p,bool require_id) {
     if(!p.public_key_pin.empty() && (!hex(p.public_key_pin,64) || p.public_key_pin==std::string(64,'0')))throw std::invalid_argument("Enter a SHA-256 public key fingerprint (64 lowercase hexadecimal characters)");
 }
 std::vector<std::byte> encode_server_request(const ServerRequest& q) {
-    if(q.action>ServerAction::enroll)throw std::invalid_argument("Unknown server action");
-    BinaryWriter w;w.put<std::uint8_t>(static_cast<std::uint8_t>(q.action));put_profile(w,q.profile);text(w,q.credential,4096);text(w,q.registration_code,40);text(w,q.device_label,128);return std::move(w).finish();
+    if(q.action>ServerAction::accept_invitation)throw std::invalid_argument("Unknown server action");
+    BinaryWriter w;w.put<std::uint8_t>(static_cast<std::uint8_t>(q.action));put_profile(w,q.profile);text(w,q.credential,4096);text(w,q.registration_code,40);text(w,q.device_label,128);text(w,q.invitation_uri,2048);w.put(q.expected_epoch);w.put<std::uint8_t>((q.approve_server_switch?1:0)|(q.trust_invitation_pin?2:0));return std::move(w).finish();
 }
-ServerRequest decode_server_request(std::span<const std::byte> b){BinaryReader r(b);ServerRequest q;q.action=static_cast<ServerAction>(r.get<std::uint8_t>());if(q.action>ServerAction::enroll)throw std::invalid_argument("Unknown server action");q.profile=get_profile(r);q.credential=text(r,4096);q.registration_code=text(r,40);q.device_label=text(r,128);r.finish();return q;}
+ServerRequest decode_server_request(std::span<const std::byte> b){BinaryReader r(b);ServerRequest q;q.action=static_cast<ServerAction>(r.get<std::uint8_t>());if(q.action>ServerAction::accept_invitation)throw std::invalid_argument("Unknown server action");q.profile=get_profile(r);q.credential=text(r,4096);q.registration_code=text(r,40);q.device_label=text(r,128);q.invitation_uri=text(r,2048);q.expected_epoch=r.get<std::uint64_t>();const auto flags=r.get<std::uint8_t>();if(flags>3)throw std::invalid_argument("Invalid invitation consent");q.approve_server_switch=(flags&1)!=0;q.trust_invitation_pin=(flags&2)!=0;r.finish();return q;}
 std::vector<std::byte> encode_server_state(const ServerState& s) {
     if(s.profiles.size()>32)throw std::invalid_argument("Too many server profiles");
-    BinaryWriter w;w.put(s.revision);w.put(s.connection_epoch);text(w,s.selected_id,40);w.put<std::uint8_t>(static_cast<std::uint8_t>(s.profiles.size()));
+    BinaryWriter w;w.put(s.revision);w.put(s.connection_epoch);text(w,s.selected_id,40);text(w,s.result_profile_id,40);text(w,s.notice,512);w.put<std::uint8_t>(static_cast<std::uint8_t>(s.profiles.size()));
     std::set<std::string> ids;for(const auto& p:s.profiles){validate_server_profile(p,true);if(!ids.insert(p.id).second)throw std::invalid_argument("Duplicate server profile");put_profile(w,p);}
     if(!s.selected_id.empty() && !ids.contains(s.selected_id))throw std::invalid_argument("Selected server is absent");
     return std::move(w).finish();
 }
-ServerState decode_server_state(std::span<const std::byte> b){BinaryReader r(b);ServerState s;s.revision=r.get<std::uint64_t>();s.connection_epoch=r.get<std::uint64_t>();s.selected_id=text(r,40);const auto n=r.get<std::uint8_t>();if(n>32)throw std::invalid_argument("Too many server profiles");for(unsigned i=0;i<n;++i)s.profiles.push_back(get_profile(r));r.finish();static_cast<void>(encode_server_state(s));return s;}
+ServerState decode_server_state(std::span<const std::byte> b){BinaryReader r(b);ServerState s;s.revision=r.get<std::uint64_t>();s.connection_epoch=r.get<std::uint64_t>();s.selected_id=text(r,40);s.result_profile_id=text(r,40);s.notice=text(r,512);const auto n=r.get<std::uint8_t>();if(n>32)throw std::invalid_argument("Too many server profiles");for(unsigned i=0;i<n;++i)s.profiles.push_back(get_profile(r));r.finish();static_cast<void>(encode_server_state(s));return s;}
 std::string make_server_invitation(const ServerInvitation& i) {
     validate_server_profile(i.server);
     if((!i.registration_code.empty()&&!hex(i.registration_code,40)) || (!i.network_invitation.empty()&&!hex(i.network_invitation,40)))throw std::invalid_argument("Invalid invitation code");
