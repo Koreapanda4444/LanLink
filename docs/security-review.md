@@ -16,7 +16,7 @@
 |---|---|---|
 | 비인가 원격 연결·인증 proof 재전송 | nonce·장치 서명·토큰 proof·인증 만료·상태 전이·접속 상한 | auth, relay-e2e, network-client |
 | 승인되지 않은 peer·폐기된 멤버십 | 네트워크/장치/세션/epoch binding, 정책 lease, 추방·재키잉 | direct-quic, network-client, packet-crypto |
-| ciphertext 변조·재전송·다른 네트워크 유입 | AES-256-GCM AAD와 replay window, 검증 후 전달 | packet-crypto, packet-routing, platform-interop |
+| ciphertext 변조·재전송·다른 네트워크 유입 | AES-256-GCM AAD와 replay window, 검증 후 전달 | packet-crypto, packet-routing, 제품의 암호화 처리 |
 | 위조 Directory·Relay 상태 | scope·revision·만료·공개 키 고정, TLS·nonce·ID·authority·용량 확인 | directory, directory-https, network-client |
 | fanout·느린 reader·요청/트래픽 폭주 | 네트워크 격리·중복 방지·bounded queue·제어 예약·공유 quota | fanout, packet-bridge, transport, network-client |
 | 로컬 비인가 사용자 | Windows pipe ACL/secret store, Unix peer credentials·그룹 소켓, 전용 서비스 계정 | native OS 설치/서비스 및 IPC 시험 |

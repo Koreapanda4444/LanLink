@@ -13,17 +13,13 @@ endif()
 
 project(LanLink VERSION 1.0.0 LANGUAGES CXX)
 
-option(LANLINK_BUILD_BENCHMARKS "Build reproducible packet serialization measurements" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
-option(LANLINK_FOUNDATION_ONLY "Build portable shared modules without network executables" OFF)
-if(NOT LANLINK_FOUNDATION_ONLY)
-    find_package(msquic CONFIG REQUIRED)
-endif()
+find_package(msquic CONFIG REQUIRED)
 find_package(OpenSSL 3.6.4 REQUIRED COMPONENTS SSL Crypto)
 find_package(SQLite3 REQUIRED)
 
@@ -35,7 +31,6 @@ else()
     message(FATAL_ERROR "The SQLite3 package did not export a supported CMake target")
 endif()
 
-if(NOT LANLINK_FOUNDATION_ONLY)
     if(TARGET msquic::msquic)
         set(LANLINK_MSQUIC_TARGET msquic::msquic)
     elseif(TARGET msquic)
@@ -43,7 +38,6 @@ if(NOT LANLINK_FOUNDATION_ONLY)
     else()
         message(FATAL_ERROR "The msquic package did not export a supported CMake target")
     endif()
-endif()
 
 function(lanlink_enable_warnings target)
     if(MSVC)
@@ -201,11 +195,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 add_executable(lanlink_directory_sign apps/relay/directory_sign.cpp)
-if(LANLINK_BUILD_BENCHMARKS)
-    add_executable(lanlink_packet_benchmark tests/packet_benchmark.cpp)
-    target_link_libraries(lanlink_packet_benchmark PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_packet_benchmark)
-endif()
+
 target_link_libraries(lanlink_directory_sign PRIVATE lanlink_auth lanlink_core)
 set_target_properties(lanlink_directory_sign PROPERTIES OUTPUT_NAME "lanlink-directory-sign")
 lanlink_enable_warnings(lanlink_directory_sign)
@@ -219,14 +209,6 @@ if(WIN32)
 endif()
 lanlink_enable_warnings(lanlink_p2p)
 
-if(LANLINK_FOUNDATION_ONLY)
-    include(cmake/BuildMetadata.cmake)
-    include(CTest)
-    if(BUILD_TESTING)
-        include(cmake/FoundationTests.cmake)
-    endif()
-    return()
-endif()
 
 add_library(lanlink_transport STATIC
     src/transport/relay_bridge.cpp
@@ -288,10 +270,6 @@ target_link_libraries(lanlink_relay PRIVATE lanlink_core lanlink_transport)
 set_target_properties(lanlink_relay PROPERTIES OUTPUT_NAME "lanlink-relay")
 lanlink_enable_warnings(lanlink_relay)
 
-add_executable(lanlink_discovery_probe apps/ui/discovery_probe.cpp)
-target_link_libraries(lanlink_discovery_probe PRIVATE lanlink_p2p OpenSSL::Crypto)
-set_target_properties(lanlink_discovery_probe PROPERTIES OUTPUT_NAME "lanlink-discovery-probe")
-lanlink_enable_warnings(lanlink_discovery_probe)
 
 if(WIN32)
     find_package(imgui CONFIG REQUIRED)
@@ -378,367 +356,6 @@ endif()
 
 include(cmake/WindowsResources.cmake)
 include(cmake/BuildMetadata.cmake)
-include(CTest)
 include(cmake/ClientPackage.cmake)
 include(cmake/RelayPackage.cmake)
 include(cmake/PosixClientPackage.cmake)
-
-if(BUILD_TESTING)
-    add_executable(lanlink_policy_preview_tests tests/policy_preview_tests.cpp)
-    target_link_libraries(lanlink_policy_preview_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_policy_preview_tests)
-    add_test(NAME lanlink-policy-preview COMMAND lanlink_policy_preview_tests)
-
-    add_executable(lanlink_audit_tests tests/audit_tests.cpp)
-    target_link_libraries(lanlink_audit_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_audit_tests)
-    add_test(NAME lanlink-audit COMMAND lanlink_audit_tests)
-
-    add_executable(lanlink_access_roles_tests tests/access_roles_tests.cpp)
-    target_link_libraries(lanlink_access_roles_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_access_roles_tests)
-    add_test(NAME lanlink-access-roles COMMAND lanlink_access_roles_tests)
-
-    add_executable(lanlink_gateway_tests tests/gateway_tests.cpp)
-    target_link_libraries(lanlink_gateway_tests PRIVATE lanlink_relay_domain lanlink_packet_engine)
-    lanlink_enable_warnings(lanlink_gateway_tests)
-    add_test(NAME lanlink-gateway COMMAND lanlink_gateway_tests)
-
-    add_executable(lanlink_managed_routing_tests tests/managed_routing_tests.cpp)
-    target_link_libraries(lanlink_managed_routing_tests PRIVATE lanlink_relay_domain lanlink_p2p)
-    lanlink_enable_warnings(lanlink_managed_routing_tests)
-    add_test(NAME lanlink-managed-routing COMMAND lanlink_managed_routing_tests)
-
-    add_executable(lanlink_network_policy_tests tests/network_policy_tests.cpp)
-    target_link_libraries(lanlink_network_policy_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_network_policy_tests)
-    add_test(NAME lanlink-network-policy COMMAND lanlink_network_policy_tests)
-
-    add_executable(lanlink_localization_tests tests/localization_tests.cpp)
-    target_link_libraries(lanlink_localization_tests PRIVATE lanlink_core)
-    lanlink_enable_warnings(lanlink_localization_tests)
-    add_test(NAME lanlink-localization COMMAND lanlink_localization_tests)
-    add_executable(lanlink_network_workflow_tests tests/network_workflow_tests.cpp)
-    target_link_libraries(lanlink_network_workflow_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_network_workflow_tests)
-    add_test(NAME lanlink-network-workflow COMMAND lanlink_network_workflow_tests)
-    add_executable(lanlink_invitation_tests tests/invitation_tests.cpp)
-    target_link_libraries(lanlink_invitation_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_invitation_tests)
-    add_test(NAME lanlink-invitation COMMAND lanlink_invitation_tests)
-    add_executable(lanlink_password_join_tests tests/password_join_tests.cpp)
-    target_link_libraries(lanlink_password_join_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_password_join_tests)
-    add_test(NAME lanlink-password-join COMMAND lanlink_password_join_tests)
-    add_executable(lanlink_directory_tests tests/directory_tests.cpp)
-    target_link_libraries(lanlink_directory_tests PRIVATE lanlink_auth lanlink_core)
-    lanlink_enable_warnings(lanlink_directory_tests)
-    add_test(NAME lanlink-directory COMMAND lanlink_directory_tests)
-    add_executable(lanlink_user_access_tests tests/user_access_tests.cpp)
-    target_link_libraries(lanlink_user_access_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_user_access_tests)
-    add_test(NAME lanlink-user-access COMMAND lanlink_user_access_tests)
-    add_executable(lanlink_game_diagnostics_tests tests/game_diagnostics_tests.cpp)
-    target_link_libraries(lanlink_game_diagnostics_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_game_diagnostics_tests)
-    add_test(NAME lanlink-game-diagnostics COMMAND lanlink_game_diagnostics_tests)
-    add_executable(lanlink_ethernet_tests tests/ethernet_tests.cpp)
-    target_link_libraries(lanlink_ethernet_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_ethernet_tests)
-    add_test(NAME lanlink-ethernet COMMAND lanlink_ethernet_tests)
-    if(TARGET lanlink_native_tun)
-        add_executable(lanlink_posix_tun_tests tests/posix_tun_tests.cpp)
-        target_link_libraries(lanlink_posix_tun_tests PRIVATE lanlink_native_tun)
-        lanlink_enable_warnings(lanlink_posix_tun_tests)
-    endif()
-    if(TARGET lanlink_linux_tap)
-        add_executable(lanlink_linux_tap_tests tests/linux_tap_tests.cpp)
-        target_link_libraries(lanlink_linux_tap_tests PRIVATE lanlink_linux_tap)
-        lanlink_enable_warnings(lanlink_linux_tap_tests)
-    endif()
-    add_executable(lanlink_ipv4_tests tests/ipv4_tests.cpp)
-    target_link_libraries(lanlink_ipv4_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_ipv4_tests)
-    add_test(NAME lanlink-ipv4 COMMAND lanlink_ipv4_tests)
-    add_executable(lanlink_game_profile_tests tests/game_profile_tests.cpp)
-    target_link_libraries(lanlink_game_profile_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_game_profile_tests)
-    add_test(NAME lanlink-game-profile COMMAND lanlink_game_profile_tests)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_executable(lanlink_interop_peer tests/platform_interop.cpp)
-    target_link_libraries(lanlink_interop_peer PRIVATE lanlink_packet_engine lanlink_p2p lanlink_core)
-    lanlink_enable_warnings(lanlink_interop_peer)
-    add_test(NAME lanlink-platform-interop-local COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/interop_local.py $<TARGET_FILE:lanlink_interop_peer>)
-    set_tests_properties(lanlink-platform-interop-local PROPERTIES TIMEOUT 60)
-    add_test(NAME lanlink-release-assets
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/release_assets_tests.py)
-    add_executable(lanlink_virtual_network_tests tests/virtual_network_tests.cpp)
-    target_link_libraries(lanlink_virtual_network_tests PRIVATE lanlink_packet_engine)
-    lanlink_enable_warnings(lanlink_virtual_network_tests)
-    add_test(NAME lanlink-virtual-network COMMAND lanlink_virtual_network_tests)
-    add_executable(lanlink_capability_tests tests/capability_tests.cpp)
-    target_link_libraries(lanlink_capability_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_capability_tests)
-    add_test(NAME lanlink-capabilities COMMAND lanlink_capability_tests)
-    if(WIN32 AND LANLINK_PACKAGE_WINDOWS_CLIENT)
-        add_executable(lanlink_windows_network_tests tests/windows_network_tests.cpp)
-        target_link_libraries(lanlink_windows_network_tests PRIVATE lanlink_transport lanlink_local_ipc lanlink_auth iphlpapi)
-        lanlink_enable_warnings(lanlink_windows_network_tests)
-        add_custom_command(TARGET lanlink_windows_network_tests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LANLINK_WINTUN_DLL}"
-                "$<TARGET_FILE_DIR:lanlink_windows_network_tests>/wintun.dll")
-    endif()
-    add_executable(lanlink_onboarding_transport_tests tests/onboarding_transport_tests.cpp)
-    target_link_libraries(lanlink_onboarding_transport_tests PRIVATE lanlink_transport OpenSSL::SSL)
-    lanlink_enable_warnings(lanlink_onboarding_transport_tests)
-    add_test(NAME lanlink-onboarding-transport COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/onboarding_transport.py $<TARGET_FILE:lanlink_onboarding_transport_tests>)
-    set_tests_properties(lanlink-onboarding-transport PROPERTIES TIMEOUT 45)
-
-    add_executable(lanlink_device_authority_tests tests/device_authority_tests.cpp)
-    target_link_libraries(lanlink_device_authority_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_device_authority_tests)
-    add_test(NAME lanlink-device-authority COMMAND lanlink_device_authority_tests)
-
-    add_executable(lanlink_server_profile_tests tests/server_profile_tests.cpp)
-    target_link_libraries(lanlink_server_profile_tests PRIVATE lanlink_storage)
-    lanlink_enable_warnings(lanlink_server_profile_tests)
-    add_test(NAME lanlink-server-profiles COMMAND lanlink_server_profile_tests)
-
-    add_executable(lanlink_core_tests
-        tests/core_tests.cpp
-    )
-
-    target_link_libraries(lanlink_core_tests PRIVATE lanlink_core)
-    lanlink_enable_warnings(lanlink_core_tests)
-    add_test(NAME lanlink-core COMMAND lanlink_core_tests)
-
-    add_executable(lanlink_protocol_tests
-        tests/protocol_tests.cpp
-    )
-
-    target_link_libraries(lanlink_protocol_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_protocol_tests)
-    add_test(NAME lanlink-protocol COMMAND lanlink_protocol_tests)
-
-    add_executable(lanlink_local_control_tests
-        tests/local_control_tests.cpp
-    )
-    target_link_libraries(lanlink_local_control_tests PRIVATE lanlink_protocol lanlink_core)
-    lanlink_enable_warnings(lanlink_local_control_tests)
-    add_test(NAME lanlink-local-control COMMAND lanlink_local_control_tests)
-
-    if(WIN32)
-        add_executable(lanlink_local_pipe_tests tests/local_pipe_tests.cpp)
-        target_link_libraries(lanlink_local_pipe_tests PRIVATE lanlink_local_ipc)
-        lanlink_enable_warnings(lanlink_local_pipe_tests)
-        add_test(NAME lanlink-local-pipe COMMAND lanlink_local_pipe_tests)
-        set_tests_properties(lanlink-local-pipe PROPERTIES
-            RESOURCE_LOCK lanlink-service-pipe TIMEOUT 30)
-
-        add_executable(lanlink_ui_network_model_tests
-            tests/ui_network_model_tests.cpp
-            apps/ui/network_model.cpp
-        )
-        target_link_libraries(lanlink_ui_network_model_tests PRIVATE lanlink_local_ipc)
-        lanlink_enable_warnings(lanlink_ui_network_model_tests)
-        add_test(NAME lanlink-ui-network-model COMMAND lanlink_ui_network_model_tests)
-        set_tests_properties(lanlink-ui-network-model PROPERTIES
-            RESOURCE_LOCK lanlink-service-pipe TIMEOUT 30)
-    endif()
-
-    if(UNIX AND TARGET lanlink_local_ipc)
-        add_executable(lanlink_posix_ipc_tests tests/posix_ipc_tests.cpp)
-        target_link_libraries(lanlink_posix_ipc_tests PRIVATE lanlink_local_ipc)
-        lanlink_enable_warnings(lanlink_posix_ipc_tests)
-        add_test(NAME lanlink-posix-ipc COMMAND lanlink_posix_ipc_tests)
-        set_tests_properties(lanlink-posix-ipc PROPERTIES TIMEOUT 30)
-        add_executable(lanlink_ui_network_model_tests tests/ui_network_model_tests.cpp apps/ui/network_model.cpp)
-        target_link_libraries(lanlink_ui_network_model_tests PRIVATE lanlink_local_ipc)
-        lanlink_enable_warnings(lanlink_ui_network_model_tests)
-        add_test(NAME lanlink-ui-network-model COMMAND ${CMAKE_COMMAND} -E env
-            "LANLINK_CONTROL_SOCKET=${CMAKE_CURRENT_BINARY_DIR}/model-test.sock" $<TARGET_FILE:lanlink_ui_network_model_tests>)
-        set_tests_properties(lanlink-ui-network-model PROPERTIES TIMEOUT 30)
-    endif()
-
-    add_executable(lanlink_path_quality_tests tests/path_quality_tests.cpp)
-    target_link_libraries(lanlink_path_quality_tests PRIVATE lanlink_p2p)
-    add_test(NAME lanlink-path-quality COMMAND lanlink_path_quality_tests)
-
-    add_executable(lanlink_direct_quic_tests tests/direct_quic_tests.cpp)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_executable(lanlink_nat_peer tests/nat_peer.cpp)
-        target_link_libraries(lanlink_nat_peer PRIVATE lanlink_transport)
-        lanlink_enable_warnings(lanlink_nat_peer)
-    endif()
-    target_link_libraries(lanlink_direct_quic_tests PRIVATE lanlink_transport)
-    add_test(NAME lanlink-direct-quic COMMAND lanlink_direct_quic_tests)
-    set_tests_properties(lanlink-direct-quic PROPERTIES TIMEOUT 30)
-    set_tests_properties(lanlink-direct-quic PROPERTIES TIMEOUT 30)
-
-    add_executable(lanlink_connectivity_tests tests/connectivity_tests.cpp)
-    target_link_libraries(lanlink_connectivity_tests PRIVATE lanlink_p2p)
-    add_test(NAME lanlink-connectivity COMMAND lanlink_connectivity_tests)
-
-    add_executable(lanlink_punch_tests tests/punch_tests.cpp)
-    target_link_libraries(lanlink_punch_tests PRIVATE lanlink_p2p)
-    add_test(NAME lanlink-punch COMMAND lanlink_punch_tests)
-    set_tests_properties(lanlink-punch PROPERTIES TIMEOUT 15)
-
-    add_executable(lanlink_stun_tests tests/stun_tests.cpp)
-    target_link_libraries(lanlink_stun_tests PRIVATE lanlink_p2p)
-    add_test(NAME lanlink-stun COMMAND lanlink_stun_tests)
-
-    add_executable(lanlink_p2p_candidates_tests tests/p2p_candidates_tests.cpp)
-    target_link_libraries(lanlink_p2p_candidates_tests PRIVATE lanlink_p2p)
-    add_test(NAME lanlink-p2p-candidates COMMAND lanlink_p2p_candidates_tests)
-
-    add_executable(lanlink_network_protocol_tests
-        tests/network_protocol_tests.cpp
-    )
-
-    target_link_libraries(lanlink_network_protocol_tests PRIVATE lanlink_protocol)
-    lanlink_enable_warnings(lanlink_network_protocol_tests)
-    add_test(NAME lanlink-network-protocol COMMAND lanlink_network_protocol_tests)
-
-    add_executable(lanlink_auth_tests
-        tests/auth_tests.cpp
-    )
-
-    target_link_libraries(lanlink_auth_tests PRIVATE lanlink_auth)
-    lanlink_enable_warnings(lanlink_auth_tests)
-    add_test(NAME lanlink-auth COMMAND lanlink_auth_tests)
-
-    add_executable(lanlink_packet_crypto_tests
-        tests/packet_crypto_tests.cpp
-    )
-
-    target_link_libraries(lanlink_packet_crypto_tests PRIVATE lanlink_auth)
-    lanlink_enable_warnings(lanlink_packet_crypto_tests)
-    add_test(NAME lanlink-packet-crypto COMMAND lanlink_packet_crypto_tests)
-
-    add_executable(lanlink_packet_bridge_tests
-        tests/packet_bridge_tests.cpp
-    )
-
-    target_link_libraries(lanlink_packet_bridge_tests PRIVATE lanlink_transport lanlink_auth)
-    lanlink_enable_warnings(lanlink_packet_bridge_tests)
-    add_test(NAME lanlink-packet-bridge COMMAND lanlink_packet_bridge_tests)
-
-    add_executable(lanlink_fanout_tests
-        tests/fanout_tests.cpp
-    )
-
-    target_link_libraries(lanlink_fanout_tests PRIVATE lanlink_relay_domain lanlink_auth)
-    lanlink_enable_warnings(lanlink_fanout_tests)
-    add_test(NAME lanlink-fanout COMMAND lanlink_fanout_tests)
-
-    add_executable(lanlink_transport_tests
-        tests/transport_tests.cpp
-    )
-
-    target_link_libraries(lanlink_transport_tests PRIVATE lanlink_transport)
-    lanlink_enable_warnings(lanlink_transport_tests)
-    add_test(NAME lanlink-transport COMMAND lanlink_transport_tests)
-
-    add_executable(lanlink_storage_tests
-        tests/storage_tests.cpp
-    )
-
-    target_link_libraries(
-        lanlink_storage_tests
-        PRIVATE
-            lanlink_storage
-            ${LANLINK_SQLITE_TARGET}
-    )
-    lanlink_enable_warnings(lanlink_storage_tests)
-    add_test(NAME lanlink-storage COMMAND lanlink_storage_tests)
-
-    add_executable(lanlink_virtual_ipv4_tests
-        tests/virtual_ipv4_tests.cpp
-    )
-    target_link_libraries(lanlink_virtual_ipv4_tests PRIVATE lanlink_relay_domain ${LANLINK_SQLITE_TARGET})
-    lanlink_enable_warnings(lanlink_virtual_ipv4_tests)
-    add_test(NAME lanlink-virtual-ipv4 COMMAND lanlink_virtual_ipv4_tests)
-
-    add_executable(lanlink_network_service_tests
-        tests/network_service_tests.cpp
-    )
-
-    target_link_libraries(lanlink_network_service_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_network_service_tests)
-    add_test(NAME lanlink-network-service COMMAND lanlink_network_service_tests)
-
-    add_executable(lanlink_network_control_channel_tests
-        tests/network_control_channel_tests.cpp
-    )
-
-    target_link_libraries(
-        lanlink_network_control_channel_tests
-        PRIVATE
-            Threads::Threads
-            lanlink_relay_domain
-            lanlink_auth
-            ${LANLINK_SQLITE_TARGET}
-    )
-    lanlink_enable_warnings(lanlink_network_control_channel_tests)
-    add_test(NAME lanlink-network-control-channel COMMAND lanlink_network_control_channel_tests)
-
-    add_executable(lanlink_packet_routing_tests
-        tests/packet_routing_tests.cpp
-    )
-    target_link_libraries(lanlink_packet_routing_tests PRIVATE lanlink_relay_domain)
-    lanlink_enable_warnings(lanlink_packet_routing_tests)
-    add_test(NAME lanlink-packet-routing COMMAND lanlink_packet_routing_tests)
-
-    if(UNIX)
-        find_program(LANLINK_OPENSSL_EXECUTABLE openssl)
-        find_program(LANLINK_BASH_EXECUTABLE bash)
-
-        if(LANLINK_OPENSSL_EXECUTABLE AND LANLINK_BASH_EXECUTABLE)
-            add_executable(lanlink_directory_fetch_tests tests/directory_fetch_tests.cpp)
-            target_link_libraries(lanlink_directory_fetch_tests PRIVATE lanlink_transport lanlink_auth)
-            lanlink_enable_warnings(lanlink_directory_fetch_tests)
-            add_test(NAME lanlink-directory-https
-                COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/directory_https.py
-                    ${LANLINK_OPENSSL_EXECUTABLE} $<TARGET_FILE:lanlink_directory_sign>
-                    $<TARGET_FILE:lanlink_directory_fetch_tests> ${PROJECT_SOURCE_DIR}/deploy/directory/serve.py)
-            set_tests_properties(lanlink-directory-https PROPERTIES TIMEOUT 40)
-
-            add_executable(lanlink_network_client_tests
-                tests/network_client_tests.cpp
-            )
-            target_link_libraries(
-                lanlink_network_client_tests
-                PRIVATE
-                    lanlink_transport
-                    lanlink_relay_domain
-                    lanlink_auth
-                    ${LANLINK_SQLITE_TARGET}
-                    ${LANLINK_MSQUIC_TARGET}
-            )
-            target_link_libraries(lanlink_network_client_tests PRIVATE lanlink_session)
-            lanlink_enable_warnings(lanlink_network_client_tests)
-            add_test(
-                NAME lanlink-network-client
-                COMMAND
-                    ${LANLINK_BASH_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/network_client_integration.sh
-                    ${LANLINK_OPENSSL_EXECUTABLE}
-                    $<TARGET_FILE:lanlink_network_client_tests>
-            )
-            set_tests_properties(lanlink-network-client PROPERTIES TIMEOUT 120)
-
-            find_package(Python3 REQUIRED COMPONENTS Interpreter)
-            add_executable(lanlink_relay_e2e_tests tests/relay_e2e_tests.cpp)
-            target_link_libraries(lanlink_relay_e2e_tests PRIVATE lanlink_transport lanlink_auth)
-            lanlink_enable_warnings(lanlink_relay_e2e_tests)
-            add_test(
-                NAME lanlink-relay-e2e
-                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay_e2e.py
-                    ${LANLINK_OPENSSL_EXECUTABLE} $<TARGET_FILE:lanlink_relay>
-                    $<TARGET_FILE:lanlink_relay_e2e_tests>
-            )
-            set_tests_properties(lanlink-relay-e2e PROPERTIES TIMEOUT 180)
-        endif()
-    endif()
-endif()

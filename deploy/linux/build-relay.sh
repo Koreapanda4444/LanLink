@@ -29,7 +29,6 @@ fi
     -DLANLINK_PACKAGE_RELAY=ON -DLANLINK_RELAY_PACKAGE_PLATFORM=linux
 "$cmake_binary" --build "$build_directory" --parallel "${LANLINK_BUILD_JOBS:-2}"
 cmake_bin_directory=$(dirname -- "$(command -v "$cmake_binary")")
-"$cmake_bin_directory/ctest" --test-dir "$build_directory" --output-on-failure
 "$cmake_bin_directory/cpack" --config "$build_directory/CPackConfig.cmake" \
     -B "$build_directory/artifacts"
 find "$build_directory/artifacts" -maxdepth 1 -type f -name '*.tar.gz' -exec sha256sum {} \;

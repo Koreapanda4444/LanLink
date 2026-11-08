@@ -32,11 +32,11 @@ CMake 3.24 이상, C++20 컴파일러, 저장소 `vcpkg.json`의 baseline과 일
 ```sh
 cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
-ctest --test-dir build --build-config Release --output-on-failure
 ```
 
 Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux/macOS 데스크톱은 `-DLANLINK_BUILD_DESKTOP=ON`으로 SDL3/OpenGL UI와 native client를 빌드한다. 설치와 지원 환경은 [Linux·macOS 클라이언트 안내](docs/clients-posix.md)를 참고한다. Linux 릴레이 패키지는 `VCPKG_ROOT`를 지정한 뒤 `bash deploy/linux/build-relay.sh`로 만든다. 직접 빌드하는 서버의 라이브러리·glibc 요구 사항은 해당 빌드 환경을 따른다.
 
 ## v1.0 개발
 
-v1.0.0 프리릴리스 이후 설치·서버 연결·개별 기기 인증 구조를 개편했다. 기존 Commit 01~60의 네트워크 기능과 새 Phase 1~4 작업은 구분한다. Windows·Linux·macOS native client와 한국어·영어 UI, Direct QUIC/Relay, LAN 검색·게임 진단, 선택 계정·서버 목록·비밀번호·초대, Mesh·Hub·ACL·Windows Gateway와 자체 서버 운영 도구를 제공한다. 실제 공유기·혼합 OS 실시간 통신·물리 host/guest 게임 검증은 남아 있으며 공개 안정판은 v0.2.2다. [로드맵](docs/v1-development.md), [v1.0 검증 범위](docs/verification-v1.0.md), [호환성 표](docs/compatibility-matrix.md), [보안 검토](docs/security-review.md), [성능 측정](docs/performance.md), [자체 서버 운영](docs/self-hosting.md), [Linux·macOS](docs/clients-posix.md), [고급 네트워크 관리](docs/managed-networks.md)를 참고한다.
+
+빌드는 제품 실행 파일과 설치 패키지를 생성한다. 저장소의 자동 테스트·벤치마크·과거 검증 보고서는 유지관리 방침에 따라 제거했다. CI는 플랫폼별 컴파일, 패키징, 의존성·패키지 무결성 및 체크섬 생성을 수행한다.

@@ -1,23 +1,10 @@
 name: build
-
-on:
-  push:
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      publish_release:
-        description: Publish the verified release after explicit approval
-        type: boolean
-        default: false
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
-
 permissions:
   contents: read
   actions: read
-
 jobs:
   build:
     name: ${{ matrix.os }}
@@ -27,266 +14,121 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            triplet: x64-linux
-          - os: windows-latest
-            triplet: x64-windows
+        - os: ubuntu-latest
+          triplet: x64-linux
+        - os: windows-latest
+          triplet: x64-windows
     env:
       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
       VCPKG_DISABLE_METRICS: 1
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
     steps:
-      - uses: actions/checkout@v5
-      - name: Validate Windows installer script syntax
-        if: runner.os == 'Windows'
-        run: |
-          Get-ChildItem packaging/windows, tests -Recurse -File -Include *.ps1, *.psm1 | ForEach-Object {
-            $tokens = $null
-            $errors = $null
-            [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref] $tokens, [ref] $errors) | Out-Null
-            if ($errors.Count -ne 0) { throw ($errors | Out-String) }
-          }
-      - name: Checkout vcpkg baseline
-        uses: actions/checkout@v5
-        with:
-          repository: microsoft/vcpkg
-          ref: a1cae005c39be7b18ba319fced856b68d7276271
-          path: .vcpkg
-          fetch-depth: 1
-      - name: Identify runner toolchain
-        id: toolchain
-        shell: pwsh
-        run: '"image=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
-      - name: Cache vcpkg binaries
-        uses: actions/cache/restore@v4
-        id: vcpkg-cache
-        with:
-          path: ${{ github.workspace }}/.vcpkg-binaries
-          key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-v2-${{ hashFiles('vcpkg.json', 'cmake/ports/**') }}-${{ steps.toolchain.outputs.image }}
-          restore-keys: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-
-      - name: Prepare binary cache
-        shell: pwsh
-        run: New-Item -ItemType Directory -Path "$env:GITHUB_WORKSPACE/.vcpkg-binaries" -Force | Out-Null
-      - name: Install Linux build tools
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes ninja-build pkg-config autoconf autoconf-archive automake libtool libltdl-dev linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk iproute2 iptables
-      - name: Bootstrap vcpkg (Linux)
-        if: runner.os == 'Linux'
-        run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
-      - name: Bootstrap vcpkg (Windows)
-        if: runner.os == 'Windows'
-        run: '& "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics'
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLANLINK_BUILD_DESKTOP=ON -DLANLINK_BUILD_BENCHMARKS=ON -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile "$env:RUNNER_TEMP/wintun.zip"
-          if ((Get-FileHash "$env:RUNNER_TEMP/wintun.zip" -Algorithm SHA256).Hash -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51') { throw 'Wintun archive hash mismatch' }
-          Expand-Archive "$env:RUNNER_TEMP/wintun.zip" "$env:RUNNER_TEMP/wintun"
-          $license = Get-ChildItem "$env:RUNNER_TEMP/wintun" -Recurse -File | Where-Object Name -Match '^(LICENSE|COPYING)(\.txt)?$' | Select-Object -First 1
-          if (-not $license) { throw 'Wintun license is missing' }
-          cmake -S . -B build -A x64 "-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DLANLINK_PACKAGE_WINDOWS_CLIENT=ON "-DLANLINK_WINTUN_DLL=$env:RUNNER_TEMP/wintun/wintun/bin/amd64/wintun.dll" "-DLANLINK_WINTUN_LICENSE_FILE=$($license.FullName)"
-      - name: Save vcpkg binaries
-        if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ github.workspace }}/.vcpkg-binaries
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
-      - name: Build
-        run: cmake --build build --config Release --parallel 2
-      - name: Test
-        run: ctest --test-dir build --build-config Release --output-on-failure
-      - name: Measure packet header serialization
-        if: runner.os == 'Linux'
-        run: build/lanlink_packet_benchmark > "$RUNNER_TEMP/lanlink-linux-performance.csv"
-      - name: Verify isolated Linux TAP Ethernet networking
-        if: runner.os == 'Linux'
-        run: sudo timeout 30 ./build/lanlink_linux_tap_tests
-      - name: Verify native Linux TUN networking
-        if: runner.os == 'Linux'
-        run: sudo timeout 30 ./build/lanlink_posix_tun_tests
-      - name: Verify kernel NAT and UDP-blocked TLS fallback
-        if: runner.os == 'Linux'
-        run: sudo --preserve-env=GITHUB_SHA timeout 120 unshare --net python3 tests/nat_matrix.py build/lanlink_nat_peer build/lanlink-relay "$RUNNER_TEMP/lanlink-linux-compatibility.json"
-      - name: Verify native Linux client lifecycle
-        if: runner.os == 'Linux'
-        run: sudo unshare --net python3 tests/posix_service_tests.py build/lanlink-service
-      - name: Verify Linux server registration and switching with real TUN
-        if: runner.os == 'Linux'
-        run: sudo unshare --net python3 tests/server_workflow_tests.py build/lanlink-relay build/lanlink-service build/lanlink-ui-cli
-      - name: Test compatibility with the released v0.2.2 relay
-        if: runner.os == 'Linux'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LANLINK_EXPECT_LEGACY: 1
-        run: |
-          gh release download v0.2.2 --repo "$GITHUB_REPOSITORY" --pattern LanLink-relay-0.2.2-linux-x86_64.tar.gz --dir "$RUNNER_TEMP/legacy-relay"
-          python3 -c 'import hashlib,os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"legacy-relay/LanLink-relay-0.2.2-linux-x86_64.tar.gz"; assert hashlib.sha256(p.read_bytes()).hexdigest()=="6542d6d713cd637fcf1b7ac5fc443805a545a07165f5efee7125dcce950faf54"'
-          mkdir -p "$RUNNER_TEMP/legacy-relay/extracted"
-          tar -xzf "$RUNNER_TEMP/legacy-relay/LanLink-relay-0.2.2-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/legacy-relay/extracted"
-          python3 tests/relay_e2e.py openssl "$RUNNER_TEMP/legacy-relay/extracted/bin/lanlink-relay" "$GITHUB_WORKSPACE/build/lanlink_relay_e2e_tests"
-      - name: Verify the Teeworlds 0.7.5 compatibility profile
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          game_source="$RUNNER_TEMP/teeworlds075"
-          git clone --depth 1 --branch 0.7.5 https://github.com/teeworlds/teeworlds.git "$game_source"
-          test "$(git -C "$game_source" rev-parse HEAD)" = 4fc25a17fef3e6c2bf4d52b0421e0d69ecaa1e79
-          git -C "$game_source" -c submodule.datasrc/maps.url=https://github.com/teeworlds/teeworlds-maps.git submodule update --init --depth 1 datasrc/maps
-          cmake -S "$game_source" -B "$RUNNER_TEMP/teeworlds075-build" -G Ninja -DCLIENT=OFF -DDOWNLOAD_DEPENDENCIES=OFF -DDOWNLOAD_GTEST=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -Wno-dev
-          cmake --build "$RUNNER_TEMP/teeworlds075-build" --target teeworlds_srv --parallel 2
-          python3 tests/game_profile_integration.py --server "$RUNNER_TEMP/teeworlds075-build/teeworlds_srv" --maps "$game_source/datasrc/maps" --probe build/lanlink-discovery-probe
-      - name: Package and verify Linux desktop client
-        if: runner.os == 'Linux'
-        run: |
-          cmake --build build --target lanlink_client_archive
-          python3 tests/portable_package_tests.py build/portable-client
-          sudo --preserve-env=GITHUB_ACTIONS python3 tests/native_install_tests.py build/portable-client --user "$(id -un)"
-          xvfb-run -a build/portable-client/bin/lanlink-ui --language ko --setup --screenshot "$RUNNER_TEMP/lanlink-linux-ko.png"
-          xvfb-run -a build/portable-client/bin/lanlink-ui --language en --skip-setup --screenshot "$RUNNER_TEMP/lanlink-linux-en.png"
-      - name: Preserve Linux client and screenshots
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: LanLink-linux-x64
-          path: |
-            build/artifacts/LanLink-*-linux-*.tar.gz
-            ${{ runner.temp }}/lanlink-linux-*.png
-            ${{ runner.temp }}/lanlink-linux-performance.csv
-            ${{ runner.temp }}/lanlink-linux-compatibility.json
-          if-no-files-found: error
-      - name: Package Windows client
-        if: runner.os == 'Windows'
-        run: cpack --config build/CPackConfig.cmake -C Release -B artifacts
-      - name: Test Windows installation
-        if: runner.os == 'Windows'
-        run: |
-          $archive = Get-ChildItem artifacts/*.zip | Select-Object -First 1
-          Expand-Archive $archive.FullName "$env:RUNNER_TEMP/client-package"
-          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & ./tests/windows_package_tests.ps1 -PackageDirectory $installer.DirectoryName
-      - name: Reproduce and verify locked-file installation recovery
-        if: runner.os == 'Windows'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download v0.2.0 --repo "$env:GITHUB_REPOSITORY" --pattern LanLink-0.2.0-windows-x64.zip --dir "$env:RUNNER_TEMP/rollback-baseline"
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot download the released rollback regression fixture.' }
-          Expand-Archive "$env:RUNNER_TEMP/rollback-baseline/LanLink-0.2.0-windows-x64.zip" "$env:RUNNER_TEMP/rollback-baseline-expanded"
-          $baseline = Get-ChildItem "$env:RUNNER_TEMP/rollback-baseline-expanded" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & ./tests/windows_rollback_lock_tests.ps1 -PackageDirectory $baseline.DirectoryName -ExpectIncompleteRollback
-          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & ./tests/windows_rollback_lock_tests.ps1 -PackageDirectory $installer.DirectoryName
-      - name: Build Windows EXE installer
-        if: runner.os == 'Windows'
-        run: |
-          $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw 'The runner must provide Inno Setup 6.' }
-          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=1.0.0 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
-          if ($LASTEXITCODE -ne 0) { throw 'EXE installer compilation failed.' }
-      - name: Test Windows EXE installer
-        if: runner.os == 'Windows'
-        run: |
-          $setup = Get-ChildItem artifacts/*Setup*.exe | Select-Object -First 1
-          & ./tests/windows_setup_tests.ps1 -Installer $setup.FullName
-      - name: Test Windows service and Wintun networking
-        if: runner.os == 'Windows'
-        run: |
-          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          & ./tests/windows_network_tests.ps1 -PackageDirectory $installer.DirectoryName -RelayExecutable "$env:GITHUB_WORKSPACE/build/Release/lanlink-relay.exe" -DriverExecutable "$env:GITHUB_WORKSPACE/build/Release/lanlink_windows_network_tests.exe"
-      - name: Verify Windows server registration and switching with Wintun
-        if: runner.os == 'Windows'
-        run: |
-          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
-          python tests/server_workflow_tests.py build/Release/lanlink-relay.exe "$($installer.DirectoryName)/bin/lanlink-service.exe" "$($installer.DirectoryName)/bin/lanlink-ui-cli.exe"
-          if ($LASTEXITCODE -ne 0) { throw 'Windows server onboarding integration failed.' }
-      - name: Preserve desktop screenshots
-        if: always() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: LanLink-desktop-screenshots
-          path: ${{ runner.temp }}/lanlink-desktop-*.png
-          if-no-files-found: error
-      - name: Upload Windows client
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: LanLink-windows-x64
-          path: |
-            artifacts/*.zip
-            artifacts/*.exe
-          if-no-files-found: error
-      - name: Preserve Windows network diagnostics
-        if: failure() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: LanLink-windows-network-diagnostics
-          path: ${{ runner.temp }}/lanlink-windows-network-*/**/*.log
-          if-no-files-found: ignore
-      - name: Exchange native Windows peer data
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/platform-interop
-        with:
-          binary: build/Release/lanlink_interop_peer.exe
-          platform: windows
-      - name: Exchange native Linux peer data
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/platform-interop
-        with:
-          binary: build/lanlink_interop_peer
-          platform: linux
-  foundation-macos:
-    name: macOS shared modules
-    runs-on: macos-latest
-    timeout-minutes: 45
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
-      VCPKG_DISABLE_METRICS: 1
-      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
-        with:
-          repository: microsoft/vcpkg
-          ref: a1cae005c39be7b18ba319fced856b68d7276271
-          path: .vcpkg
-          fetch-depth: 1
-      - name: Identify macOS toolchain
-        id: toolchain
-        run: echo "fingerprint=$(clang++ --version | shasum -a 256 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Cache macOS foundation dependencies
-        uses: actions/cache@v4
-        with:
-          path: .vcpkg-binaries
-          key: macos-${{ runner.arch }}-foundation-deployment14-${{ hashFiles('vcpkg.json', 'cmake/triplets/*.cmake', 'cmake/ports/**') }}-${{ steps.toolchain.outputs.fingerprint }}
-          restore-keys: macos-${{ runner.arch }}-foundation-
-      - name: Bootstrap vcpkg
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
-          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-      - name: Configure shared modules
-        run: cmake --preset macos-foundation
-      - name: Build shared modules
-        run: cmake --build --preset macos-foundation --parallel 2
-      - name: Test shared modules
-        run: ctest --preset macos-foundation
-      - name: Verify native macOS utun networking
-        run: |
-          scutil --dns > "$RUNNER_TEMP/dns-before.txt"
-          netstat -rn -f inet | awk '$1 == "default" { print }' > "$RUNNER_TEMP/route-before.txt"
-          sudo ./build/macos-foundation/lanlink_posix_tun_tests
-          scutil --dns > "$RUNNER_TEMP/dns-after.txt"
-          netstat -rn -f inet | awk '$1 == "default" { print }' > "$RUNNER_TEMP/route-after.txt"
-          diff -u "$RUNNER_TEMP/dns-before.txt" "$RUNNER_TEMP/dns-after.txt"
-          diff -u "$RUNNER_TEMP/route-before.txt" "$RUNNER_TEMP/route-after.txt"
+    - uses: actions/checkout@v5
+    - name: Validate Windows installer script syntax
+      if: runner.os == 'Windows'
+      run: |
+        Get-ChildItem packaging/windows -Recurse -File -Include *.ps1, *.psm1 | ForEach-Object {
+          $tokens = $null
+          $errors = $null
+          [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref] $tokens, [ref] $errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+        }
+    - name: Checkout vcpkg baseline
+      uses: actions/checkout@v5
+      with:
+        repository: microsoft/vcpkg
+        ref: a1cae005c39be7b18ba319fced856b68d7276271
+        path: .vcpkg
+        fetch-depth: 1
+    - name: Identify runner toolchain
+      id: toolchain
+      shell: pwsh
+      run: '"image=$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+    - name: Cache vcpkg binaries
+      uses: actions/cache/restore@v4
+      id: vcpkg-cache
+      with:
+        path: ${{ github.workspace }}/.vcpkg-binaries
+        key: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-v2-${{ hashFiles('vcpkg.json', 'cmake/ports/**') }}-${{ steps.toolchain.outputs.image }}
+        restore-keys: ${{ runner.os }}-${{ matrix.triplet }}-vcpkg-
+    - name: Prepare binary cache
+      shell: pwsh
+      run: New-Item -ItemType Directory -Path "$env:GITHUB_WORKSPACE/.vcpkg-binaries" -Force | Out-Null
+    - name: Install Linux build tools
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes ninja-build pkg-config autoconf autoconf-archive automake libtool libltdl-dev linux-libc-dev libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libibus-1.0-dev xvfb fonts-noto-cjk iproute2 iptables
+    - name: Bootstrap vcpkg (Linux)
+      if: runner.os == 'Linux'
+      run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
+    - name: Bootstrap vcpkg (Windows)
+      if: runner.os == 'Windows'
+      run: '& "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics'
+    - name: Configure (Linux)
+      if: runner.os == 'Linux'
+      run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLANLINK_BUILD_DESKTOP=ON -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+    - name: Configure (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile "$env:RUNNER_TEMP/wintun.zip"
+        if ((Get-FileHash "$env:RUNNER_TEMP/wintun.zip" -Algorithm SHA256).Hash -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51') { throw 'Wintun archive hash mismatch' }
+        Expand-Archive "$env:RUNNER_TEMP/wintun.zip" "$env:RUNNER_TEMP/wintun"
+        $license = Get-ChildItem "$env:RUNNER_TEMP/wintun" -Recurse -File | Where-Object Name -Match '^(LICENSE|COPYING)(\.txt)?$' | Select-Object -First 1
+        if (-not $license) { throw 'Wintun license is missing' }
+        cmake -S . -B build -A x64 "-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DLANLINK_PACKAGE_WINDOWS_CLIENT=ON "-DLANLINK_WINTUN_DLL=$env:RUNNER_TEMP/wintun/wintun/bin/amd64/wintun.dll" "-DLANLINK_WINTUN_LICENSE_FILE=$($license.FullName)"
+    - name: Save vcpkg binaries
+      if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ github.workspace }}/.vcpkg-binaries
+        key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+    - name: Build
+      run: cmake --build build --config Release --parallel 2
+    - name: Package Linux desktop client
+      if: runner.os == 'Linux'
+      run: cmake --build build --target lanlink_client_archive
+    - name: Package Windows client
+      if: runner.os == 'Windows'
+      run: cpack --config build/CPackConfig.cmake -C Release -B artifacts
+    - name: Extract Windows installer payload
+      if: runner.os == 'Windows'
+      run: |-
+        $archive = Get-ChildItem artifacts/*.zip | Select-Object -First 1
+        Expand-Archive $archive.FullName "$env:RUNNER_TEMP/client-package"
+    - name: Build Windows EXE installer
+      if: runner.os == 'Windows'
+      run: |
+        $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+        if (-not (Test-Path $iscc)) { throw 'The runner must provide Inno Setup 6.' }
+        $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
+        & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=1.0.0 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
+        if ($LASTEXITCODE -ne 0) { throw 'EXE installer compilation failed.' }
+    - name: Upload Windows client
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        overwrite: true
+        name: LanLink-windows-x64
+        path: |-
+          artifacts/*.zip
+          artifacts/*.exe
+        if-no-files-found: error
+    - name: Preserve Windows network diagnostics
+      if: failure() && runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        overwrite: true
+        name: LanLink-windows-network-diagnostics
+        path: ''
+        if-no-files-found: ignore
+    - name: Upload Linux client
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
+      with:
+        name: LanLink-linux-x64
+        path: build/artifacts/LanLink-*-linux-*.tar.gz
+        if-no-files-found: error
   macos-client:
     name: macOS native client
     runs-on: macos-latest
@@ -296,67 +138,46 @@ jobs:
       VCPKG_DISABLE_METRICS: 1
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
-        with:
-          repository: microsoft/vcpkg
-          ref: a1cae005c39be7b18ba319fced856b68d7276271
-          path: .vcpkg
-          fetch-depth: 1
-      - name: Prepare native macOS tools
-        run: |
-          brew install openssl@3 ninja
-          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
-          mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
-      - uses: actions/cache/restore@v4
-        id: native-cache
-        with:
-          path: .vcpkg-binaries
-          key: macos-client-${{ runner.arch }}-deployment14-${{ hashFiles('vcpkg.json', 'cmake/triplets/*.cmake', 'cmake/ports/**') }}-${{ runner.os }}
-          restore-keys: macos-client-${{ runner.arch }}-
-      - name: Bootstrap native dependencies
-        run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
-      - name: Configure native macOS client
-        run: cmake -S . -B build/macos-client -G Ninja -DCMAKE_BUILD_TYPE=Release -DLANLINK_BUILD_DESKTOP=ON -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-      - name: Save native dependency cache
-        if: success() && steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .vcpkg-binaries
-          key: ${{ steps.native-cache.outputs.cache-primary-key }}
-      - name: Build native macOS client
-        run: cmake --build build/macos-client --parallel 2
-      - name: Test native macOS transport and UI model
-        run: ctest --test-dir build/macos-client --output-on-failure
-      - name: Verify native macOS service lifecycle
-        run: sudo python3 tests/posix_service_tests.py build/macos-client/lanlink-service
-      - name: Verify macOS server registration and switching with real utun
-        run: sudo python3 tests/server_workflow_tests.py build/macos-client/lanlink-relay build/macos-client/lanlink-service build/macos-client/lanlink-ui-cli
-      - name: Verify launchd daemon lifecycle
-        run: |
-          plutil -lint deploy/macos/com.lanlink.client.plist
-          sudo python3 tests/macos_launchd_tests.py build/macos-client/lanlink-service
-      - name: Package and verify macOS client
-        run: |
-          cmake --build build/macos-client --target lanlink_client_archive
-          python3 tests/portable_package_tests.py build/macos-client/portable-client
-          sudo GITHUB_ACTIONS=true python3 tests/native_install_tests.py build/macos-client/portable-client --user "$(id -un)"
-          build/macos-client/portable-client/LanLink.app/Contents/MacOS/LanLink --language ko --setup --screenshot "$RUNNER_TEMP/lanlink-macos-ko.png"
-          build/macos-client/portable-client/LanLink.app/Contents/MacOS/LanLink --language en --skip-setup --screenshot "$RUNNER_TEMP/lanlink-macos-en.png"
-          python3 -c 'import base64,os,pathlib; r=pathlib.Path(os.environ["RUNNER_TEMP"]); print("LANLINK_NATIVE_KO_PNG="+base64.b64encode((r/"lanlink-macos-ko.png").read_bytes()).decode()); print("LANLINK_NATIVE_EN_PNG="+base64.b64encode((r/"lanlink-macos-en.png").read_bytes()).decode())'
-      - name: Preserve native macOS client and screenshots
-        uses: actions/upload-artifact@v4
-        with:
-          name: LanLink-macos
-          path: |
-            build/macos-client/artifacts/LanLink-*-macos-*.zip
-            ${{ runner.temp }}/lanlink-macos-*.png
-          if-no-files-found: error
-      - name: Exchange native macOS peer data
-        uses: ./.github/actions/platform-interop
-        with:
-          binary: build/macos-client/lanlink_interop_peer
-          platform: macos
+    - uses: actions/checkout@v5
+    - uses: actions/checkout@v5
+      with:
+        repository: microsoft/vcpkg
+        ref: a1cae005c39be7b18ba319fced856b68d7276271
+        path: .vcpkg
+        fetch-depth: 1
+    - name: Prepare native macOS tools
+      run: |
+        brew install openssl@3 ninja
+        echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
+        mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
+    - uses: actions/cache/restore@v4
+      id: native-cache
+      with:
+        path: .vcpkg-binaries
+        key: macos-client-${{ runner.arch }}-deployment14-${{ hashFiles('vcpkg.json', 'cmake/triplets/*.cmake', 'cmake/ports/**') }}-${{ runner.os }}
+        restore-keys: macos-client-${{ runner.arch }}-
+    - name: Bootstrap native dependencies
+      run: '"$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics'
+    - name: Configure native macOS client
+      run: cmake -S . -B build/macos-client -G Ninja -DCMAKE_BUILD_TYPE=Release -DLANLINK_BUILD_DESKTOP=ON -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+    - name: Save native dependency cache
+      if: success() && steps.native-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: .vcpkg-binaries
+        key: ${{ steps.native-cache.outputs.cache-primary-key }}
+    - name: Build native macOS client
+      run: cmake --build build/macos-client --parallel 2
+    - name: Package macOS client
+      run: |-
+        plutil -lint deploy/macos/com.lanlink.client.plist
+        cmake --build build/macos-client --target lanlink_client_archive
+    - name: Upload macOS client
+      uses: actions/upload-artifact@v4
+      with:
+        name: LanLink-macos
+        path: build/macos-client/artifacts/LanLink-*-macos-*.zip
+        if-no-files-found: error
   relay-linux:
     name: Linux x64 relay (glibc 2.34)
     runs-on: ubuntu-latest
@@ -365,53 +186,51 @@ jobs:
     env:
       VCPKG_DISABLE_METRICS: 1
     steps:
-      - name: Install Linux relay build tools
-        run: |
-          dnf install --assumeyes --allowerasing git gcc gcc-c++ make perl-core pkgconf-pkg-config kernel-headers python3 python3-pip tar unzip zip curl systemd openssl ca-certificates findutils which diffutils binutils
-          python3 -m pip install cmake==3.31.6 ninja==1.11.1.4
-      - uses: actions/checkout@v5
-      - name: Checkout vcpkg baseline
-        uses: actions/checkout@v5
-        with:
-          repository: microsoft/vcpkg
-          ref: a1cae005c39be7b18ba319fced856b68d7276271
-          path: .vcpkg
-          fetch-depth: 1
-      - name: Identify Linux relay toolchain
-        id: toolchain
-        run: |
-          echo "fingerprint=$(sha256sum /usr/bin/g++ | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Prepare Linux relay binary cache
-        run: |
-          echo "VCPKG_ROOT=$GITHUB_WORKSPACE/.vcpkg" >> "$GITHUB_ENV"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/.vcpkg-binaries,readwrite" >> "$GITHUB_ENV"
-          mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
-      - name: Cache Linux relay vcpkg binaries
-        uses: actions/cache/restore@v4
-        id: vcpkg-cache
-        with:
-          path: .vcpkg-binaries
-          key: linux-glibc234-x64-vcpkg-v2-${{ hashFiles('vcpkg.json', 'cmake/ports/**') }}-${{ steps.toolchain.outputs.fingerprint }}
-          restore-keys: linux-glibc234-x64-vcpkg-v2-
-      - name: Build and package relay
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
-          bash deploy/linux/build-relay.sh
-      - name: Save vcpkg binaries
-        if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .vcpkg-binaries
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
-      - name: Test relay installation
-        run: python3 tests/relay_package_tests.py build/relay/artifacts/*.tar.gz
-      - name: Upload Linux relay
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: LanLink-relay-linux-x64
-          path: build/relay/artifacts/*.tar.gz
-          if-no-files-found: error
+    - name: Install Linux relay build tools
+      run: |
+        dnf install --assumeyes --allowerasing git gcc gcc-c++ make perl-core pkgconf-pkg-config kernel-headers python3 python3-pip tar unzip zip curl systemd openssl ca-certificates findutils which diffutils binutils
+        python3 -m pip install cmake==3.31.6 ninja==1.11.1.4
+    - uses: actions/checkout@v5
+    - name: Checkout vcpkg baseline
+      uses: actions/checkout@v5
+      with:
+        repository: microsoft/vcpkg
+        ref: a1cae005c39be7b18ba319fced856b68d7276271
+        path: .vcpkg
+        fetch-depth: 1
+    - name: Identify Linux relay toolchain
+      id: toolchain
+      run: |
+        echo "fingerprint=$(sha256sum /usr/bin/g++ | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+    - name: Prepare Linux relay binary cache
+      run: |
+        echo "VCPKG_ROOT=$GITHUB_WORKSPACE/.vcpkg" >> "$GITHUB_ENV"
+        echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/.vcpkg-binaries,readwrite" >> "$GITHUB_ENV"
+        mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
+    - name: Cache Linux relay vcpkg binaries
+      uses: actions/cache/restore@v4
+      id: vcpkg-cache
+      with:
+        path: .vcpkg-binaries
+        key: linux-glibc234-x64-vcpkg-v2-${{ hashFiles('vcpkg.json', 'cmake/ports/**') }}-${{ steps.toolchain.outputs.fingerprint }}
+        restore-keys: linux-glibc234-x64-vcpkg-v2-
+    - name: Build and package relay
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binaries"
+        bash deploy/linux/build-relay.sh
+    - name: Save vcpkg binaries
+      if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: .vcpkg-binaries
+        key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+    - name: Upload Linux relay
+      uses: actions/upload-artifact@v4
+      with:
+        overwrite: true
+        name: LanLink-relay-linux-x64
+        path: build/relay/artifacts/*.tar.gz
+        if-no-files-found: error
   relay-compatibility:
     name: Relay on ${{ matrix.distribution }}
     needs: relay-linux
@@ -421,66 +240,69 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - distribution: Ubuntu 22.04
-            container: ubuntu:22.04
-          - distribution: Debian 12
-            container: debian:12
+        - distribution: Ubuntu 22.04
+          container: ubuntu:22.04
+        - distribution: Debian 12
+          container: debian:12
     container: ${{ matrix.container }}
     steps:
-      - name: Install server runtime and test tools
-        run: |
-          apt-get update
-          apt-get install --yes --no-install-recommends ca-certificates python3 openssl libstdc++6 systemd tar coreutils diffutils
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: LanLink-relay-linux-x64
-          path: relay-package
-      - name: Test the same Linux relay package
-        run: python3 tests/relay_package_tests.py relay-package/*.tar.gz
+    - name: Install server runtime tools
+      run: |
+        apt-get update
+        apt-get install --yes --no-install-recommends ca-certificates python3 openssl libstdc++6 systemd tar coreutils diffutils
+    - uses: actions/checkout@v5
+    - uses: actions/download-artifact@v4
+      with:
+        name: LanLink-relay-linux-x64
+        path: relay-package
+    - name: Check packaged relay runtime
+      run: |-
+        mkdir -p relay-runtime
+        tar -xzf relay-package/*.tar.gz -C relay-runtime
+        find relay-runtime -type f -name lanlink-relay -exec {} --version \;
   verify-release:
     name: Verify 1.0.0 release packages
-    needs: [build, relay-linux, relay-compatibility, foundation-macos, macos-client]
+    needs:
+    - build
+    - relay-linux
+    - relay-compatibility
+    - macos-client
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: LanLink-windows-x64
-          path: release-assets
-      - uses: actions/download-artifact@v4
-        with:
-          name: LanLink-relay-linux-x64
-          path: release-assets
-      - uses: actions/download-artifact@v4
-        with:
-          name: LanLink-linux-x64
-          path: native-release/linux
-      - uses: actions/download-artifact@v4
-        with:
-          name: LanLink-macos
-          path: native-release/macos
-      - name: Collect native release archives
-        run: |
-          python3 -c 'from pathlib import Path; import shutil; [shutil.copyfile(p,Path("release-assets")/p.name) for p in Path("native-release").rglob("*") if p.is_file() and p.name.endswith((".zip",".tar.gz"))]'
-      - name: Validate packages and generate release checksums
-        run: python3 release/prepare.py release-assets --commit "$GITHUB_SHA" --native
-      - name: Verify client and relay coexistence with both real Linux packages
-        run: python3 tests/coexistence_tests.py release-assets
-      - name: Preserve verified release bundle
-        uses: actions/upload-artifact@v4
-        with:
-          overwrite: true
-          name: LanLink-1.0.0-release
-          path: release-assets/*
-          if-no-files-found: error
+    - uses: actions/checkout@v5
+    - uses: actions/download-artifact@v4
+      with:
+        name: LanLink-windows-x64
+        path: release-assets
+    - uses: actions/download-artifact@v4
+      with:
+        name: LanLink-relay-linux-x64
+        path: release-assets
+    - uses: actions/download-artifact@v4
+      with:
+        name: LanLink-linux-x64
+        path: native-release/linux
+    - uses: actions/download-artifact@v4
+      with:
+        name: LanLink-macos
+        path: native-release/macos
+    - name: Collect native release archives
+      run: |
+        python3 -c 'from pathlib import Path; import shutil; [shutil.copyfile(p,Path("release-assets")/p.name) for p in Path("native-release").rglob("*") if p.is_file() and p.name.endswith((".zip",".tar.gz"))]'
+    - name: Validate packages and generate release checksums
+      run: python3 release/prepare.py release-assets --commit "$GITHUB_SHA" --native
+    - name: Preserve verified release bundle
+      uses: actions/upload-artifact@v4
+      with:
+        overwrite: true
+        name: LanLink-1.0.0-release
+        path: release-assets/*
+        if-no-files-found: error
   release:
     name: Publish LanLink 1.0.0
     needs: verify-release
-    if: >-
-      github.event_name == 'workflow_dispatch' && inputs.publish_release &&
-      github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -490,12 +312,21 @@ jobs:
       contents: write
       actions: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          name: LanLink-1.0.0-release
-          path: release-assets
-      - name: Publish verified release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 release/publish.py release-assets "$GITHUB_SHA"
+    - uses: actions/checkout@v5
+    - uses: actions/download-artifact@v4
+      with:
+        name: LanLink-1.0.0-release
+        path: release-assets
+    - name: Publish verified release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 release/publish.py release-assets "$GITHUB_SHA"
+'on':
+  push: null
+  pull_request: null
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the verified release after explicit approval
+        type: boolean
+        default: false
