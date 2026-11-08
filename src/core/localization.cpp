@@ -3,6 +3,8 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Network","네트워크"},
+    Translation{"Tools","도구"},
     Translation{"Connect","연결"},
     Translation{"Server","서버"},
     Translation{"New network","만들기"},

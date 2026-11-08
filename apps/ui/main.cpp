@@ -218,7 +218,7 @@ private:
         }
         if (message == WM_GETMINMAXINFO) {
             auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
-            limits->ptMinTrackSize = POINT{640, 440};
+            limits->ptMinTrackSize = POINT{460, 560};
             return 0;
         }
         if (message == WM_SIZE && self && wparam != SIZE_MINIMIZED) {

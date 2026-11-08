@@ -103,7 +103,7 @@ int main(int argc,char* argv[]) {
 #endif
         desktop.window=SDL_CreateWindow("LanLink",lanlink::ui::design::default_width,lanlink::ui::design::default_height,SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if(!desktop.window)throw std::runtime_error(SDL_GetError());
-        SDL_SetWindowMinimumSize(desktop.window,640,440);
+        SDL_SetWindowMinimumSize(desktop.window,460,560);
         desktop.context=SDL_GL_CreateContext(desktop.window);if(!desktop.context)throw std::runtime_error(SDL_GetError());
         SDL_GL_MakeCurrent(desktop.window,desktop.context);SDL_GL_SetSwapInterval(1);
         IMGUI_CHECKVERSION();ImGui::CreateContext();desktop.imgui=true;lanlink::ui::configure_desktop_style();
