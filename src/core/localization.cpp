@@ -3,6 +3,7 @@
 namespace lanlink::core {
 namespace {
 constexpr std::array catalog{
+    Translation{"Connect","연결"},
     Translation{"Server","서버"},
     Translation{"New network","만들기"},
     Translation{"Join","가입"},

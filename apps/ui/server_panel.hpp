@@ -36,6 +36,8 @@ public:
             const auto size=ImGui::GetMainViewport()->WorkSize;
             width=(std::min)(width,(std::max)(240.0f,size.x-24));
             ImGui::SetNextWindowSizeConstraints(ImVec2(width,0),ImVec2(width,(std::max)(200.0f,size.y-24)));
+            const auto origin=ImGui::GetMainViewport()->WorkPos;
+            ImGui::SetNextWindowPos(ImVec2(origin.x+size.x*.5f,origin.y+size.y*.5f),ImGuiCond_Always,ImVec2(.5f,.5f));
         };
         const auto manager_title=std::string(t("Servers","서버"))+"###server-manager";
         const auto settings_title=std::string(t("Server settings","서버 설정"))+"###server-settings";
@@ -52,7 +54,7 @@ public:
         if(manager_){ImGui::OpenPopup(manager_title.c_str());manager_=false;}
         prepare_popup(520);
         bool manager_visible=true;
-        if(ImGui::BeginPopupModal(manager_title.c_str(),&manager_visible,ImGuiWindowFlags_AlwaysAutoResize)) {
+        if(ImGui::BeginPopupModal(manager_title.c_str(),&manager_visible,ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             if(ImGui::BeginChild("server-list",ImVec2(0,180),ImGuiChildFlags_Borders)) {
                 if(state.servers)for(const auto& p:state.servers->profiles) {
                     ImGui::PushID(p.id.c_str());
@@ -85,7 +87,7 @@ public:
         if(paste_){ImGui::OpenPopup(paste_title.c_str());paste_=false;}
         prepare_popup(500);
         bool paste_visible=true;
-        if(ImGui::BeginPopupModal(paste_title.c_str(),&paste_visible,ImGuiWindowFlags_AlwaysAutoResize)) {
+        if(ImGui::BeginPopupModal(paste_title.c_str(),&paste_visible,ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             ImGui::TextUnformatted(t("Invitation link or code","초대 링크 또는 코드"));
             ImGui::SetNextItemWidth(-1);ImGui::InputText("##serverinvite",uri_.data(),uri_.size());
             ImGui::BeginDisabled(!uri_[0]);
@@ -98,7 +100,7 @@ public:
         if(edit_){ImGui::OpenPopup(settings_title.c_str());edit_=false;}
         prepare_popup(520);
         bool settings_visible=true;
-        if(ImGui::BeginPopupModal(settings_title.c_str(),&settings_visible,ImGuiWindowFlags_AlwaysAutoResize)) {
+        if(ImGui::BeginPopupModal(settings_title.c_str(),&settings_visible,ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             bool saved=false,registered=false;
             if(state.servers)for(const auto& p:state.servers->profiles)if(p.id==editing_) {
                 saved=credential_[0]==0 && p.name==name_.data() && p.host==host_.data() && p.port==port_ && p.public_key_pin==pin_.data();
@@ -171,7 +173,7 @@ public:
         if(review_){ImGui::OpenPopup(invitation_title.c_str());review_=false;}
         prepare_popup(520);
         bool review_visible=true;
-        if(ImGui::BeginPopupModal(invitation_title.c_str(),&review_visible,ImGuiWindowFlags_AlwaysAutoResize)) {
+        if(ImGui::BeginPopupModal(invitation_title.c_str(),&review_visible,ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             if(legacy_) {
                 ImGui::TextUnformatted(t("Review network invitation","네트워크 초대 확인"));
                 ImGui::TextUnformatted(t("Join using the currently connected server.","현재 연결된 서버에서 네트워크에 가입합니다."));

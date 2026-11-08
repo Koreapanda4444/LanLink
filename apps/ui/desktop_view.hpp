@@ -120,6 +120,8 @@ inline void prepare_desktop_popup(float width = 520) {
     const auto available = ImGui::GetMainViewport()->WorkSize;
     width = (std::min)(width, (std::max)(240.0f, available.x - 24));
     ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, (std::max)(200.0f, available.y - 24)));
+    const auto origin=ImGui::GetMainViewport()->WorkPos;
+    ImGui::SetNextWindowPos(ImVec2(origin.x+available.x*.5f,origin.y+available.y*.5f),ImGuiCond_Always,ImVec2(.5f,.5f));
 }
 class DesktopView {
 public:
@@ -531,7 +533,7 @@ public:
         if (settings_open_) { ImGui::OpenPopup(tr("Settings")); settings_open_ = false; }
         prepare_desktop_popup();
         bool settings_visible = true;
-        if (ImGui::BeginPopupModal(tr("Settings"), &settings_visible, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal(tr("Settings"), &settings_visible, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             int language = preferences_.language == lanlink::core::UiLanguage::korean ? 1 : 0;
             const char* languages[]{"English", "한국어"};
             ImGui::TextUnformatted(tr("Language")); ImGui::SetNextItemWidth(-1);
@@ -586,7 +588,7 @@ public:
         if (diagnostics_open_) { ImGui::OpenPopup(tr("Diagnostics")); diagnostics_open_ = false; }
         prepare_desktop_popup(600);
         bool diagnostics_visible = true;
-        if (ImGui::BeginPopupModal(tr("Diagnostics"), &diagnostics_visible, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal(tr("Diagnostics"), &diagnostics_visible, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             if(!state.error.empty())ImGui::TextWrapped("%s",state.error.c_str());
             if(!state.server_error.empty())ImGui::TextWrapped("%s",tr(state.server_error.c_str()));
             if(state.servers && !state.servers->notice.empty())ImGui::TextWrapped("%s",tr(state.servers->notice.c_str()));
@@ -672,7 +674,7 @@ public:
         if (join_dialog_) { close_join_=false;ImGui::OpenPopup(tr("Join network")); join_dialog_ = false; }
         if (confirm_dialog_) { ImGui::OpenPopup(tr("Confirm network change")); confirm_dialog_ = false; }
         prepare_desktop_popup(460);
-        if (ImGui::BeginPopupModal(tr("Create network"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal(tr("Create network"), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             ImGui::TextUnformatted(tr("Name your private network."));
             ImGui::SetNextItemWidth(380);
             ImGui::InputTextWithHint("##name", tr("Network name"), name_.data(), name_.size());
@@ -693,7 +695,7 @@ public:
             ImGui::EndPopup();
         }
         prepare_desktop_popup(480);
-        if (ImGui::BeginPopupModal(tr("Join network"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal(tr("Join network"), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             ImGui::TextUnformatted(tr("Paste a network ID, invitation link or invitation code."));
             ImGui::SetNextItemWidth(420);
             ImGui::InputTextWithHint("##network", tr("Network ID or invitation"), network_id_.data(), network_id_.size());
@@ -713,7 +715,7 @@ public:
             ImGui::EndPopup();
         }
         prepare_desktop_popup(460);
-        if (ImGui::BeginPopupModal(tr("Confirm network change"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal(tr("Confirm network change"), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             if(close_confirmation_){ImGui::CloseCurrentPopup();close_confirmation_=false;}
             ImGui::TextWrapped("%s", tr(confirmation_text_.c_str()));
             ImGui::BeginDisabled(!connected || state.busy);
