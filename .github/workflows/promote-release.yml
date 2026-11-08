@@ -1,0 +1,52 @@
+name: Promote owner-approved release
+on:
+  push:
+    branches: [main]
+    paths: [release/promote.json]
+permissions:
+  contents: read
+concurrency:
+  group: lanlink-release-promotion
+  cancel-in-progress: false
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+    - uses: actions/checkout@v5
+    - name: Promote existing packages without rebuilding
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      shell: python
+      run: |
+        import json, os, subprocess
+        from pathlib import Path
+        request = json.loads(Path('release/promote.json').read_text())
+        def require(ok, message):
+            if not ok: raise RuntimeError(message)
+        def api(path, payload=None):
+            command = ['gh', 'api', path]
+            if payload is not None: command += ['--method', 'PATCH', '--input', '-']
+            return json.loads(subprocess.run(command, input=None if payload is None else json.dumps(payload), text=True, check=True, capture_output=True).stdout)
+        require(request.get('schema') == 1 and request.get('owner_approved') is True, 'Explicit owner approval is required.')
+        base = 'repos/' + os.environ['GH_REPO']
+        release = api(base + '/releases/tags/' + request['tag'])
+        require(release['id'] == request['release_id'] and not release['draft'] and release['target_commitish'] == request['source_commit'], 'Release source differs from the approved package.')
+        require(api(base + '/git/ref/tags/' + request['tag'])['object']['sha'] == request['source_commit'], 'Tag source differs from the approved package.')
+        run = api(base + '/actions/runs/' + str(request['source_run']))
+        require(run['head_sha'] == request['source_commit'] and run['conclusion'] == 'success', 'Approved source build did not succeed.')
+        def assets(value):
+            return sorted((a['id'], a['name'], a['size'], a.get('digest')) for a in value['assets'])
+        original = assets(release)
+        require(len(original) == 8 and all(a['state'] == 'uploaded' for a in release['assets']), 'Existing release assets are incomplete.')
+        body = release['body'].replace('# LanLink 1.0.0-preview.6', '# LanLink 1.0.0', 1)
+        body = body.replace('설치 화면과 데스크톱 디자인을 개편한 프리릴리스다.', '설치 화면과 데스크톱 디자인을 개편한 정식 릴리즈다.', 1)
+        body = body.replace('개편 전 v1.0.0과 구분하기 위해 새 태그로 배포한다.', '기존 preview.6과 동일한 패키지를 정식 배포로 전환했다.', 1)
+        published = api(base + '/releases/' + str(release['id']), {'name': request['title'], 'body': body, 'prerelease': False, 'draft': False, 'make_latest': 'true'})
+        require(not published['prerelease'] and not published['draft'] and assets(published) == original, 'Release promotion changed the packages or did not complete.')
+        require(api(base + '/releases/latest')['id'] == release['id'], 'Approved release is not the latest official release.')
+        print('Published official release: ' + published['html_url'])

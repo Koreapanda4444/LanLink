@@ -395,7 +395,11 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: python3 release/publish.py release-assets "$GITHUB_SHA"
 'on':
-  push: null
+  push:
+    paths-ignore:
+    - README.md
+    - release/promote.json
+    - .github/workflows/promote-release.yml
   pull_request: null
   workflow_dispatch:
     inputs:
