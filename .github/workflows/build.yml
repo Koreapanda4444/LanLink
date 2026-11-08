@@ -40,13 +40,14 @@ jobs:
         @'
         param([string] $ModulePath, [string] $OutputPath)
         $ErrorActionPreference = 'Stop'
+        $VerbosePreference = 'Continue'
         Import-Module $ModulePath -Force
         & {
           Import-Module $ModulePath -Force
           Write-LanLinkSetupProgress $OutputPath 0 'prepare'
           Write-LanLinkSetupProgress $OutputPath 45 'copy'
         }
-        if ([IO.File]::ReadAllText($OutputPath) -ne '45|copy') { throw 'Native progress output is invalid.' }
+        if ([IO.File]::ReadAllText($OutputPath) -ne '45|copy') { throw ('Native progress output is invalid: ' + [IO.File]::ReadAllText($OutputPath)) }
         Write-LanLinkSetupProgress $OutputPath 100 'complete'
         if ([IO.File]::ReadAllText($OutputPath) -ne '100|complete') { throw 'Native completion output is invalid.' }
         Remove-Item -LiteralPath $OutputPath

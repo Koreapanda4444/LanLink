@@ -9,7 +9,7 @@ function Write-LanLinkSetupProgress([string] $Path, [int] $Percent, [string] $St
         [IO.File]::WriteAllText($temporary, "$Percent|$Stage", [Text.Encoding]::ASCII)
         for ($attempt = 0; $attempt -lt 3; $attempt++) {
             try {
-                if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, $null) }
+                if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [NullString]::Value) }
                 else { [IO.File]::Move($temporary, $Path) }
                 return
             } catch [IO.IOException] {
