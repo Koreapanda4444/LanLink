@@ -150,7 +150,6 @@ with tempfile.TemporaryDirectory(prefix="lanlink-server-workflow-") as directory
         if sys.platform!="win32":
             assert all(p.stat().st_mode&0o077==0 for p in (invited_root/"profiles").rglob("*") if p.is_file()),"Profile secrets are readable by other users"
         control("stop");assert client.wait(timeout=15)==0
-        assert len(control("server-list",success=False))>=0
         print("Real service onboarding: isolated profiles, one-use registration, switch/disconnect, stale request rejection, confirmed server/network invitation, crash recovery, changed-key blocking and live revocation passed")
     except BaseException:
         for log in logs:

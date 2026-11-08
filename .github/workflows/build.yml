@@ -466,6 +466,8 @@ jobs:
           python3 -c 'from pathlib import Path; import shutil; [shutil.copyfile(p,Path("release-assets")/p.name) for p in Path("native-release").rglob("*") if p.is_file() and p.name.endswith((".zip",".tar.gz"))]'
       - name: Validate packages and generate release checksums
         run: python3 release/prepare.py release-assets --commit "$GITHUB_SHA" --native
+      - name: Verify client and relay coexistence with both real Linux packages
+        run: python3 tests/coexistence_tests.py release-assets
       - name: Preserve verified release bundle
         uses: actions/upload-artifact@v4
         with:

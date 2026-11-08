@@ -80,6 +80,9 @@ try {
     & $install -InstallDirectory $program -DataDirectory $state
     Assert-True (-not (Test-Path (Join-Path $state 'auth.token'))) 'Fresh installation must not require or generate a server token.'
     Assert-True (-not (Test-Path (Join-Path $state 'device.identity'))) 'Unconfigured service must not create a device identity.'
+    $url = Get-Item 'HKLM:\SOFTWARE\Classes\lanlink\shell\open\command'
+    Assert-True ($url.GetValue('') -eq ('"' + (Join-Path $program 'bin\lanlink-ui.exe') + '" --invite "%1"')) 'The installed URL handler must quote a fixed GUI executable and a single invitation argument.'
+    $url.Close()
     $status = & (Join-Path $program 'bin\lanlink-ui-cli.exe') status
     Assert-True ($LASTEXITCODE -eq 0 -and ($status -join "`n").Contains('server configuration: unconfigured')) 'Fresh Windows service must start in the unconfigured state.'
     & $uninstall -InstallDirectory $program -RemoveData
@@ -173,12 +176,15 @@ try {
     Set-Service -Name LanLink -StartupType Manual
     $wintunHash = (Get-FileHash (Join-Path $program 'bin\wintun.dll')).Hash
     Remove-Item -LiteralPath (Join-Path $program 'bin\wintun.dll') -Force
+    Remove-Item -LiteralPath 'HKLM:\SOFTWARE\Classes\lanlink' -Recurse -Force
     & $install -Mode Repair -InstallDirectory $program -DataDirectory $state -NoStart
+    Assert-True (Test-Path 'HKLM:\SOFTWARE\Classes\lanlink\shell\open\command') 'Repair must restore the invitation URL handler.'
     Assert-True ((Get-FileHash (Join-Path $program 'bin\wintun.dll')).Hash -eq $wintunHash) 'Repair must restore missing required libraries.'
     Assert-True ((Get-CimInstance Win32_Service -Filter "Name='LanLink'").StartMode -eq 'Manual') 'Repair must preserve the selected service startup mode.'
     Assert-True ((Get-FileHash (Join-Path $state 'client.conf')).Hash -eq $configHash -and (Get-FileHash (Join-Path $state 'auth.token')).Hash -eq $tokenHash) 'Repair must preserve configuration and credentials.'
     & $uninstall -InstallDirectory $program
     Assert-True (-not (Test-Path $program)) 'Uninstall must remove program files.'
+    Assert-True (-not (Test-Path 'HKLM:\SOFTWARE\Classes\lanlink')) 'Uninstall must remove its owned URL handler.'
     Assert-True (-not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink')) 'Uninstall must remove its Windows registration.'
     Assert-True (Test-Path $identity) 'Uninstall must preserve data by default.'
     Assert-True (@(Get-NetFirewallRule -Group LanLink -ErrorAction SilentlyContinue).Count -eq 0) 'Uninstall must remove only the LanLink rules.'

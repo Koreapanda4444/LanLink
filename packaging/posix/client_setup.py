@@ -199,6 +199,8 @@ def install_main():
         if live and MAC:
             os.chown(unit, 0, 0)
         install_desktop(prefix, desktop)
+        if MAC and live:
+            run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister","-f",str(desktop)])
         if not MAC:
             mime_changed=True
             mime_default(root,True)
@@ -276,6 +278,8 @@ def uninstall_main():
         else:
             run(["/usr/bin/systemctl", "disable", "--now", "lanlink-client.service"])
     unit.unlink(missing_ok=True)
+    if MAC and live:
+        run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister","-u",str(desktop)])
     desktop.unlink(missing_ok=True)
     if not MAC:mime_default(root,False)
     shutil.rmtree(prefix)
