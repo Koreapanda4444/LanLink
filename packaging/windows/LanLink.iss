@@ -30,6 +30,9 @@ WizardSizePercent=100,100
 WizardResizable=no
 ShowLanguageDialog=yes
 LanguageDetectionMethod=uilanguage
+WizardImageFile=..\..\assets\branding\installer-sidebar.bmp
+WizardSmallImageFile=..\..\assets\branding\installer-header.bmp
+WizardImageStretch=yes
 SetupIconFile=..\..\assets\branding\lanlink.ico
 Compression=lzma2
 SolidCompression=yes
@@ -85,22 +88,9 @@ end;
 
 procedure StyleWizard;
 begin
-  WizardForm.WizardBitmapImage.Visible := False;
-  WizardForm.WizardBitmapImage2.Visible := False;
-  WizardForm.WizardSmallBitmapImage.Visible := False;
-  WizardForm.WelcomeLabel1.SetBounds(ScaleX(24), ScaleY(24),
-    WizardForm.WelcomePage.ClientWidth - ScaleX(48), ScaleY(40));
   WizardForm.WelcomeLabel1.Font.Size := 14;
   WizardForm.WelcomeLabel1.Caption := CustomMessage('InstallTitle');
-  WizardForm.WelcomeLabel2.SetBounds(ScaleX(24), ScaleY(86),
-    WizardForm.WelcomePage.ClientWidth - ScaleX(48), WizardForm.WelcomePage.ClientHeight - ScaleY(110));
   WizardForm.WelcomeLabel2.Caption := CustomMessage('InstallDescription');
-  WizardForm.FinishedHeadingLabel.Left := ScaleX(24);
-  WizardForm.FinishedHeadingLabel.Width := WizardForm.FinishedPage.ClientWidth - ScaleX(48);
-  WizardForm.FinishedLabel.Left := ScaleX(24);
-  WizardForm.FinishedLabel.Width := WizardForm.FinishedPage.ClientWidth - ScaleX(48);
-  WizardForm.RunList.Left := ScaleX(24);
-  WizardForm.RunList.Width := WizardForm.FinishedPage.ClientWidth - ScaleX(48);
 end;
 
 function MaintenanceMode: String;
