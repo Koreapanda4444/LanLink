@@ -31,9 +31,6 @@ WizardResizable=no
 ShowLanguageDialog=yes
 LanguageDetectionMethod=uilanguage
 SetupIconFile=..\..\assets\branding\lanlink.ico
-WizardImageFile=..\..\assets\branding\installer-sidebar.bmp
-WizardSmallImageFile=..\..\assets\branding\installer-header.bmp
-WizardImageStretch=yes
 Compression=lzma2
 SolidCompression=yes
 SetupLogging=yes
@@ -64,6 +61,11 @@ var
   RequestedMode: String;
   DataDirectory: String;
   InstallResult: Integer;
+  InstallProgress: Integer;
+  InstallGauge: TNewProgressBar;
+  ProgressTimer: UINT_PTR;
+  ProgressPath, ProgressStage: String;
+  BackendRunning: Boolean;
 
 function DefaultProgramDirectory(Param: String): String;
 begin
@@ -82,26 +84,23 @@ begin
 end;
 
 procedure StyleWizard;
-var
-  BrandLabel: TNewStaticText;
 begin
-  WizardForm.Color := $00F8F5F1;
-  WizardForm.MainPanel.Color := clWhite;
-  WizardForm.WelcomePage.Color := clWhite;
-  WizardForm.FinishedPage.Color := clWhite;
-  WizardForm.WelcomeLabel1.Font.Color := $00432110;
-  WizardForm.WelcomeLabel1.Font.Size := 18;
-  WizardForm.WelcomeLabel1.Height := ScaleY(82);
-  WizardForm.WelcomeLabel2.Top := WizardForm.WelcomeLabel1.Top + WizardForm.WelcomeLabel1.Height + ScaleY(12);
-  WizardForm.WelcomeLabel2.Height := WizardForm.WelcomePage.ClientHeight - WizardForm.WelcomeLabel2.Top - ScaleY(16);
-  WizardForm.PageNameLabel.Font.Color := $00432110;
-  WizardForm.FinishedHeadingLabel.Font.Color := $00432110;
-  WizardForm.ReadyMemo.Color := clWhite;
-  BrandLabel := TNewStaticText.Create(WizardForm);
-  BrandLabel.Parent := WizardForm;
-  BrandLabel.SetBounds(ScaleX(18), WizardForm.CancelButton.Top + ScaleY(5), ScaleX(160), ScaleY(18));
-  BrandLabel.Font.Color := $00857160;
-  BrandLabel.Caption := 'LanLink  {#AppVersion}';
+  WizardForm.WizardBitmapImage.Visible := False;
+  WizardForm.WizardBitmapImage2.Visible := False;
+  WizardForm.WizardSmallBitmapImage.Visible := False;
+  WizardForm.WelcomeLabel1.SetBounds(ScaleX(24), ScaleY(24),
+    WizardForm.WelcomePage.ClientWidth - ScaleX(48), ScaleY(40));
+  WizardForm.WelcomeLabel1.Font.Size := 14;
+  WizardForm.WelcomeLabel1.Caption := CustomMessage('InstallTitle');
+  WizardForm.WelcomeLabel2.SetBounds(ScaleX(24), ScaleY(86),
+    WizardForm.WelcomePage.ClientWidth - ScaleX(48), WizardForm.WelcomePage.ClientHeight - ScaleY(110));
+  WizardForm.WelcomeLabel2.Caption := CustomMessage('InstallDescription');
+  WizardForm.FinishedHeadingLabel.Left := ScaleX(24);
+  WizardForm.FinishedHeadingLabel.Width := WizardForm.FinishedPage.ClientWidth - ScaleX(48);
+  WizardForm.FinishedLabel.Left := ScaleX(24);
+  WizardForm.FinishedLabel.Width := WizardForm.FinishedPage.ClientWidth - ScaleX(48);
+  WizardForm.RunList.Left := ScaleX(24);
+  WizardForm.RunList.Width := WizardForm.FinishedPage.ClientWidth - ScaleX(48);
 end;
 
 function MaintenanceMode: String;
@@ -132,6 +131,14 @@ begin
     'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LanLink', 'InstallLocation', ExistingLocation);
   RequestedMode := Lowercase(ExpandConstant('{param:MODE|}'));
   StyleWizard;
+  InstallGauge := TNewProgressBar.Create(WizardForm);
+  InstallGauge.Parent := WizardForm.ProgressGauge.Parent;
+  InstallGauge.SetBounds(WizardForm.ProgressGauge.Left, WizardForm.ProgressGauge.Top,
+    WizardForm.ProgressGauge.Width, WizardForm.ProgressGauge.Height);
+  InstallGauge.Min := 0;
+  InstallGauge.Max := 100;
+  InstallGauge.Style := npbstNormal;
+  WizardForm.ProgressGauge.Visible := False;
   MaintenancePage := CreateInputOptionPage(wpWelcome, CustomMessage('MaintenanceTitle'),
     CustomMessage('MaintenanceSubtitle'), CustomMessage('MaintenanceDescription'), True, False);
   MaintenancePage.Add(CustomMessage('ModifyOption'));
@@ -193,30 +200,98 @@ begin
      (ExpandConstant('{param:RelayPort|}') <> '') then Result := CustomMessage('NoServerOptions');
 end;
 
+function SetTimer(hWnd: HWND; nIDEvent: UINT_PTR; uElapse: UINT; lpTimerFunc: NativeInt): UINT_PTR;
+  external 'SetTimer@user32.dll stdcall';
+function KillTimer(hWnd: HWND; nIDEvent: UINT_PTR): Integer;
+  external 'KillTimer@user32.dll stdcall';
+
+procedure SetInstallProgress(Value: Integer; Stage: String);
+var
+  Detail: String;
+begin
+  if Value < InstallProgress then Value := InstallProgress;
+  if Value > 100 then Value := 100;
+  if (Value <> InstallProgress) or (Stage <> ProgressStage) then
+    Log(Format('LanLink progress: %d %s', [Value, Stage]));
+  InstallProgress := Value;
+  ProgressStage := Stage;
+  InstallGauge.Position := InstallProgress;
+  if Stage = 'copy' then Detail := CustomMessage('ProgressCopy')
+  else if Stage = 'apply' then Detail := CustomMessage('ProgressApply')
+  else if Stage = 'shortcuts' then Detail := CustomMessage('ProgressShortcuts')
+  else if Stage = 'cleanup' then Detail := CustomMessage('ProgressCleanup')
+  else if Stage = 'rollback' then Detail := CustomMessage('ProgressRollback')
+  else if Stage = 'remove' then Detail := CustomMessage('ProgressRemove')
+  else if Stage = 'complete' then Detail := CustomMessage('ProgressComplete')
+  else Detail := CustomMessage('ProgressPrepare');
+  WizardForm.StatusLabel.Caption := Detail;
+  WizardForm.FilenameLabel.Caption := IntToStr(InstallProgress) + '%';
+end;
+
+procedure ReadSetupProgress;
+var
+  Data: AnsiString;
+  Content, Stage: String;
+  Separator, Value: Integer;
+begin
+  if not LoadStringFromFile(ProgressPath, Data) then Exit;
+  Content := Trim(String(Data));
+  if Length(Content) > 80 then Exit;
+  Separator := Pos('|', Content);
+  if Separator = 0 then Exit;
+  Value := StrToIntDef(Copy(Content, 1, Separator - 1), -2);
+  if (Value < -1) or (Value > 100) then Exit;
+  Stage := Copy(Content, Separator + 1, Length(Content));
+  if Value < 0 then SetInstallProgress(InstallProgress, Stage)
+  else SetInstallProgress(20 + (Value * 79) div 100, Stage);
+end;
+
+procedure UpdateSetupProgress(Arg1: HWND; Arg2: UINT; Arg3: UINT_PTR; Arg4: DWORD);
+begin
+  if BackendRunning then ReadSetupProgress;
+end;
+
+procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
+begin
+  if MaxProgress > 0 then
+    SetInstallProgress(Integer((Int64(CurProgress) * 20) div MaxProgress), 'prepare');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Parameters, LogPath: String;
   Transcript: AnsiString;
   ResultCode: Integer;
 begin
+  if CurStep = ssInstall then begin
+    InstallProgress := 0;
+    ProgressStage := '';
+    SetInstallProgress(0, 'prepare');
+  end;
   if CurStep <> ssPostInstall then Exit;
   InstallResult := 1;
   LogPath := ExpandConstant('{log}') + '.client.log';
+  ProgressPath := ExpandConstant('{tmp}\LanLink-progress.txt');
+  DeleteFile(ProgressPath);
   Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
     Quote(ExpandConstant('{tmp}\LanLink\SetupClient.ps1')) +
     ' -InstallDirectory ' + Quote(ProgramDirectory('')) +
     ' -DataDirectory ' + Quote(DataDirectory) +
     ' -Mode ' + MaintenanceMode + ' -SetupExecutable ' + Quote(ExpandConstant('{srcexe}')) +
-    ' -LogFile ' + Quote(LogPath);
+    ' -LogFile ' + Quote(LogPath) + ' -ProgressFile ' + Quote(ProgressPath);
   if not OptionsPage.Values[0] then Parameters := Parameters + ' -NoCli';
   if not OptionsPage.Values[1] then Parameters := Parameters + ' -NoStartMenu';
   if OptionsPage.Values[2] then Parameters := Parameters + ' -DesktopShortcut';
   if RemoveDataPage.Values[0] then Parameters := Parameters + ' -RemoveData';
   if ExpandConstant('{param:NoStart|0}') = '1' then Parameters := Parameters + ' -NoStart';
   Log('LanLink maintenance mode: ' + MaintenanceMode);
-  WizardForm.StatusLabel.Caption := CustomMessage('ConfigureStatus');
-  WizardForm.FilenameLabel.Caption := CustomMessage('ConfigureDetails');
-  WizardForm.ProgressGauge.Style := npbstMarquee;
+  SetInstallProgress(20, 'prepare');
+  BackendRunning := True;
+  ProgressTimer := SetTimer(0, 0, 100, CreateCallback(@UpdateSetupProgress));
+  if ProgressTimer = 0 then begin
+    BackendRunning := False;
+    RaiseException(CustomMessage('CannotRun'));
+  end;
   try
     if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then RaiseException(CustomMessage('CannotRun'));
@@ -224,9 +299,13 @@ begin
       if LoadStringFromFile(LogPath, Transcript) then Log(String(Transcript));
       RaiseException(CustomMessage('InstallFailed') + #13#10 + LogPath);
     end;
+    ReadSetupProgress;
     InstallResult := 0;
+    SetInstallProgress(100, 'complete');
   finally
-    WizardForm.ProgressGauge.Style := npbstNormal;
+    BackendRunning := False;
+    KillTimer(0, ProgressTimer);
+    ProgressTimer := 0;
   end;
 end;
 
@@ -237,6 +316,10 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  if CurPageID = wpInstalling then begin
+    WizardForm.ProgressGauge.Visible := False;
+    InstallGauge.BringToFront;
+  end;
   if (CurPageID = wpFinished) and (MaintenanceMode = 'uninstall') then begin
     WizardForm.FinishedHeadingLabel.Caption := CustomMessage('RemovedHeading');
     WizardForm.FinishedLabel.Caption := CustomMessage('RemovedDetails');

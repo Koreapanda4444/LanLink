@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string] $ProgressFile,
     [string] $InstallDirectory = "$env:ProgramFiles\LanLink",
     [switch] $RemoveData,
     [switch] $PromptForData
@@ -9,6 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ClientSetup.psm1') -Force
 Assert-LanLinkAdministrator
+Write-LanLinkSetupProgress $ProgressFile 0 'prepare'
 $InstallDirectory = Get-LanLinkFullPath $InstallDirectory
 $markerPath = Join-Path $InstallDirectory 'installation.json'
 if (-not (Test-Path -LiteralPath $markerPath)) { throw 'A LanLink installation marker is required.' }
@@ -22,6 +24,7 @@ if ($PromptForData -and -not $RemoveData) {
     if ($choice -eq 'Cancel') { return }
     $RemoveData = $choice -eq 'Yes'
 }
+Write-LanLinkSetupProgress $ProgressFile 20 'remove'
 if (Get-Service -Name LanLink -ErrorAction SilentlyContinue) {
     Invoke-LanLinkServiceCommand (Join-Path $InstallDirectory 'bin\lanlink-service.exe') @('--uninstall')
     $deadline = (Get-Date).AddSeconds(30)
@@ -30,17 +33,24 @@ if (Get-Service -Name LanLink -ErrorAction SilentlyContinue) {
         Start-Sleep -Milliseconds 200
     }
 }
+Write-LanLinkSetupProgress $ProgressFile 45 'remove'
 Remove-LanLinkFirewallRules
+Write-LanLinkSetupProgress $ProgressFile 60 'remove'
 Unregister-LanLinkInstallation $InstallDirectory
 Unregister-LanLinkUrl $InstallDirectory
+Write-LanLinkSetupProgress $ProgressFile 70 'remove'
 foreach ($folder in 'CommonPrograms', 'CommonDesktopDirectory') {
     $shortcut = Join-Path ([Environment]::GetFolderPath($folder)) 'LanLink.lnk'
     if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut -Force }
 }
+Write-LanLinkSetupProgress $ProgressFile 80 'remove'
 Remove-Item -LiteralPath $InstallDirectory -Recurse -Force
+Write-LanLinkSetupProgress $ProgressFile 90 'remove'
 if ($RemoveData) {
     if (Test-Path -LiteralPath $dataDirectory) { Remove-Item -LiteralPath $dataDirectory -Recurse -Force }
     $preferences = 'HKCU:\Software\LanLink'
     if (Test-Path -LiteralPath $preferences) { Remove-Item -LiteralPath $preferences -Recurse -Force }
 }
 Write-Output $(if ($RemoveData) { 'LanLink and its data were removed.' } else { "LanLink removed. Data preserved in $dataDirectory." })
+
+Write-LanLinkSetupProgress $ProgressFile 99 'cleanup'

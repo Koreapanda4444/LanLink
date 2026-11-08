@@ -1,6 +1,7 @@
 [Messages]
-WelcomeLabel1=Welcome to LanLink
-WelcomeLabel2=Install LanLink on your computer.
+ClickNext=
+WelcomeLabel1=LanLink Setup
+WelcomeLabel2=Connect PCs over the internet through a virtual LAN.
 FinishedHeadingLabel=LanLink is installed
 FinishedLabelNoIcons=LanLink has been installed.
 
@@ -35,3 +36,13 @@ NotInstalled=Install LanLink before using maintenance operations.
 NoServerOptions=Server connection options belong in LanLink, not Setup.
 RemovedHeading=LanLink was removed
 RemovedDetails=You can close Setup now.
+InstallTitle=LanLink Setup
+InstallDescription=Connect PCs over the internet through a virtual LAN.%n%nUse each PC's virtual IP in games and other applications.
+ProgressPrepare=Preparing...
+ProgressCopy=Copying files...
+ProgressApply=Applying settings...
+ProgressShortcuts=Creating shortcuts...
+ProgressCleanup=Finishing...
+ProgressRollback=Restoring the previous installation...
+ProgressRemove=Removing LanLink...
+ProgressComplete=Complete

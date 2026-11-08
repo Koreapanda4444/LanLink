@@ -104,6 +104,33 @@ jobs:
         $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
         & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=1.0.0 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
         if ($LASTEXITCODE -ne 0) { throw 'EXE installer compilation failed.' }
+    - name: Verify installer progress and maintenance
+      if: runner.os == 'Windows'
+      run: |
+        $exe = (Get-ChildItem artifacts/*.exe | Select-Object -First 1).FullName
+        $target = Join-Path $env:RUNNER_TEMP 'LanLink-progress-check'
+        if (Get-Service LanLink -ErrorAction SilentlyContinue) { throw 'Unexpected existing LanLink service on the build runner.' }
+        foreach ($mode in 'install', 'repair', 'modify', 'uninstall') {
+          $log = Join-Path $env:RUNNER_TEMP "LanLink-$mode-progress.log"
+          $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LANG=en', '/NoStart=1', "/MODE=$mode", ('/DIR="{0}"' -f $target), ('/LOG="{0}"' -f $log))
+          if ($mode -eq 'uninstall') { $arguments += '/RemoveData=1' }
+          $process = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Last 60
+            throw "$mode failed with exit code $($process.ExitCode)."
+          }
+          $events = @(Select-String -Path $log -Pattern 'LanLink progress: ([0-9]+) ([a-z]+)' | ForEach-Object {
+            [pscustomobject]@{ value = [int]$_.Matches[0].Groups[1].Value; stage = $_.Matches[0].Groups[2].Value }
+          })
+          if ($events.Count -lt 3 -or $events[0].value -ne 0 -or $events[-1].value -ne 100) { throw "$mode did not report complete determinate progress." }
+          for ($i = 1; $i -lt $events.Count; $i++) {
+            if ($events[$i].value -lt $events[$i - 1].value -or $events[$i].value -gt 100) { throw "$mode progress went backwards or exceeded 100%." }
+          }
+          if (-not ($events | Where-Object { $_.value -gt 20 -and $_.value -lt 98 -and $_.stage -ne 'prepare' })) { throw "$mode did not show live backend progress." }
+          Write-Output "$mode : $($events.Count) progress updates, monotonic 0-100%."
+        }
+        if (Test-Path $target) { throw 'Installer validation left its program directory behind.' }
+        if (Get-Service LanLink -ErrorAction SilentlyContinue) { throw 'Installer validation left its service behind.' }
     - name: Upload Windows client
       if: runner.os == 'Windows'
       uses: actions/upload-artifact@v4

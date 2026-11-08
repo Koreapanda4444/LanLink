@@ -1,6 +1,26 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Write-LanLinkSetupProgress([string] $Path, [int] $Percent, [string] $Stage) {
+    if (-not $Path) { return }
+    if ($Percent -lt -1 -or $Percent -gt 100 -or $Stage -notmatch '^[a-z]+$') { throw 'Invalid setup progress.' }
+    $temporary = "$Path.pending"
+    try {
+        [IO.File]::WriteAllText($temporary, "$Percent|$Stage", [Text.Encoding]::ASCII)
+        for ($attempt = 0; $attempt -lt 3; $attempt++) {
+            try {
+                if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, $null) }
+                else { [IO.File]::Move($temporary, $Path) }
+                return
+            } catch [IO.IOException] {
+                if ($attempt -eq 2) { throw }
+                Start-Sleep -Milliseconds 20
+            }
+        }
+    } catch { Write-Verbose "Cannot update setup progress: $_" }
+    finally { try { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } } catch { Write-Verbose "Cannot remove setup progress temporary file: $_" } }
+}
+
 function Assert-LanLinkAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)

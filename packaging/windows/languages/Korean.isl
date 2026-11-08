@@ -3,8 +3,9 @@ DialogFontName=Malgun Gothic
 WelcomeFontName=Malgun Gothic
 
 [Messages]
-WelcomeLabel1=LanLink 설치를 시작합니다
-WelcomeLabel2=컴퓨터에 LanLink를 설치합니다.
+ClickNext=
+WelcomeLabel1=LanLink 설치
+WelcomeLabel2=인터넷에 연결된 PC를 가상 LAN으로 연결합니다.
 FinishedHeadingLabel=LanLink 설치 완료
 FinishedLabelNoIcons=LanLink 설치가 완료되었습니다.
 
@@ -39,3 +40,13 @@ NotInstalled=유지관리 작업 전에 LanLink를 설치하세요.
 NoServerOptions=서버 연결 설정은 설치 프로그램이 아닌 LanLink에서 관리합니다.
 RemovedHeading=LanLink 제거 완료
 RemovedDetails=설치 프로그램을 닫아도 됩니다.
+InstallTitle=LanLink 설치
+InstallDescription=인터넷에 연결된 PC를 가상 LAN으로 연결합니다.%n%n게임과 프로그램에서 상대 PC의 가상 IP로 접속할 수 있습니다.
+ProgressPrepare=준비 중...
+ProgressCopy=파일 복사 중...
+ProgressApply=설정 적용 중...
+ProgressShortcuts=바로가기 만드는 중...
+ProgressCleanup=마무리 중...
+ProgressRollback=이전 설치 상태로 복구 중...
+ProgressRemove=LanLink 제거 중...
+ProgressComplete=완료

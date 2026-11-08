@@ -2,6 +2,7 @@
 param(
     [ValidateSet('Install', 'Modify', 'Repair')] [string] $Mode = 'Install',
     [string] $SetupExecutable,
+    [string] $ProgressFile,
     [switch] $NoCli,
     [switch] $NoStartMenu,
     [switch] $DesktopShortcut,
@@ -14,6 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ClientSetup.psm1') -Force
 Assert-LanLinkAdministrator
+Write-LanLinkSetupProgress $ProgressFile 0 'prepare'
 $InstallDirectory = Get-LanLinkFullPath $InstallDirectory
 $DataDirectory = Get-LanLinkFullPath $DataDirectory
 if ($InstallDirectory -eq $DataDirectory -or
@@ -94,22 +96,36 @@ $committed = $false
 $rollbackComplete = $false
 try {
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'bin') -Destination $staging -Recurse
-    foreach ($file in 'Install-LanLink.ps1', 'Uninstall-LanLink.ps1', 'ClientSetup.psm1', 'package-version.txt',
-                     'build-info.json', 'INSTALL.md', 'SERVER-SETUP.md', 'RELEASE-NOTES.md', 'Maintenance-LanLink.ps1') {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $staging
+    $payload = [Collections.Generic.List[object]]::new()
+    foreach ($folder in 'bin', 'licenses') {
+        foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot $folder) -Recurse -File) {
+            $payload.Add(@{ source = $file.FullName; relative = $file.FullName.Substring($PSScriptRoot.Length + 1); size = $file.Length })
+        }
     }
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $staging -Recurse
+    foreach ($name in 'Install-LanLink.ps1', 'Uninstall-LanLink.ps1', 'ClientSetup.psm1', 'package-version.txt',
+                     'build-info.json', 'INSTALL.md', 'SERVER-SETUP.md', 'RELEASE-NOTES.md', 'Maintenance-LanLink.ps1') {
+        $source = Join-Path $PSScriptRoot $name
+        $payload.Add(@{ source = $source; relative = $name; size = (Get-Item -LiteralPath $source).Length })
+    }
+    if ($SetupExecutable) {
+        $payload.Add(@{ source = $SetupExecutable; relative = 'maintenance\LanLink-Setup.exe'; size = (Get-Item -LiteralPath $SetupExecutable).Length })
+    }
+    $totalBytes = ($payload | Measure-Object -Property size -Sum).Sum
+    $copiedBytes = 0L
+    foreach ($item in $payload) {
+        $destination = Join-Path $staging $item.relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Copy-Item -LiteralPath $item.source -Destination $destination
+        $copiedBytes += $item.size
+        Write-LanLinkSetupProgress $ProgressFile (5 + [int](40.0 * $copiedBytes / [Math]::Max(1, $totalBytes))) 'copy'
+    }
     $version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'package-version.txt') -Raw).Trim()
     if ($NoCli) { Remove-Item -LiteralPath (Join-Path $staging 'bin\lanlink-ui-cli.exe') -Force }
-    if ($SetupExecutable) {
-        New-Item -ItemType Directory -Path (Join-Path $staging 'maintenance') | Out-Null
-        Copy-Item -LiteralPath $SetupExecutable -Destination (Join-Path $staging 'maintenance\LanLink-Setup.exe')
-    }
     $marker = @{ install_directory = $InstallDirectory; data_directory = $DataDirectory; version = $version
         cli = -not $NoCli; start_menu = -not $NoStartMenu; desktop = [bool]$DesktopShortcut } | ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $staging 'installation.json'), $marker, $encoding)
     Set-LanLinkDirectoryAcl $staging -AllowUsers
+    Write-LanLinkSetupProgress $ProgressFile 50 'apply'
     $firewallBackups = Backup-LanLinkFirewallRules
     $dataChanged = $true
     New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
@@ -118,6 +134,7 @@ try {
         $serviceStopped = $true
         Stop-LanLinkService
     }
+    Write-LanLinkSetupProgress $ProgressFile 60 'apply'
     # Same-volume renames must be atomic. Move-Item can fall back to moving
     # individual children and leave half a program tree after a sharing error.
     if ($hadProgram) {
@@ -127,17 +144,21 @@ try {
     $programInstallStarted = $true
     [IO.Directory]::Move($staging, $InstallDirectory)
     if (-not (Test-Path -LiteralPath $configPath)) { [IO.File]::WriteAllText($configPath, "$configuration`n", $encoding) }
+    Write-LanLinkSetupProgress $ProgressFile 68 'apply'
     $executable = Join-Path $InstallDirectory 'bin\lanlink-service.exe'
     $serviceChanged = $true
     Push-Location $DataDirectory
     try { Invoke-LanLinkServiceCommand $executable @('--install', $configPath) } finally { Pop-Location }
+    Write-LanLinkSetupProgress $ProgressFile 76 'apply'
     $firewallChanged = $true
     Set-LanLinkFirewallRules $executable
+    Write-LanLinkSetupProgress $ProgressFile 83 'shortcuts'
     $shortcutChanged = $true
     if (-not $NoStartMenu) { Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $shortcutPath) }
     elseif (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
     if ($DesktopShortcut) { Invoke-LanLinkServiceCommand $executable @('--create-shortcut', $desktopPath) }
     elseif (Test-Path -LiteralPath $desktopPath) { Remove-Item -LiteralPath $desktopPath -Force }
+    Write-LanLinkSetupProgress $ProgressFile 90 'apply'
     $preserveServiceMode = $hadService -and $Mode -ne 'Install'
     if (-not $NoStart -and (-not $preserveServiceMode -or $wasRunning)) {
         Invoke-LanLinkServiceCommand $executable @('--start')
@@ -146,6 +167,7 @@ try {
         $startupType = switch ($serviceStartMode) { 'Auto' { 'Automatic' }; 'Manual' { 'Manual' }; 'Disabled' { 'Disabled' } }
         Set-Service -Name LanLink -StartupType $startupType
     }
+    Write-LanLinkSetupProgress $ProgressFile 95 'apply'
     $registrationChanged = $true
     Register-LanLinkInstallation $InstallDirectory $version
     if ($null -ne $oldUrl -and (-not $oldUrl[''].ContainsKey('LanLinkOwnerPath') -or $oldUrl['']['LanLinkOwnerPath'].value -ne $InstallDirectory)) { throw 'The lanlink URL scheme belongs to another installation.' }
@@ -154,6 +176,7 @@ try {
     $committed = $true
     Write-Output "LanLink $version installed in $InstallDirectory. Data: $DataDirectory"
 } catch {
+    Write-LanLinkSetupProgress $ProgressFile -1 'rollback'
     $failure = $_
     $rollbackErrors = [Collections.Generic.List[Exception]]::new()
     $actions = @(
@@ -210,6 +233,7 @@ try {
     }
     throw $failure
 } finally {
+    if ($committed) { Write-LanLinkSetupProgress $ProgressFile 98 'cleanup' }
     if ($committed -or $rollbackComplete) {
         try { Remove-LanLinkFirewallBackups $firewallBackups } catch { Write-Warning "Cannot remove temporary firewall backups: $_" }
     }
@@ -220,3 +244,5 @@ try {
         try { Remove-Item -LiteralPath $staging -Recurse -Force } catch { Write-Warning "Staging files remain in ${staging}: $_" }
     }
 }
+
+if ($committed) { Write-LanLinkSetupProgress $ProgressFile 99 'cleanup' }
