@@ -5,6 +5,7 @@
 #include "lanlink/protocol/network_workflow.hpp"
 #include "lanlink/protocol/network_overview.hpp"
 #include "network_model.hpp"
+#include "design.hpp"
 #include "management_panel.hpp"
 #include "server_panel.hpp"
 #include "preferences.hpp"
@@ -70,33 +71,64 @@ std::string format_bytes(const std::uint64_t bytes) {
 
 }
 inline void configure_desktop_style() {
-        ImGui::StyleColorsDark();
-        ImGui::GetIO().IniFilename = nullptr;
-        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        auto& style = ImGui::GetStyle();
-        style.WindowPadding = ImVec2(22, 20);
-        style.FramePadding = ImVec2(12, 8);
-        style.ItemSpacing = ImVec2(10, 10);
-        style.ChildRounding = 8;
-        style.FrameRounding = 5;
-        style.PopupRounding = 8;
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.055f, 0.07f, 0.10f, 1);
-        style.Colors[ImGuiCol_ChildBg] = ImVec4(0.075f, 0.095f, 0.13f, 1);
-        style.Colors[ImGuiCol_Button] = ImVec4(0.12f, 0.29f, 0.48f, 1);
-        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.16f, 0.39f, 0.64f, 1);
-        style.Colors[ImGuiCol_Header] = ImVec4(0.12f, 0.24f, 0.36f, 1);
-        style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.15f, 0.30f, 0.45f, 1);
+    ImGui::StyleColorsLight();
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    auto& style = ImGui::GetStyle();
+    style.WindowPadding = ImVec2(18, 16);
+    style.FramePadding = ImVec2(12, 7);
+    style.ItemSpacing = ImVec2(8, 10);
+    style.CellPadding = ImVec2(10, 7);
+    style.WindowRounding = 10;
+    style.ChildRounding = 6;
+    style.FrameRounding = 6;
+    style.FrameBorderSize = 1;
+    style.WindowBorderSize = 1;
+    style.PopupBorderSize = 1;
+    style.PopupRounding = 10;
+    style.ScrollbarSize = 12;
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(.96f, .97f, .98f, 1);
+    style.Colors[ImGuiCol_ChildBg] = ImVec4(1, 1, 1, 1);
+    style.Colors[ImGuiCol_PopupBg] = ImVec4(1, 1, 1, 1);
+    style.Colors[ImGuiCol_Text] = ImVec4(.13f, .17f, .23f, 1);
+    style.Colors[ImGuiCol_TextDisabled] = ImVec4(.40f, .45f, .51f, 1);
+    style.Colors[ImGuiCol_Border] = ImVec4(.84f, .87f, .90f, 1);
+    style.Colors[ImGuiCol_FrameBg] = ImVec4(1, 1, 1, 1);
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(.97f,.98f,1,1);
+    style.Colors[ImGuiCol_FrameBgActive] = ImVec4(.94f,.96f,1,1);
+    style.Colors[ImGuiCol_Button] = ImVec4(1, 1, 1, 1);
+    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(.94f,.96f,.98f,1);
+    style.Colors[ImGuiCol_ButtonActive] = ImVec4(.89f,.92f,.96f,1);
+    style.Colors[ImGuiCol_Header] = ImVec4(.95f,.97f,.99f,1);
+    style.Colors[ImGuiCol_HeaderHovered] = ImVec4(.80f, .89f, .98f, 1);
+    style.Colors[ImGuiCol_HeaderActive] = ImVec4(.72f, .84f, .97f, 1);
+    style.Colors[ImGuiCol_TitleBg] = ImVec4(1,1,1,1);
+    style.Colors[ImGuiCol_TitleBgActive] = ImVec4(1,1,1,1);
+    style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(.96f,.97f,.98f,1);
+    style.Colors[ImGuiCol_TableRowBg] = ImVec4(1,1,1,1);
+    style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(.985f,.989f,.995f,1);
+    style.Colors[ImGuiCol_TableBorderLight] = ImVec4(.91f,.93f,.95f,1);
+    style.Colors[ImGuiCol_Separator] = ImVec4(.86f,.89f,.92f,1);
+    style.Colors[ImGuiCol_Tab] = ImVec4(.96f,.97f,.98f,1);
+    style.Colors[ImGuiCol_TabHovered] = ImVec4(.89f,.93f,.99f,1);
+    style.Colors[ImGuiCol_TabSelected] = ImVec4(.90f,.94f,1,1);
+    style.Colors[ImGuiCol_TabSelectedOverline] = design::accent;
+    style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(.10f,.15f,.23f,.25f);
+    style.Colors[ImGuiCol_CheckMark] = ImVec4(.16f, .38f, .70f, 1);
+}
+inline void prepare_desktop_popup(float width = 520) {
+    const auto available = ImGui::GetMainViewport()->WorkSize;
+    width = (std::min)(width, (std::max)(240.0f, available.x - 24));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, (std::max)(200.0f, available.y - 24)));
 }
 class DesktopView {
 public:
-    DesktopView(std::optional<core::UiLanguage> language,bool skip_setup,bool force_setup,bool force_management,
+    DesktopView(std::optional<core::UiLanguage> language,bool force_management,
         std::string start_label,std::function<void()> start_service)
         :start_label_(std::move(start_label)),start_service_(std::move(start_service)) {
         force_management_=force_management;
         preferences_=load_preferences();
         if(language)preferences_.language=*language;
-        if(skip_setup)preferences_.setup_completed=true;
-        if(force_setup)preferences_.setup_completed=false;
     }
     void open_invitation(std::string uri){servers_.invitation(std::move(uri));}
     void set_logo(ImTextureID logo){logo_=logo;}
@@ -112,10 +144,6 @@ public:
 
     const char* tr(const char* text) const {
         return lanlink::core::localized_text(preferences_.language,text).data();
-    }
-    void finish_setup() {
-        preferences_.setup_completed=true;
-        attempt([&]{lanlink::ui::save_preferences(preferences_);});
     }
     void render() {
         namespace protocol = lanlink::protocol;
@@ -202,142 +230,236 @@ public:
         ImGui::SetNextWindowSize(viewport->WorkSize);
         constexpr auto flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,0);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
         ImGui::Begin("LanLink", nullptr, flags);
+        ImGui::PopStyleVar(2);
         const bool connected = state.service_online && state.diagnostics && state.diagnostics->authenticated;
         const bool unconfigured = state.service_online && state.diagnostics &&
             state.diagnostics->configuration == protocol::ClientConfigurationState::unconfigured;
         const bool connection_error = state.diagnostics &&
             (state.diagnostics->configuration == protocol::ClientConfigurationState::invalid_credentials ||
              !state.diagnostics->last_error.empty());
-        ImGui::Image(logo_, ImVec2(44, 44));
-        ImGui::SameLine();
-        ImGui::BeginGroup();
-        ImGui::TextUnformatted("LanLink");
-        ImGui::TextDisabled(tr("Private network  /  %s"), lanlink::core::project_version().data());
-        ImGui::EndGroup();
-        ImGui::SameLine(ImGui::GetWindowWidth() - 240);
-        ImGui::TextColored(connected ? ImVec4(0.35f, 0.87f, 0.65f, 1) : ImVec4(0.95f, 0.70f, 0.35f, 1),
-            "%s", connected ? tr("Connected") : unconfigured ? tr("No server configured") : connection_error ? tr("Server connection error") : state.service_online ? tr("Connecting to relay") : tr("Service unavailable"));
-        ImGui::Separator();
-        if (ImGui::BeginChild("navigation", ImVec2(270, -40), ImGuiChildFlags_Borders)) {
-            int language=preferences_.language==lanlink::core::UiLanguage::korean ? 1 : 0;
-            const char* languages[]{"English","한국어"};
-            ImGui::TextUnformatted(tr("Language"));
-            ImGui::SetNextItemWidth(-1);
-            if(ImGui::Combo("##language",&language,languages,2)) {
-                preferences_.language=language==1 ? lanlink::core::UiLanguage::korean : lanlink::core::UiLanguage::english;
-                attempt([&]{lanlink::ui::save_preferences(preferences_);});
-            }
-            if(ImGui::SmallButton(tr("Setup guide"))){preferences_.setup_completed=false;setup_step_=0;}
-            servers_.draw(networks_,state,preferences_.language);
-            ImGui::SeparatorText(tr("Your networks"));
-            ImGui::BeginDisabled(!connected || state.busy);
-            if (ImGui::Button(tr("Create network"), ImVec2(-1, 0))) create_dialog_ = true;
-            if (ImGui::Button(tr("Join network"), ImVec2(-1, 0))) join_dialog_ = true;
-            ImGui::EndDisabled();
-            ImGui::Spacing();
-            if (state.networks.empty()) {
-                ImGui::TextWrapped("%s", connected ? tr("Create a network or join one using its network ID.")
-                    : unconfigured ? tr("No server configured") : tr("Networks appear after the service connects to your relay."));
-            }
-            for (const auto& network : state.networks) {
-                const auto id = hex_id(network.network_id);
-                ImGui::PushID(id.c_str());
-                if (ImGui::Selectable(network.name.c_str(), selected_ == network.network_id)) {
-                    selected_ = network.network_id;
-                    attempt([&] { networks_.submit(protocol::LocalCommand::peers,
-                        protocol::encode_network_selection_request({network.network_id})); });
-                }
-                ImGui::TextDisabled(tr("%s  /  %u devices"), network.role == protocol::NetworkRole::owner ? tr("Owner") : tr("Member"), network.member_count);
-                ImGui::Spacing();
-                ImGui::PopID();
-            }
-            ImGui::SeparatorText(tr("This device"));
-            const auto device = hex_id(state.activity.device_id);
-            const bool has_identity = std::any_of(state.activity.device_id.begin(), state.activity.device_id.end(),
-                [](std::byte value) { return value != std::byte{0}; });
-            ImGui::TextDisabled("%s", has_identity ? (device.substr(0, 20) + "...").c_str() : unconfigured ? tr("No server configured") : tr("Waiting for authentication"));
-            ImGui::BeginDisabled(!has_identity);
-            if (ImGui::Button(tr("Copy device ID"))) ImGui::SetClipboardText(device.c_str());
-            ImGui::EndDisabled();
-            if (!state.service_online && ImGui::Button(tr(start_label_.c_str()))) {
-                attempt([&] {
-                    start_service_();
-                    next_diagnostics_ = {};
-                });
-            }
-            if(ImGui::CollapsingHeader(tr("Account (optional)"))) {
-                ImGui::TextWrapped("%s", tr("Group your devices. Server registration works without an account."));
-                ImGui::BeginDisabled(!connected || state.busy);
-                if(ImGui::Button(tr("Refresh account")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_status;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##accountname",tr("Account or device name"),account_name_.data(),account_name_.size());
-                if(ImGui::Button(tr("Create optional account")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_create;r.text=account_name_.data();networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##enrollment",tr("Enrollment code"),enrollment_input_.data(),enrollment_input_.size(),ImGuiInputTextFlags_Password);
-                if(ImGui::Button(tr("Enroll this device")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::device_enroll;r.text=account_name_.data();r.secret=enrollment_input_.data();networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));std::fill(enrollment_input_.begin(),enrollment_input_.end(),0);});
-                if(account_ && account_->code==protocol::NetworkResultCode::success) {
-                    ImGui::TextWrapped("%s",account_->text.c_str());
-                    if(ImGui::Button(tr("Generate enrollment code")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::enrollment_issue;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
-                    if(!enrollment_code_.empty() && ImGui::Button(tr("Copy enrollment code")))ImGui::SetClipboardText(enrollment_code_.c_str());
-                    if(!enrollment_code_.empty())ImGui::TextWrapped("%s", tr("Enrollment expires after five minutes and one use."));
-                    for(const auto& enrolled:account_->devices) {
-                        const auto enrolled_id=hex_id(enrolled.device_id);ImGui::PushID(enrolled_id.c_str());
-                        ImGui::TextWrapped("%s%s",enrolled.label.c_str(),enrolled.revoked ? tr(" (revoked)") : "");
-                        if(!enrolled.revoked && enrolled.device_id!=state.activity.device_id && ImGui::SmallButton(tr("Revoke device"))) {
-                            protocol::AccessRequest r;r.action=protocol::AccessAction::device_revoke;r.device_id=enrolled.device_id;
-                            confirmation_=protocol::LocalCommand::user_access;confirmation_payload_=protocol::encode_access_request(r);
-                            confirmation_text_=tr("Revoke this enrolled device and remove its network access?");confirm_dialog_=true;
-                        }
-                        ImGui::PopID();
-                    }
+        ImGui::Image(logo_, ImVec2(30,30)); ImGui::SameLine(0,10);
+        design::title("LanLink");
+        const char* connection_label=connected?tr("Connected"):connection_error?tr("Connection error"):
+            !state.service_online?tr("Service unavailable"):state.servers && !state.servers->selected_id.empty()?tr("Connecting"):tr("Disconnected");
+        const float badge_width=ImGui::CalcTextSize(connection_label).x+30;
+        ImGui::SameLine((std::max)(210.0f,ImGui::GetWindowContentRegionMax().x-badge_width-46));
+        design::status(connection_label,connected,connection_error);
+        ImGui::SameLine(0,12);
+        if(design::icon_button("##settings",design::Icon::settings,tr("Settings")))settings_open_=true;
+        ImGui::Dummy(ImVec2(0,4));
+        const protocol::ServerProfile* active = nullptr;
+        if(state.servers) {
+            if(!state.servers->selected_id.empty())preferred_server_=state.servers->selected_id;
+            for(const auto& p:state.servers->profiles)if(p.id==preferred_server_)active=&p;
+            if(!active && !state.servers->profiles.empty())active=&state.servers->profiles.front();
+        }
+        const bool connection_requested=state.servers && !state.servers->selected_id.empty();
+        const float card_width=ImGui::GetContentRegionAvail().x;
+        const auto card=ImGui::GetCursorScreenPos();
+        auto* draw=ImGui::GetWindowDrawList();
+        draw->AddRectFilled(ImVec2(card.x,card.y+2),ImVec2(card.x+card_width,card.y+80),IM_COL32(25,40,65,8),10);
+        draw->AddRectFilled(card,ImVec2(card.x+card_width,card.y+78),IM_COL32(255,255,255,255),10);
+        draw->AddRect(card,ImVec2(card.x+card_width,card.y+78),ImGui::GetColorU32(design::border),10);
+        ImGui::InvisibleButton("##server-picker",ImVec2(card_width-94,78),ImGuiButtonFlags_EnableNav);
+        const bool pick_server=ImGui::IsItemActivated();
+        const bool picker_hover=ImGui::IsItemHovered();
+        if(ImGui::IsItemFocused() && ImGui::GetIO().NavVisible)draw->AddRect(card,ImVec2(card.x+card_width-94,card.y+78),ImGui::GetColorU32(design::accent),10);
+        draw->AddText(ImVec2(card.x+16,card.y+11),ImGui::GetColorU32(design::muted),tr("Server"));
+        auto* face=design::emphasis_font?design::emphasis_font:ImGui::GetFont();
+        const ImVec4 clip(card.x+16,card.y+31,card.x+card_width-132,card.y+68);
+        draw->AddText(face,16,ImVec2(card.x+16,card.y+36),ImGui::GetColorU32(design::ink),active?active->name.c_str():tr("Select server"),nullptr,0,&clip);
+        design::icon(design::Icon::chevron,ImVec2(card.x+card_width-125,card.y+31),20,ImGui::GetColorU32(design::muted));
+        if(active && picker_hover)ImGui::SetTooltip("%s:%u",active->host.c_str(),active->port);
+        if(pick_server)ImGui::OpenPopup("server-picker");
+        ImGui::SetNextWindowSizeConstraints(ImVec2((std::min)(320.0f,card_width-94),0),ImVec2(card_width-94,260));
+        if(ImGui::BeginPopup("server-picker")) {
+            if(state.servers)for(const auto& p:state.servers->profiles) {
+                ImGui::PushID(p.id.c_str());
+                ImGui::BeginDisabled(state.busy);
+                if(ImGui::Selectable(p.name.c_str(),active==&p)) {
+                    preferred_server_=p.id;
+                    if(!p.has_credential)servers_.edit_server(p);
+                    else attempt([&]{protocol::ServerRequest request;request.action=protocol::ServerAction::connect;request.profile.id=p.id;
+                        networks_.submit(protocol::LocalCommand::server_profiles,protocol::encode_server_request(request));});
                 }
                 ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::Separator();
+            if(ImGui::Selectable(tr("Add server")))servers_.add_server();
+            if(ImGui::Selectable(tr("Use invitation")))servers_.paste_invitation();
+            ImGui::EndPopup();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(card.x+card_width-86,card.y+22));
+        ImGui::BeginDisabled(state.busy || !active);
+        if(design::icon_button("##disconnect",design::Icon::power,tr(connection_requested?"Disconnect":"Connect"),connected))attempt([&]{
+            if(!connection_requested && active && !active->has_credential){servers_.edit_server(*active);return;}
+            protocol::ServerRequest request;request.action=connection_requested?protocol::ServerAction::disconnect:protocol::ServerAction::connect;
+            if(active)request.profile.id=active->id;
+            networks_.submit(protocol::LocalCommand::server_profiles,protocol::encode_server_request(request));
+        });
+        ImGui::EndDisabled();ImGui::SameLine(0,4);
+        if(design::icon_button("##servers",design::Icon::more,tr("Servers")))servers_.open_manager();
+        ImGui::SetCursorScreenPos(ImVec2(card.x,card.y+92));
+        if (!selected_ && !state.networks.empty()) {
+            selected_ = state.networks.front().network_id;
+            attempt([&] { networks_.submit(protocol::LocalCommand::peers,
+                protocol::encode_network_selection_request({*selected_})); });
+        }
+        const auto selected = std::find_if(state.networks.begin(), state.networks.end(),
+            [&](const auto& network) { return selected_ && network.network_id == *selected_; });
+        ImGui::AlignTextToFramePadding();
+        design::emphasis(tr("Your networks"));
+        if(!state.networks.empty()) {
+            ImGui::SameLine((std::max)(140.0f,ImGui::GetWindowContentRegionMax().x-170));
+            ImGui::BeginDisabled(!connected || state.busy);
+            if(design::button(tr("New network"),ImVec2(82,30)))create_dialog_=true;
+            ImGui::SameLine();if(design::button(tr("Join"),ImVec2(80,30)))join_dialog_=true;
+            ImGui::EndDisabled();
+            ImGui::SetNextItemWidth(-1);
+            if(ImGui::BeginCombo("##networks",selected!=state.networks.end()?selected->name.c_str():tr("Your networks"))) {
+                for(const auto& network:state.networks)if(ImGui::Selectable(network.name.c_str(),selected_==network.network_id)) {
+                    selected_=network.network_id;
+                    attempt([&]{networks_.submit(protocol::LocalCommand::peers,protocol::encode_network_selection_request({network.network_id}));});
+                }
+                ImGui::EndCombo();
             }
         }
-        ImGui::EndChild();
-        ImGui::SameLine();
-        if (ImGui::BeginChild("workspace", ImVec2(0, -40), ImGuiChildFlags_Borders)) {
-            if(!preferences_.setup_completed) {
-                ImGui::SeparatorText(tr("Welcome to LanLink"));
-                if(setup_step_==0) {
-                    ImGui::TextUnformatted(tr("Choose your language"));
-                    ImGui::TextWrapped("%s", tr("Choose English or Korean in the left panel. You can use LanLink without registering a server yet."));
-                } else if(setup_step_==1) {
-                    ImGui::TextUnformatted(tr("Check your connection"));
-                    ImGui::TextWrapped("%s", tr("Installation is complete. Server connections are managed separately from installation. A server is needed only when connecting to a network."));
-                    ImGui::TextUnformatted(connected ? tr("Connected") : unconfigured ? tr("No server configured") : tr("Waiting for authentication"));
-                    if(ImGui::Button(tr("Retry connection check")))next_diagnostics_={};
-                } else {
-                    ImGui::TextUnformatted(tr("Create or join your first network"));
-                    ImGui::TextWrapped("%s", tr("Create a private network and share a one-time invitation, or paste an invitation from its owner. You can reopen this guide at any time."));
-                }
-                if(setup_step_>0 && ImGui::Button(tr("Back")))--setup_step_;
-                if(setup_step_>0)ImGui::SameLine();
-                ImGui::BeginDisabled(false);
-                if(setup_step_<2) {if(ImGui::Button(tr("Next")))++setup_step_;}
-                else if(ImGui::Button(tr("Finish")))finish_setup();
-                ImGui::EndDisabled();ImGui::SameLine();
-                if(ImGui::SmallButton(tr("Skip for now")))finish_setup();
-                ImGui::Separator();
-            }
-            const auto selected = std::find_if(state.networks.begin(), state.networks.end(),
-                [&](const auto& network) { return selected_ && network.network_id == *selected_; });
+        if (ImGui::BeginChild("workspace", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_None)) {
             if (selected == state.networks.end()) {
-                if (unconfigured) {
-                    ImGui::SeparatorText(tr("No server configured"));
-                    ImGui::TextWrapped("%s", tr("LanLink is ready. No server connection has been configured, and the background service is waiting."));
+                const float center=ImGui::GetContentRegionAvail().x*.5f;
+                ImGui::Dummy(ImVec2(0,(std::max)(10.0f,ImGui::GetContentRegionAvail().y*.17f)));
+                const auto glyph=ImGui::GetCursorScreenPos();
+                const auto center_point=ImVec2(glyph.x+center,glyph.y+28);
+                ImGui::GetWindowDrawList()->AddCircleFilled(center_point,29,IM_COL32(237,243,252,255));
+                design::icon(design::Icon::network,ImVec2(center_point.x-16,center_point.y-16),32,ImGui::GetColorU32(design::accent));
+                ImGui::Dummy(ImVec2(0,66));
+                const char* heading=!state.service_online?tr("Service unavailable"):!connected?tr("No server connected"):tr("No networks yet");
+                auto* heading_face=design::emphasis_font?design::emphasis_font:ImGui::GetFont();
+                const float heading_width=heading_face->CalcTextSizeA(16,1000,0,heading).x;
+                ImGui::SetCursorPosX((std::max)(0.0f,center-heading_width*.5f));design::emphasis(heading);
+                const char* hint=!state.service_online?tr("Try starting LanLink again."):!connected?tr("Add a server or use an invitation."):tr("Create a network or join your friends.");
+                ImGui::SetCursorPosX((std::max)(0.0f,center-ImGui::CalcTextSize(hint).x*.5f));
+                ImGui::TextDisabled("%s",hint);ImGui::Dummy(ImVec2(0,7));
+                ImGui::SetCursorPosX((std::max)(0.0f,center-144));
+                if(!state.service_online) {
+                    if(design::button(tr("Retry"),ImVec2(288,36),true))attempt([&]{start_service_();next_diagnostics_={};});
+                } else if(!connected) {
+                    if(design::button(tr("Add server"),ImVec2(140,36),true))servers_.add_server();
+                    ImGui::SameLine();if(design::button(tr("Use invitation"),ImVec2(140,36)))servers_.paste_invitation();
+                } else {
+                    ImGui::BeginDisabled(state.busy);
+                    if(design::button(tr("Create network"),ImVec2(140,36),true))create_dialog_=true;
+                    ImGui::SameLine();if(design::button(tr("Join network"),ImVec2(140,36)))join_dialog_=true;
+                    ImGui::EndDisabled();
                 }
-                ImGui::SeparatorText(tr("Connect your devices"));
-                ImGui::TextWrapped("%s", tr("LanLink connects your devices through a relay server. Create a network, share its ID, and approve the devices that should join."));
-                ImGui::Spacing();
-                ImGui::TextWrapped("%s", tr("Your relay can run on a Linux server at any hosting provider or on your own hardware."));
+
             } else {
                 const auto id = hex_id(selected->network_id);
                 const bool owner = selected->role == protocol::NetworkRole::owner;
-                const bool administrator=owner || (state.peers && state.peers->network_id==selected->network_id && state.peers->policy && protocol::policy_role(*state.peers->policy,state.activity.device_id)==protocol::AccessRole::administrator);
-                ImGui::SeparatorText(selected->name.c_str());
-                ImGui::TextDisabled("%s", administrator ? tr("You manage this network") : tr("Managed by the network owner"));
+                const bool administrator = owner || (state.peers && state.peers->network_id == selected->network_id &&
+                    state.peers->policy && protocol::policy_role(*state.peers->policy, state.activity.device_id) == protocol::AccessRole::administrator);
+                if (state.peers && state.peers->network_id == selected->network_id &&
+                    now-state.peers_updated_at<std::chrono::seconds(6)) {
+                    const auto& peers = *state.peers;
+                    const auto own = ipv4(peers.own_address);
+                    const auto* current_paths=state.paths && now-state.paths_updated_at<std::chrono::seconds(6) ? &*state.paths : nullptr;
+                    const auto overview=protocol::network_overview(peers,current_paths,connected,state.activity.device_id);
+                    ImGui::AlignTextToFramePadding();ImGui::TextDisabled("%s",tr("My virtual IP"));ImGui::SameLine(0,12);
+                    design::emphasis(own.c_str());ImGui::SameLine(0,8);
+                    if(design::icon_button("##copy-ip",design::Icon::copy,tr("Copy IP")))ImGui::SetClipboardText(own.c_str());
+                    ImGui::Spacing();
+                    design::emphasis(tr("Devices"));ImGui::SameLine();
+                    ImGui::TextDisabled(tr("%u / %u online"),overview.online,overview.total);
+                    ImGui::Spacing();
+
+                    if (ImGui::BeginTable("devices", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn(tr("Virtual IP"), ImGuiTableColumnFlags_WidthFixed, 112);
+                        ImGui::TableSetupColumn(tr("Device"));
+                        ImGui::TableSetupColumn(tr("Status"), ImGuiTableColumnFlags_WidthFixed, 66);
+                        ImGui::TableSetupColumn(tr("Path"), ImGuiTableColumnFlags_WidthFixed, 92);
+                        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 66);
+                        ImGui::TableHeadersRow();
+                        const auto row = [&](const protocol::NetworkDeviceId& device_id, std::uint32_t address, bool online, bool own_device) {
+                            const auto device_text = hex_id(device_id);
+                            const auto ip = ipv4(address);
+                            ImGui::PushID(device_text.c_str());
+                            ImGui::TableNextRow(); ImGui::TableNextColumn();
+                            if (ImGui::Selectable(ip.c_str())) ImGui::SetClipboardText(ip.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s%s", own_device ? tr("This device") : device_text.substr(0,12).c_str(), own_device ? "" : "...");
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", device_text.c_str());
+                            ImGui::TableNextColumn();
+                            const auto status_position=ImGui::GetCursorScreenPos();
+                            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(status_position.x+4,status_position.y+8),3,ImGui::GetColorU32(online?design::green:design::muted));
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX()+13);
+                            ImGui::TextColored(online?design::green:design::muted,"%s",online?tr("Online"):tr("Offline"));
+                            ImGui::TableNextColumn();
+                            const protocol::PeerPathStatus* path=nullptr;
+                            if(current_paths)for(const auto& peer:current_paths->peers)
+                                if(peer.network_id==selected->network_id && peer.device_id==device_id){path=&peer;break;}
+                            const auto kind=path && path->path.lifecycle==protocol::PathLifecycle::authenticated ? path->path.kind : protocol::PathKind::none;
+                            const bool blocked=!own_device && peers.policy && !protocol::policy_allows(*peers.policy,state.activity.device_id,device_id);
+                            const char* label=blocked?tr("Blocked"):own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
+                            ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.10f,.48f,.32f,1):ImVec4(.25f,.35f,.48f,1),"%s",label);
+                            if(blocked && ImGui::IsItemHovered())ImGui::SetTooltip("%s",tr("Blocked by policy"));
+                            if(!blocked && path && ImGui::IsItemHovered()) {
+                                ImGui::BeginTooltip();ImGui::TextUnformatted(tr(protocol::path_reason_name(path->path.reason).data()));
+                                if(path->path.rtt_us)ImGui::Text("RTT: %.1f ms",*path->path.rtt_us/1000.0);
+                                ImGui::Text(tr("Packets: %llu sent / %llu received"),static_cast<unsigned long long>(path->path.sent_packets),static_cast<unsigned long long>(path->path.received_packets));
+                                if(path->path.lost_packets)ImGui::Text(tr("Lost transport packets: %llu"),static_cast<unsigned long long>(*path->path.lost_packets));
+                                ImGui::EndTooltip();
+                            }
+                            ImGui::TableNextColumn();
+                            ImGui::BeginDisabled(!administrator || own_device || device_id==selected->owner_device_id || (!owner && peers.policy && protocol::policy_role(*peers.policy,device_id)==protocol::AccessRole::administrator) || !connected || state.busy);
+                            if (ImGui::SmallButton(tr("Remove"))) {
+                                confirmation_ = protocol::LocalCommand::kick;
+                                confirmation_payload_ = protocol::encode_network_member_request({selected->network_id, device_id});
+                                confirmation_text_ = tr("Remove this device from the network? Its network access will be revoked.");
+                                confirm_dialog_ = true;
+                            }
+                            ImGui::EndDisabled(); ImGui::PopID();
+                        };
+                        row(state.activity.device_id, peers.own_address, connected, true);
+                        for (const auto& peer : peers.peers) row(peer.device_id, peer.ipv4_address, connected && peer.signed_key.has_value(), false);
+                        ImGui::EndTable();
+                    }
+                    if (administrator && ImGui::CollapsingHeader(tr("Join requests"))) {
+                        bool any_requests = false;
+                        for (const auto& request : state.activity.requests) {
+                            if (request.network_id != selected->network_id) continue;
+                            any_requests = true;
+                            const auto device_text = hex_id(request.device_id);
+                            ImGui::PushID(device_text.c_str());
+                            ImGui::Text("%s...", device_text.substr(0, 24).c_str());
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(!connected || state.busy);
+                            if (ImGui::SmallButton(tr("Approve"))) attempt([&] {
+                                networks_.submit(protocol::LocalCommand::approve, protocol::encode_network_member_request({selected->network_id, request.device_id}));
+                            });
+                            ImGui::EndDisabled(); ImGui::PopID();
+                        }
+                        if (!any_requests) ImGui::TextDisabled("%s", tr("No new requests in this service session."));
+                        if (ImGui::CollapsingHeader(tr("Manage a device by ID"))) {
+                            ImGui::SetNextItemWidth(-1);
+                            ImGui::InputTextWithHint("##device", tr("Device ID"), device_id_.data(), device_id_.size());
+                            ImGui::BeginDisabled(!connected || state.busy || device_id_[0] == 0);
+                            for (const auto& action : {std::pair{tr("Invite"), protocol::LocalCommand::invite}, std::pair{tr("Approve"), protocol::LocalCommand::approve}}) {
+                                if (ImGui::Button(action.first)) attempt([&] {
+                                    networks_.submit(action.second, protocol::encode_network_member_request({selected->network_id,
+                                        parse_id<protocol::network_device_id_size>(device_id_.data())}));
+                                });
+                                ImGui::SameLine();
+                            }
+                            ImGui::NewLine(); ImGui::EndDisabled();
+                        }
+                    }
+                } else ImGui::TextWrapped("%s", tr("Waiting for an active network address. The owner may still need to approve this device."));
+
+                if (ImGui::CollapsingHeader(tr("Network options"))) {
                 if (ImGui::Button(tr("Copy network ID"))) ImGui::SetClipboardText(id.c_str());
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!connected || state.busy);
@@ -376,112 +498,84 @@ public:
                     confirmation_text_=tr("Revoke all unused invitation links for this network?");confirm_dialog_=true;
                 }
                 ImGui::EndDisabled();
-                if (state.peers && state.peers->network_id == selected->network_id &&
-                    now-state.peers_updated_at<std::chrono::seconds(6)) {
-                    const auto& peers = *state.peers;
-                    const auto own = ipv4(peers.own_address);
-                    const auto* current_paths=state.paths && now-state.paths_updated_at<std::chrono::seconds(6) ? &*state.paths : nullptr;
-                    const auto overview=protocol::network_overview(peers,current_paths,connected,state.activity.device_id);
-                    ImGui::Text(tr("Members: %u online / %u total"),overview.online,overview.total);
-                    ImGui::Text(tr("Paths: %u Direct / %u Relay / %u connecting"),overview.direct,overview.relayed,overview.connecting);
-                    if(overview.blocked)ImGui::TextDisabled(tr("Blocked by policy: %u peers"),overview.blocked);
-                    const auto age=std::chrono::duration_cast<std::chrono::seconds>(now-state.peers_updated_at).count();
-                    ImGui::TextDisabled(tr("Updated %lld seconds ago"),static_cast<long long>(age));
-                    if(ImGui::Button(tr("Copy network overview"))) {
-                        std::string report=tr("LanLink network: ")+selected->name+tr("\nNetwork ID: ")+id+tr("\nVirtual IP: ")+own+
-                            tr("\nOnline: ")+std::to_string(overview.online)+"/"+std::to_string(overview.total)+
-                            tr("\nDirect: ")+std::to_string(overview.direct)+tr(" Relay: ")+std::to_string(overview.relayed)+
-                            tr("\nKey epoch: ")+std::to_string(peers.key_epoch);
-                        ImGui::SetClipboardText(report.c_str());
-                    }
-                    ImGui::Text(tr("Your virtual IP: %s"), own.c_str());
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton(tr("Copy IP"))) ImGui::SetClipboardText(own.c_str());
-                    ImGui::TextDisabled("%s", tr("Use a device's virtual IP to connect to its game or application."));
-                    ImGui::SeparatorText(tr("Devices"));
-                    if (ImGui::BeginTable("devices", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-                        ImGui::TableSetupColumn(tr("Virtual IP"), ImGuiTableColumnFlags_WidthFixed, 135);
-                        ImGui::TableSetupColumn(tr("Device"));
-                        ImGui::TableSetupColumn(tr("Status"), ImGuiTableColumnFlags_WidthFixed, 80);
-                        ImGui::TableSetupColumn(tr("Path"), ImGuiTableColumnFlags_WidthFixed, 110);
-                        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80);
-                        ImGui::TableHeadersRow();
-                        const auto row = [&](const protocol::NetworkDeviceId& device_id, std::uint32_t address, bool online, bool own_device) {
-                            const auto device_text = hex_id(device_id);
-                            const auto ip = ipv4(address);
-                            ImGui::PushID(device_text.c_str());
-                            ImGui::TableNextRow(); ImGui::TableNextColumn();
-                            if (ImGui::Selectable(ip.c_str())) ImGui::SetClipboardText(ip.c_str());
-                            ImGui::TableNextColumn();
-                            ImGui::Text("%s%s", device_text.substr(0, 18).c_str(), own_device ? tr(" (you)") : "...");
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", device_text.c_str());
-                            ImGui::TableNextColumn();
-                            ImGui::TextColored(online ? ImVec4(0.35f, 0.87f, 0.65f, 1) : ImVec4(0.6f, 0.64f, 0.70f, 1), "%s", online ? tr("Online") : tr("Offline"));
-                            ImGui::TableNextColumn();
-                            const protocol::PeerPathStatus* path=nullptr;
-                            if(current_paths)for(const auto& peer:current_paths->peers)
-                                if(peer.network_id==selected->network_id && peer.device_id==device_id){path=&peer;break;}
-                            const auto kind=path && path->path.lifecycle==protocol::PathLifecycle::authenticated ? path->path.kind : protocol::PathKind::none;
-                            const bool blocked=!own_device && peers.policy && !protocol::policy_allows(*peers.policy,state.activity.device_id,device_id);
-                            const char* label=blocked?tr("Blocked"):own_device?tr("Local"):!online?tr("Offline"):kind==protocol::PathKind::direct_quic?tr("Direct"):kind==protocol::PathKind::relay_tls?tr("Relay (TCP)"):kind==protocol::PathKind::relay_quic?tr("Relay"):tr("Connecting");
-                            ImGui::TextColored(kind==protocol::PathKind::direct_quic?ImVec4(.35f,.87f,.65f,1):ImVec4(.65f,.75f,.9f,1),"%s",label);
-                            if(blocked && ImGui::IsItemHovered())ImGui::SetTooltip("%s",tr("Blocked by policy"));
-                            if(!blocked && path && ImGui::IsItemHovered()) {
-                                ImGui::BeginTooltip();ImGui::TextUnformatted(tr(protocol::path_reason_name(path->path.reason).data()));
-                                if(path->path.rtt_us)ImGui::Text("RTT: %.1f ms",*path->path.rtt_us/1000.0);
-                                ImGui::Text(tr("Packets: %llu sent / %llu received"),static_cast<unsigned long long>(path->path.sent_packets),static_cast<unsigned long long>(path->path.received_packets));
-                                if(path->path.lost_packets)ImGui::Text(tr("Lost transport packets: %llu"),static_cast<unsigned long long>(*path->path.lost_packets));
-                                ImGui::EndTooltip();
-                            }
-                            ImGui::TableNextColumn();
-                            ImGui::BeginDisabled(!administrator || own_device || device_id==selected->owner_device_id || (!owner && peers.policy && protocol::policy_role(*peers.policy,device_id)==protocol::AccessRole::administrator) || !connected || state.busy);
-                            if (ImGui::SmallButton(tr("Remove"))) {
-                                confirmation_ = protocol::LocalCommand::kick;
-                                confirmation_payload_ = protocol::encode_network_member_request({selected->network_id, device_id});
-                                confirmation_text_ = tr("Remove this device from the network? Its network access will be revoked.");
-                                confirm_dialog_ = true;
-                            }
-                            ImGui::EndDisabled(); ImGui::PopID();
-                        };
-                        row(state.activity.device_id, peers.own_address, connected, true);
-                        for (const auto& peer : peers.peers) row(peer.device_id, peer.ipv4_address, connected && peer.signed_key.has_value(), false);
-                        ImGui::EndTable();
-                    }
-                    if (administrator) {
-                        ImGui::SeparatorText(tr("Join requests"));
-                        bool any_requests = false;
-                        for (const auto& request : state.activity.requests) {
-                            if (request.network_id != selected->network_id) continue;
-                            any_requests = true;
-                            const auto device_text = hex_id(request.device_id);
-                            ImGui::PushID(device_text.c_str());
-                            ImGui::Text("%s...", device_text.substr(0, 24).c_str());
-                            ImGui::SameLine();
-                            ImGui::BeginDisabled(!connected || state.busy);
-                            if (ImGui::SmallButton(tr("Approve"))) attempt([&] {
-                                networks_.submit(protocol::LocalCommand::approve, protocol::encode_network_member_request({selected->network_id, request.device_id}));
-                            });
-                            ImGui::EndDisabled(); ImGui::PopID();
-                        }
-                        if (!any_requests) ImGui::TextDisabled("%s", tr("No new requests in this service session."));
-                        if (ImGui::CollapsingHeader(tr("Manage a device by ID"))) {
-                            ImGui::SetNextItemWidth(-1);
-                            ImGui::InputTextWithHint("##device", tr("Device ID"), device_id_.data(), device_id_.size());
-                            ImGui::BeginDisabled(!connected || state.busy || device_id_[0] == 0);
-                            for (const auto& action : {std::pair{tr("Invite"), protocol::LocalCommand::invite}, std::pair{tr("Approve"), protocol::LocalCommand::approve}}) {
-                                if (ImGui::Button(action.first)) attempt([&] {
-                                    networks_.submit(action.second, protocol::encode_network_member_request({selected->network_id,
-                                        parse_id<protocol::network_device_id_size>(device_id_.data())}));
-                                });
-                                ImGui::SameLine();
-                            }
-                            ImGui::NewLine(); ImGui::EndDisabled();
-                        }
-                    }
-                } else ImGui::TextWrapped("%s", tr("Waiting for an active network address. The owner may still need to approve this device."));
+                }
+                management_.draw(networks_, state, *selected, preferences_.language, force_management_);
             }
-            if(selected!=state.networks.end())management_.draw(networks_,state,*selected,preferences_.language,force_management_);
-            ImGui::Spacing();
+        }
+        ImGui::EndChild();
+        const char* notice=state.busy?tr("Updating..."):!local_error_.empty()?tr(local_error_.c_str()):
+            !state.server_error.empty()?tr(state.server_error.c_str()):!state.error.empty()?tr("Connection error"):
+            !state.message.empty()?tr(state.message.c_str()):"";
+        if(*notice) {
+            const auto p=ImGui::GetCursorScreenPos();const float width=ImGui::GetContentRegionAvail().x;
+            const ImVec4 clip(p.x,p.y,p.x+width,p.y+ImGui::GetTextLineHeight());
+            ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(),ImGui::GetFontSize(),p,ImGui::GetColorU32(design::muted),notice,nullptr,0,&clip);
+            ImGui::Dummy(ImVec2(width,ImGui::GetTextLineHeight()));
+            if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",notice);
+        }
+        servers_.draw(networks_, state, preferences_.language);
+        if (settings_open_) { ImGui::OpenPopup(tr("Settings")); settings_open_ = false; }
+        prepare_desktop_popup();
+        bool settings_visible = true;
+        if (ImGui::BeginPopupModal(tr("Settings"), &settings_visible, ImGuiWindowFlags_AlwaysAutoResize)) {
+            int language = preferences_.language == lanlink::core::UiLanguage::korean ? 1 : 0;
+            const char* languages[]{"English", "한국어"};
+            ImGui::TextUnformatted(tr("Language")); ImGui::SetNextItemWidth(-1);
+            if (ImGui::Combo("##language", &language, languages, 2)) {
+                preferences_.language = language == 1 ? core::UiLanguage::korean : core::UiLanguage::english;
+                attempt([&] { save_preferences(preferences_); });
+                ImGui::CloseCurrentPopup(); settings_open_ = true;
+            }
+            if(design::button(tr("Diagnostics"))){diagnostics_open_=true;ImGui::CloseCurrentPopup();}
+            ImGui::SeparatorText(tr("This device"));
+            const auto device = hex_id(state.activity.device_id);
+            const bool has_identity = std::any_of(state.activity.device_id.begin(), state.activity.device_id.end(),
+                [](std::byte value) { return value != std::byte{0}; });
+            ImGui::BeginDisabled(!has_identity);
+            if (ImGui::Button(tr("Copy device ID"))) ImGui::SetClipboardText(device.c_str());
+            ImGui::EndDisabled();
+            if (!state.service_online && ImGui::Button(tr(start_label_.c_str())))
+                attempt([&] { start_service_(); next_diagnostics_ = {}; });
+            if(ImGui::CollapsingHeader(tr("Account (optional)"))) {
+                ImGui::TextWrapped("%s", tr("Group your devices. Server registration works without an account."));
+                ImGui::BeginDisabled(!connected || state.busy);
+                if(ImGui::Button(tr("Refresh account")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_status;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##accountname",tr("Account or device name"),account_name_.data(),account_name_.size());
+                if(ImGui::Button(tr("Create optional account")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::account_create;r.text=account_name_.data();networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##enrollment",tr("Enrollment code"),enrollment_input_.data(),enrollment_input_.size(),ImGuiInputTextFlags_Password);
+                if(ImGui::Button(tr("Enroll this device")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::device_enroll;r.text=account_name_.data();r.secret=enrollment_input_.data();networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));std::fill(enrollment_input_.begin(),enrollment_input_.end(),0);});
+                if(account_ && account_->code==protocol::NetworkResultCode::success) {
+                    ImGui::TextWrapped("%s",account_->text.c_str());
+                    if(ImGui::Button(tr("Generate enrollment code")))attempt([&]{protocol::AccessRequest r;r.action=protocol::AccessAction::enrollment_issue;networks_.submit(protocol::LocalCommand::user_access,protocol::encode_access_request(r));});
+                    if(!enrollment_code_.empty() && ImGui::Button(tr("Copy enrollment code")))ImGui::SetClipboardText(enrollment_code_.c_str());
+                    if(!enrollment_code_.empty())ImGui::TextWrapped("%s", tr("Enrollment expires after five minutes and one use."));
+                    for(const auto& enrolled:account_->devices) {
+                        const auto enrolled_id=hex_id(enrolled.device_id);ImGui::PushID(enrolled_id.c_str());
+                        ImGui::TextWrapped("%s%s",enrolled.label.c_str(),enrolled.revoked ? tr(" (revoked)") : "");
+                        if(!enrolled.revoked && enrolled.device_id!=state.activity.device_id && ImGui::SmallButton(tr("Revoke device"))) {
+                            protocol::AccessRequest r;r.action=protocol::AccessAction::device_revoke;r.device_id=enrolled.device_id;
+                            confirmation_=protocol::LocalCommand::user_access;confirmation_payload_=protocol::encode_access_request(r);
+                            confirmation_text_=tr("Revoke this enrolled device and remove its network access?");confirm_dialog_=true;
+                        }
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndDisabled();
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("LanLink %s", core::project_version().data());
+            if (ImGui::Button(tr("Close"))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        if (diagnostics_open_) { ImGui::OpenPopup(tr("Diagnostics")); diagnostics_open_ = false; }
+        prepare_desktop_popup(600);
+        bool diagnostics_visible = true;
+        if (ImGui::BeginPopupModal(tr("Diagnostics"), &diagnostics_visible, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if(!state.error.empty())ImGui::TextWrapped("%s",state.error.c_str());
+            if(!state.server_error.empty())ImGui::TextWrapped("%s",tr(state.server_error.c_str()));
+            if(state.servers && !state.servers->notice.empty())ImGui::TextWrapped("%s",tr(state.servers->notice.c_str()));
             if (ImGui::CollapsingHeader(tr("Game network diagnostics"), ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (state.games) {
                     const auto& metrics = *state.games;
@@ -557,16 +651,13 @@ public:
                     if (!d.last_error.empty()) ImGui::TextWrapped(tr("Last connection error: %s"), d.last_error.c_str());
                 } else ImGui::TextWrapped("%s", tr("The background service is unavailable. Start the service or repair the LanLink installation."));
             }
+            if (ImGui::Button(tr("Close"))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
-        ImGui::EndChild();
-        if (state.busy) ImGui::TextDisabled("%s", tr("Updating..."));
-        else if (!local_error_.empty()) ImGui::TextColored(ImVec4(1, .5f, .4f, 1), "%s", tr(local_error_.c_str()));
-        else if (!state.error.empty()) ImGui::TextColored(ImVec4(1, .5f, .4f, 1), "%s", tr(state.error.c_str()));
-        else if (!state.message.empty()) ImGui::TextUnformatted(tr(state.message.c_str()));
-        else ImGui::TextDisabled("%s", tr("The background service keeps your networks connected when this window is closed."));
         if (create_dialog_) { close_create_=false;ImGui::OpenPopup(tr("Create network")); create_dialog_ = false; }
         if (join_dialog_) { close_join_=false;ImGui::OpenPopup(tr("Join network")); join_dialog_ = false; }
         if (confirm_dialog_) { ImGui::OpenPopup(tr("Confirm network change")); confirm_dialog_ = false; }
+        prepare_desktop_popup(460);
         if (ImGui::BeginPopupModal(tr("Create network"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted(tr("Name your private network."));
             ImGui::SetNextItemWidth(380);
@@ -587,6 +678,7 @@ public:
             if(close_create_){ImGui::CloseCurrentPopup();close_create_=false;}
             ImGui::EndPopup();
         }
+        prepare_desktop_popup(480);
         if (ImGui::BeginPopupModal(tr("Join network"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted(tr("Paste a network ID, invitation link or invitation code."));
             ImGui::SetNextItemWidth(420);
@@ -606,9 +698,10 @@ public:
             if (!local_error_.empty()) ImGui::TextWrapped("%s", tr(local_error_.c_str()));
             ImGui::EndPopup();
         }
+        prepare_desktop_popup(460);
         if (ImGui::BeginPopupModal(tr("Confirm network change"), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             if(close_confirmation_){ImGui::CloseCurrentPopup();close_confirmation_=false;}
-            ImGui::TextUnformatted(tr(confirmation_text_.c_str()));
+            ImGui::TextWrapped("%s", tr(confirmation_text_.c_str()));
             ImGui::BeginDisabled(!connected || state.busy);
             if (ImGui::Button(tr("Confirm"), ImVec2(170, 0))) {
                 attempt([&] { networks_.submit(confirmation_, confirmation_payload_); });
@@ -629,6 +722,7 @@ public:
 
 private:
     ServerPanel servers_;
+    std::string preferred_server_;
     std::uint64_t server_epoch_=0;
     bool close_confirmation_=false;
     std::array<char,41> server_registration_code_{};
@@ -639,7 +733,7 @@ private:
     lanlink::ui::ManagementPanel management_;
     bool force_management_=false;
     lanlink::ui::Preferences preferences_;
-    unsigned setup_step_=0;
+    bool settings_open_=false, diagnostics_open_=false;
     std::optional<lanlink::protocol::NetworkId> selected_;
     std::array<char, 129> name_{};
     std::array<char, 2049> network_id_{};

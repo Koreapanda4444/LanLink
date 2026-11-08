@@ -51,9 +51,9 @@ void require(const HRESULT result, const char* operation) {
 class DesktopWindow {
 public:
     explicit DesktopWindow(const HINSTANCE instance, std::filesystem::path screenshot = {},
-        std::optional<lanlink::core::UiLanguage> language = std::nullopt,bool skip_setup=false,bool force_setup=false,bool force_management=false)
+        std::optional<lanlink::core::UiLanguage> language = std::nullopt,bool force_management=false)
         : instance_(instance), screenshot_(std::move(screenshot)),
-          view_(language,skip_setup,force_setup,force_management,"Start Windows service",[this] {
+          view_(language,force_management,"Start Windows service",[this] {
               wchar_t executable[32768]{};
               if(!GetModuleFileNameW(nullptr,executable,32768))throw std::runtime_error("Cannot locate LanLink.");
               const auto path=std::filesystem::path(executable).parent_path()/L"lanlink-service.exe";
@@ -99,7 +99,7 @@ public:
         }
         registered_ = true;
         window_ = CreateWindowExW(0, window_class, L"LanLink",
-            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 780,
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 520,
             nullptr, nullptr, instance_, this);
         if (!window_) throw std::runtime_error("CreateWindowExW failed");
 
@@ -137,10 +137,9 @@ public:
             for (const auto* face : {L"malgun.ttf", L"segoeui.ttf", L"arial.ttf"}) {
                 const auto path = std::filesystem::path(windows_directory) / L"Fonts" / face;
                 if (std::filesystem::is_regular_file(path)) {
-                    if (auto* font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path.string().c_str(), 18.0f, nullptr, ImGui::GetIO().Fonts->GetGlyphRangesKorean())) {
-                        ImGui::GetIO().FontDefault = font;
-                        break;
-                    }
+                    const auto bold=std::filesystem::path(windows_directory)/L"Fonts"/(std::wstring_view(face)==L"malgun.ttf"?L"malgunbd.ttf":L"seguisb.ttf");
+                    lanlink::ui::design::load_fonts(path,bold);
+                    break;
                 }
             }
         }
@@ -219,7 +218,7 @@ private:
         }
         if (message == WM_GETMINMAXINFO) {
             auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
-            limits->ptMinTrackSize = POINT{960, 680};
+            limits->ptMinTrackSize = POINT{640, 440};
             return 0;
         }
         if (message == WM_SIZE && self && wparam != SIZE_MINIMIZED) {
@@ -351,7 +350,7 @@ int WINAPI wWinMain(const HINSTANCE instance, HINSTANCE, PWSTR, int) {
         int count = 0;
         auto** arguments = CommandLineToArgvW(GetCommandLineW(), &count);
         std::optional<lanlink::core::UiLanguage> language;
-        bool skip_setup=false,force_setup=false,management=false;std::string invitation;
+        bool management=false;std::string invitation;
         const auto invitation_arg=[&](const wchar_t* raw){const std::wstring_view text(raw);if(text.size()>2048)throw std::invalid_argument("Invitation too long");std::string uri;for(auto ch:text){if(ch>127 || ch<33)throw std::invalid_argument("Invalid invitation URI");uri+=static_cast<char>(ch);}return uri;};
         if(count==2 && std::wstring_view(arguments[1]).starts_with(L"lanlink://")){invitation=invitation_arg(arguments[1]);count=1;}
         else if(count>=2 && std::wstring_view(arguments[1])==L"--invite"){if(count!=3)throw std::invalid_argument("--invite requires exactly one invitation URI");invitation=invitation_arg(arguments[2]);count=1;}
@@ -359,16 +358,14 @@ int WINAPI wWinMain(const HINSTANCE instance, HINSTANCE, PWSTR, int) {
             const std::wstring_view argument=arguments[i];
             if(argument==L"--screenshot" && i+1<count)screenshot=arguments[++i];
             else if(argument==L"--management")management=true;
-            else if(argument==L"--skip-setup")skip_setup=true;
-            else if(argument==L"--setup")force_setup=true;
             else if(argument==L"--language" && i+1<count) {
                 const std::wstring_view selected=arguments[++i];
                 if(selected!=L"en" && selected!=L"ko")throw std::invalid_argument("language must be en or ko");
                 language=selected==L"ko" ? lanlink::core::UiLanguage::korean : lanlink::core::UiLanguage::english;
-            } else throw std::invalid_argument("usage: lanlink-ui [--language en|ko] [--setup] [--skip-setup] [--management] [--screenshot FILE.png]");
+            } else throw std::invalid_argument("usage: lanlink-ui [--language en|ko] [--management] [--screenshot FILE.png]");
         }
         LocalFree(arguments);
-        DesktopWindow window(instance, screenshot,language,skip_setup,force_setup,management);
+        DesktopWindow window(instance, screenshot,language,management);
         if(!invitation.empty()) {
             window.open_invitation(invitation);
             if(auto existing=FindWindowW(window_class,nullptr)) {

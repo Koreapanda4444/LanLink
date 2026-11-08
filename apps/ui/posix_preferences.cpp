@@ -27,7 +27,6 @@ Preferences load_preferences() {
     while(std::getline(input,line)) {
         if(line=="language=ko")result.language=core::UiLanguage::korean;
         else if(line=="language=en")result.language=core::UiLanguage::english;
-        else if(line=="setup_completed=1")result.setup_completed=true;
     }
     return result;
 }
@@ -36,7 +35,7 @@ void save_preferences(const Preferences& value) {
     const auto temporary=target.string()+".tmp-"+std::to_string(getpid());
     try {
         std::ofstream output(temporary,std::ios::trunc);
-        output<<"language="<<(value.language==core::UiLanguage::korean?"ko":"en")<<"\nsetup_completed="<<value.setup_completed<<'\n';
+        output<<"language="<<(value.language==core::UiLanguage::korean?"ko":"en")<<'\n';
         output.close();if(!output)throw std::runtime_error("cannot save desktop preferences");
         if(chmod(temporary.c_str(),0600)<0)throw std::runtime_error("cannot protect desktop preferences");
         std::filesystem::rename(temporary,target);

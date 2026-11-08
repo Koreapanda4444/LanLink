@@ -80,3 +80,7 @@ Install without server details. Open **Add server**, save the host/port, verify 
 Self-host with `sudo python3 setup-relay.py HOST --port 4433`. Share the generated short-lived invitation privately. Keep the master token and TLS private key on the relay host. Local `--device-code`, `--device-list`, `--device-revoke` and `--device-code-revoke` manage device access. New installations require individual registration. A server invitation cannot bypass network membership checks. Opening a `lanlink://` link only shows a review dialog; connection and server switching require explicit consent.
 
 Pinned Relay connections use verified TLS 1.3/TCP; normal CA trust retains QUIC with TLS fallback. Direct P2P and end-to-end packet encryption remain enabled. Physical router NAT, mixed-host long gameplay, Windows application signing and Apple notarization remain separate release-validation work.
+
+## 데스크톱 화면
+
+기본 창은 720×520이며 시작 안내 없이 연결 상태를 표시한다. 상단 서버 카드의 이름·화살표로 서버를 선택하고 전원 아이콘으로 연결·해제한다. 더 보기에서 서버 추가·수정·삭제와 초대 입력을 연다. 서버 설정의 ‘서버’ 탭에서 주소·신뢰 정보를 저장하고 ‘기기’ 탭에서 등록한다. 기본 화면에는 네트워크 선택·가상 IP·멤버와 연결 경로를 표시하고, 계정과 진단은 설정 창에서 연다.

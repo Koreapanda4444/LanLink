@@ -83,16 +83,16 @@ struct Desktop {
 }
 int main(int argc,char* argv[]) {
     try {
-        std::optional<lanlink::core::UiLanguage> language;bool setup=false,skip=false,management=false;
+        std::optional<lanlink::core::UiLanguage> language;bool management=false;
         std::filesystem::path screenshot;std::string invitation;
         if(argc==2 && std::string_view(argv[1]).starts_with("lanlink://")){invitation=argv[1];argc=1;}
         else if(argc>=2 && std::string_view(argv[1])=="--invite"){if(argc!=3)throw std::invalid_argument("--invite requires exactly one invitation URI");invitation=argv[2];argc=1;}
         for(int i=1;i<argc;++i) {
             const std::string_view option=argv[i];
-            if(option=="--setup")setup=true;else if(option=="--skip-setup")skip=true;else if(option=="--management")management=true;
+            if(option=="--management")management=true;
             else if(option=="--screenshot" && i+1<argc)screenshot=argv[++i];
             else if(option=="--language" && i+1<argc){const std::string_view value=argv[++i];if(value!="en" && value!="ko")throw std::invalid_argument("language must be en or ko");language=value=="ko"?lanlink::core::UiLanguage::korean:lanlink::core::UiLanguage::english;}
-            else throw std::invalid_argument("usage: lanlink-ui [--language en|ko] [--setup] [--skip-setup] [--management] [--screenshot FILE.png]");
+            else throw std::invalid_argument("usage: lanlink-ui [--language en|ko] [--management] [--screenshot FILE.png]");
         }
         Desktop desktop;
         if(!SDL_Init(SDL_INIT_VIDEO))throw std::runtime_error(SDL_GetError());
@@ -101,18 +101,19 @@ int main(int argc,char* argv[]) {
 #ifdef __APPLE__
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS,SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
-        desktop.window=SDL_CreateWindow("LanLink",1030,740,SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY);
+        desktop.window=SDL_CreateWindow("LanLink",720,520,SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if(!desktop.window)throw std::runtime_error(SDL_GetError());
+        SDL_SetWindowMinimumSize(desktop.window,640,440);
         desktop.context=SDL_GL_CreateContext(desktop.window);if(!desktop.context)throw std::runtime_error(SDL_GetError());
         SDL_GL_MakeCurrent(desktop.window,desktop.context);SDL_GL_SetSwapInterval(1);
         IMGUI_CHECKVERSION();ImGui::CreateContext();desktop.imgui=true;lanlink::ui::configure_desktop_style();
         for(const auto* name:{"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc","/System/Library/Fonts/AppleSDGothicNeo.ttc"})if(std::filesystem::is_regular_file(name)) {
-            if(auto* font=ImGui::GetIO().Fonts->AddFontFromFileTTF(name,18,nullptr,ImGui::GetIO().Fonts->GetGlyphRangesKorean())){ImGui::GetIO().FontDefault=font;break;}
+            lanlink::ui::design::load_fonts(name,name);break;
         }
         if(!ImGui_ImplSDL3_InitForOpenGL(desktop.window,desktop.context))throw std::runtime_error("SDL desktop initialization failed");desktop.platform=true;
         if(!ImGui_ImplOpenGL3_Init("#version 150"))throw std::runtime_error("OpenGL desktop initialization failed");desktop.renderer=true;
         desktop.load_logo();
-        lanlink::ui::DesktopView view(language,skip,setup,management,"Start service",start_service);view.set_logo(static_cast<ImTextureID>(desktop.logo));
+        lanlink::ui::DesktopView view(language,management,"Start service",start_service);view.set_logo(static_cast<ImTextureID>(desktop.logo));
         if(!invitation.empty())view.open_invitation(invitation);
         const auto opened=std::chrono::steady_clock::now();bool running=true;
         while(running) {
