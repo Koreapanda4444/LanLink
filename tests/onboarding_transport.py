@@ -1,7 +1,7 @@
 import os
 from windows_certificate_fixture import prepare_certificate,remove_certificate
 from pathlib import Path
-import socket
+from paired_port import allocate
 import subprocess
 import sys
 import tempfile
@@ -9,16 +9,7 @@ import tempfile
 binary = str(Path(sys.argv[1]).resolve())
 with tempfile.TemporaryDirectory(prefix="lanlink-onboarding-") as directory:
     Path(directory).chmod(0o700)
-    ports=[]
-    for _ in range(64):
-        with socket.socket() as tcp, socket.socket(type=socket.SOCK_DGRAM) as udp:
-            tcp.bind(("127.0.0.1", 0));port=tcp.getsockname()[1]
-            if port in ports:continue
-            try:udp.bind(("127.0.0.1",port))
-            except OSError:continue
-            ports.append(port)
-            if len(ports)==2:break
-    if len(ports)!=2:raise RuntimeError("No free TCP/UDP fixture ports")
+    first=allocate();ports=[first,allocate([first])]
     environment=dict(os.environ,SSL_CERT_FILE=str(Path(directory)/"cert.pem"))
     thumb=None
     if sys.platform=="win32":

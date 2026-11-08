@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import socket
+from paired_port import allocate
 import struct
 import subprocess
 import sys
@@ -40,14 +41,7 @@ def stop(p,crash=False):
         p.kill() if crash else p.terminate()
         p.wait(timeout=15)
 
-def port():
-    for _ in range(100):
-        with socket.socket() as s:
-            s.bind(("127.0.0.1",0));n=s.getsockname()[1]
-            with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as udp:
-                try:udp.bind(("127.0.0.1",n));return n
-                except OSError:pass
-    raise RuntimeError("Cannot allocate a relay port")
+def port():return allocate()
 
 def ready(n):
     with socket.create_connection(("127.0.0.1",n),timeout=.5):return True
