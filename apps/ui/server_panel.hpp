@@ -45,7 +45,7 @@ public:
             if(await_saved_ && state.server_operation_generation>saved_generation_) {
                 await_saved_=false;
                 const auto found=std::find_if(s.profiles.begin(),s.profiles.end(),[&](const auto& p){return state.server_action==protocol::ServerAction::save && p.id==state.server_result_id;});
-                if(found!=s.profiles.end()){editing_=found->id;edit_=true;registration_tab_=true;}
+                if(found!=s.profiles.end()){editing_=found->id;registration_tab_=true;}
             }
             if(!editing_.empty() && std::none_of(s.profiles.begin(),s.profiles.end(),[&](const auto& p){return p.id==editing_;}))editing_.clear();
         }
@@ -129,7 +129,7 @@ public:
                         protocol::ServerRequest r;r.action=protocol::ServerAction::save;
                         r.profile={editing_,name_.data(),host_.data(),static_cast<std::uint16_t>(port_),pin_.data()};r.credential=credential_.data();
                         protocol::validate_server_profile(r.profile);saved_generation_=state.server_operation_generation;await_saved_=true;
-                        send(r);credential_.fill(0);ImGui::CloseCurrentPopup();
+                        send(r);credential_.fill(0);
                     });
                     ImGui::EndDisabled();
                     if(!editing_.empty() && ImGui::CollapsingHeader(t("Remove server","서버 삭제"))) {

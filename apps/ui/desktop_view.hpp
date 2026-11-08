@@ -427,7 +427,10 @@ public:
                         for (const auto& peer : peers.peers) row(peer.device_id, peer.ipv4_address, connected && peer.signed_key.has_value(), false);
                         ImGui::EndTable();
                     }
-                    if (administrator && ImGui::CollapsingHeader(tr("Join requests"))) {
+                    const auto request_count=std::count_if(state.activity.requests.begin(),state.activity.requests.end(),
+                        [&](const auto& request){return request.network_id==selected->network_id;});
+                    const auto requests_label=std::string(tr("Join requests"))+" ("+std::to_string(request_count)+")###join-requests";
+                    if (administrator && ImGui::CollapsingHeader(requests_label.c_str())) {
                         bool any_requests = false;
                         for (const auto& request : state.activity.requests) {
                             if (request.network_id != selected->network_id) continue;
@@ -462,6 +465,17 @@ public:
                 if (ImGui::CollapsingHeader(tr("Network options"))) {
                 if (ImGui::Button(tr("Copy network ID"))) ImGui::SetClipboardText(id.c_str());
                 ImGui::SameLine();
+                ImGui::BeginDisabled(!state.peers || state.peers->network_id!=selected->network_id);
+                if(ImGui::Button(tr("Copy network overview")) && state.peers) {
+                    const auto& peers=*state.peers;
+                    const auto* paths=state.paths && now-state.paths_updated_at<std::chrono::seconds(6)?&*state.paths:nullptr;
+                    const auto overview=protocol::network_overview(peers,paths,connected,state.activity.device_id);
+                    const std::string report=std::string(tr("LanLink network: "))+selected->name+tr("\nNetwork ID: ")+id+
+                        tr("\nVirtual IP: ")+ipv4(peers.own_address)+tr("\nOnline: ")+std::to_string(overview.online)+"/"+std::to_string(overview.total)+
+                        tr("\nDirect: ")+std::to_string(overview.direct)+tr(" Relay: ")+std::to_string(overview.relayed)+tr("\nKey epoch: ")+std::to_string(peers.key_epoch);
+                    ImGui::SetClipboardText(report.c_str());
+                }
+                ImGui::EndDisabled();
                 ImGui::BeginDisabled(!connected || state.busy);
                 if(administrator && ImGui::Button(tr("Create invitation"))) attempt([&]{
                     protocol::AccessRequest r;r.action=protocol::AccessAction::invite_issue;r.network_id=selected->network_id;
