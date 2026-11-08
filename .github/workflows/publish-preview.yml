@@ -1,0 +1,26 @@
+name: Publish verified preview
+on:
+  push:
+    branches: [main]
+    paths: [release/preview.json]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lanlink-preview-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+    - uses: actions/checkout@v5
+    - name: Publish the requested verified preview
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: python3 release/publish_preview.py
