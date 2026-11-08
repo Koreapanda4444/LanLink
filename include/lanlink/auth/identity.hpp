@@ -54,6 +54,7 @@ class AuthToken {
 public:
     static AuthToken load(const std::filesystem::path& path);
     static AuthToken from_secret(std::string_view secret);
+    static void store_credential(const std::filesystem::path& path, std::string_view secret);
 
     ~AuthToken();
     AuthToken(const AuthToken&) = delete;

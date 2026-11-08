@@ -586,6 +586,12 @@ std::vector<std::byte> encode_secret(const SecretKey& secret) {
 
 }
 
+std::vector<std::byte> read_private_blob(const std::filesystem::path& path) { return read_file(path); }
+void write_private_blob(const std::filesystem::path& path,std::span<const std::byte> bytes) {
+    if(bytes.size()>maximum_identity_file_size)throw std::invalid_argument("Private state exceeds 64 KiB");
+    atomic_write(path,bytes);
+}
+
 bool load_device_secret(const std::filesystem::path& path, SecretKey& secret) {
     cleanse(secret);
     auto bytes = read_file(path);

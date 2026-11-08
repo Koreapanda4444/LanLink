@@ -252,6 +252,11 @@ AuthToken AuthToken::load(const std::filesystem::path& path) {
         throw std::invalid_argument("authentication token path is empty");
     }
 
+    if(path.extension()==".credential") {
+        SecretKey key{};
+        try { static_cast<void>(detail::load_device_secret(path,key));auto token=AuthToken(std::move(key));cleanse(key);return token; }
+        catch(...){cleanse(key);throw;}
+    }
     auto bytes = read_binary_file(path, maximum_token_size);
 
     while (!bytes.empty() && (bytes.back() == std::byte{'\n'} || bytes.back() == std::byte{'\r'})) {
@@ -287,6 +292,11 @@ AuthToken AuthToken::from_secret(const std::string_view secret) {
 
     auto key = sha256(std::as_bytes(std::span<const char>(secret.data(), secret.size())));
     return AuthToken(std::move(key));
+}
+
+void AuthToken::store_credential(const std::filesystem::path& path,std::string_view secret) {
+    if(path.extension()!=".credential")throw std::invalid_argument("Protected credentials require a .credential file");
+    auto token=from_secret(secret);detail::store_device_secret(path,token.key_);
 }
 
 TokenProof AuthToken::proof(const std::span<const std::byte> message) const {

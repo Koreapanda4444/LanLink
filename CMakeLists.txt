@@ -92,6 +92,7 @@ add_library(lanlink_protocol STATIC
     src/protocol/path_diagnostics.cpp
     src/protocol/capabilities.cpp
     src/protocol/codec.cpp
+    src/protocol/server_profiles.cpp
     src/protocol/local_control.cpp
     src/protocol/network_messages.cpp
     src/protocol/packet_messages.cpp
@@ -136,6 +137,7 @@ endif()
 lanlink_enable_warnings(lanlink_auth)
 
 add_library(lanlink_storage STATIC
+    src/client/profile_store.cpp
     src/storage/relay_store.cpp
 )
 
@@ -144,7 +146,7 @@ target_include_directories(lanlink_storage
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET} PUBLIC lanlink_protocol)
+target_link_libraries(lanlink_storage PRIVATE ${LANLINK_SQLITE_TARGET} PUBLIC lanlink_protocol lanlink_auth)
 
 lanlink_enable_warnings(lanlink_storage)
 
@@ -483,6 +485,11 @@ if(BUILD_TESTING)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LANLINK_WINTUN_DLL}"
                 "$<TARGET_FILE_DIR:lanlink_windows_network_tests>/wintun.dll")
     endif()
+    add_executable(lanlink_server_profile_tests tests/server_profile_tests.cpp)
+    target_link_libraries(lanlink_server_profile_tests PRIVATE lanlink_storage)
+    lanlink_enable_warnings(lanlink_server_profile_tests)
+    add_test(NAME lanlink-server-profiles COMMAND lanlink_server_profile_tests)
+
     add_executable(lanlink_core_tests
         tests/core_tests.cpp
     )
