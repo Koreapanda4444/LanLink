@@ -10,6 +10,8 @@ jobs:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    outputs:
+      presentation_only: ${{ steps.scope.outputs.presentation_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -24,8 +26,29 @@ jobs:
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binaries,readwrite
     steps:
     - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+    - name: Identify presentation-only changes
+      id: scope
+      shell: python
+      env:
+        CHANGE_BASE: ${{ github.event.before }}
+        CHANGE_HEAD: ${{ github.sha }}
+        CHANGE_EVENT: ${{ github.event_name }}
+      run: |
+        import os, subprocess
+        base = os.environ.get('CHANGE_BASE', '')
+        presentation = False
+        if os.environ['CHANGE_EVENT'] == 'push' and base and set(base) != {'0'}:
+            files = subprocess.check_output(['git', 'diff', '--name-only', base, os.environ['CHANGE_HEAD']], text=True).splitlines()
+            exact = {'README.md', 'packaging/windows/LanLink.iss', '.github/workflows/build.yml', 'release/1.0.0.md', 'release/INSTALL.md', 'release/preview.json'}
+            prefixes = ('apps/ui/', 'assets/branding/', 'packaging/windows/languages/', 'docs/')
+            presentation = bool(files) and all(p in exact or p.startswith(prefixes) for p in files)
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('presentation_only=' + str(presentation).lower() + '\n')
+        print('UI/text update: execution checks skipped.' if presentation else 'Execution checks enabled.')
     - name: Validate Windows installer script syntax
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && steps.scope.outputs.presentation_only != 'true'
       run: |
         Get-ChildItem packaging/windows -Recurse -File -Include *.ps1, *.psm1 | ForEach-Object {
           $tokens = $null
@@ -34,7 +57,7 @@ jobs:
           if ($errors.Count -ne 0) { throw ($errors | Out-String) }
         }
     - name: Validate native Windows PowerShell progress reporting
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && steps.scope.outputs.presentation_only != 'true'
       run: |
         $check = Join-Path $env:RUNNER_TEMP 'LanLink-progress-helper-check.ps1'
         @'
@@ -55,7 +78,7 @@ jobs:
         & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $check -ModulePath "$env:GITHUB_WORKSPACE/packaging/windows/ClientSetup.psm1" -OutputPath "$env:RUNNER_TEMP/LanLink-progress-helper.txt"
         if ($LASTEXITCODE -ne 0) { throw 'Progress helper failed under Windows PowerShell.' }
     - name: Validate Windows Setup compiler compatibility
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && steps.scope.outputs.presentation_only != 'true'
       run: |
         $payload = Join-Path $env:RUNNER_TEMP 'LanLink-setup-preflight'
         New-Item -ItemType Directory -Path $payload -Force | Out-Null
@@ -135,7 +158,7 @@ jobs:
         & $iscc "/DPackageDir=$($installer.DirectoryName)" /DAppVersion=1.0.0 "/DSourceCommit=$env:GITHUB_SHA" "/O$env:GITHUB_WORKSPACE/artifacts" packaging/windows/LanLink.iss
         if ($LASTEXITCODE -ne 0) { throw 'EXE installer compilation failed.' }
     - name: Verify installer progress and maintenance
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && steps.scope.outputs.presentation_only != 'true'
       run: |
         $exe = (Get-ChildItem artifacts/*.exe | Select-Object -First 1).FullName
         $target = Join-Path $env:RUNNER_TEMP 'LanLink-progress-check'
@@ -282,7 +305,7 @@ jobs:
         if-no-files-found: error
   relay-compatibility:
     name: Relay on ${{ matrix.distribution }}
-    needs: relay-linux
+    needs: [relay-linux, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -305,6 +328,7 @@ jobs:
         name: LanLink-relay-linux-x64
         path: relay-package
     - name: Check packaged relay runtime
+      if: needs.build.outputs.presentation_only != 'true'
       run: |-
         mkdir -p relay-runtime
         tar -xzf relay-package/*.tar.gz -C relay-runtime
