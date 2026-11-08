@@ -115,6 +115,9 @@ jobs:
       - name: Verify native Linux client lifecycle
         if: runner.os == 'Linux'
         run: sudo unshare --net python3 tests/posix_service_tests.py build/lanlink-service
+      - name: Verify Linux server registration and switching with real TUN
+        if: runner.os == 'Linux'
+        run: sudo unshare --net python3 tests/server_workflow_tests.py build/lanlink-relay build/lanlink-service build/lanlink-ui-cli
       - name: Test compatibility with the released v0.2.2 relay
         if: runner.os == 'Linux'
         env:
@@ -196,6 +199,12 @@ jobs:
         run: |
           $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
           & ./tests/windows_network_tests.ps1 -PackageDirectory $installer.DirectoryName -RelayExecutable "$env:GITHUB_WORKSPACE/build/Release/lanlink-relay.exe" -DriverExecutable "$env:GITHUB_WORKSPACE/build/Release/lanlink_windows_network_tests.exe"
+      - name: Verify Windows server registration and switching with Wintun
+        if: runner.os == 'Windows'
+        run: |
+          $installer = Get-ChildItem "$env:RUNNER_TEMP/client-package" -Filter Install-LanLink.ps1 -Recurse | Select-Object -First 1
+          python tests/server_workflow_tests.py build/Release/lanlink-relay.exe "$($installer.DirectoryName)/bin/lanlink-service.exe" "$($installer.DirectoryName)/bin/lanlink-ui-cli.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows server onboarding integration failed.' }
       - name: Preserve desktop screenshots
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -321,6 +330,8 @@ jobs:
         run: ctest --test-dir build/macos-client --output-on-failure
       - name: Verify native macOS service lifecycle
         run: sudo python3 tests/posix_service_tests.py build/macos-client/lanlink-service
+      - name: Verify macOS server registration and switching with real utun
+        run: sudo python3 tests/server_workflow_tests.py build/macos-client/lanlink-relay build/macos-client/lanlink-service build/macos-client/lanlink-ui-cli
       - name: Verify launchd daemon lifecycle
         run: |
           plutil -lint deploy/macos/com.lanlink.client.plist
