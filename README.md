@@ -12,7 +12,7 @@ Windows 서비스·Linux systemd·macOS launchd가 연결과 가상 어댑터를
 
 앱의 **서버 추가 → 운영자의 일회용 코드로 기기 등록 → 연결 → 네트워크 생성·가입** 순서로 사용한다. 서버별 identity·인증 정보·신뢰 지문을 분리하여 여러 프로필을 저장하고 전환할 수 있다. `lanlink://` 초대는 서버·지문·네트워크를 보여 주고 명시적 승인 후 연결한다. 공식 서버나 공용 Directory는 필요 없다. 운영자 master token은 클라이언트에 전달하지 않는다. [서버 등록·초대 안내](docs/server-onboarding.md)를 참고한다.
 
-[최신 설치 패키지: v1.0.0-preview.4](https://github.com/Koreapanda4444/LanLink/releases/tag/v1.0.0-preview.4)에서 개편된 설치·서버 연결 기능을 받는다. Windows 사용자는 `LanLink-Setup-1.0.0-windows-x64.exe`를 선택한다. 기존 `v1.0.0`은 개편 전 패키지로 보존한다.
+[최신 설치 패키지: v1.0.0-preview.5](https://github.com/Koreapanda4444/LanLink/releases/tag/v1.0.0-preview.5)에서 개편된 설치·서버 연결 기능을 받는다. Windows 사용자는 `LanLink-Setup-1.0.0-windows-x64.exe`를 선택한다. 기존 `v1.0.0`은 개편 전 패키지로 보존한다.
 
 릴레이는 특정 클라우드에 종속되지 않는다. Oracle Cloud, 다른 VPS, 자체 서버에서 운영할 수 있다. 배포 파일은 Linux x64용이며 glibc 2.34 이상과 systemd를 기준으로 한다. 같은 패키지를 Oracle Linux 9, Ubuntu 22.04, Debian 12에서 검증한다. 서버 설치와 방화벽 설정은 [설치 안내](release/INSTALL.md)를 참고한다.
 
@@ -38,4 +38,4 @@ Windows에서는 DirectX 11/Win32 UI와 서비스를 함께 빌드한다. Linux/
 
 ## 빌드·배포 확인
 
-빌드는 제품 실행 파일과 설치 패키지를 생성한다. 저장소의 자동 테스트·벤치마크·과거 검증 보고서는 유지관리 방침에 따라 제거했다. CI는 플랫폼별 컴파일, 패키징, 의존성·패키지 무결성 및 체크섬 생성을 수행한다.
+빌드는 제품 실행 파일과 설치 패키지를 생성한다. 저장소의 자동 테스트·벤치마크·과거 검증 보고서는 유지관리 방침에 따라 제거했다. CI는 플랫폼별 컴파일, 패키징, 의존성·패키지 무결성 및 체크섬 생성을 수행한다. Windows 설치·수정·복구·제거와 실제 단계별 진행률도 패키징 과정에서 확인한다.
