@@ -33,6 +33,26 @@ jobs:
           [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref] $tokens, [ref] $errors) | Out-Null
           if ($errors.Count -ne 0) { throw ($errors | Out-String) }
         }
+    - name: Validate native Windows PowerShell progress reporting
+      if: runner.os == 'Windows'
+      run: |
+        $check = Join-Path $env:RUNNER_TEMP 'LanLink-progress-helper-check.ps1'
+        @'
+        param([string] $ModulePath, [string] $OutputPath)
+        $ErrorActionPreference = 'Stop'
+        Import-Module $ModulePath -Force
+        & {
+          Import-Module $ModulePath -Force
+          Write-LanLinkSetupProgress $OutputPath 0 'prepare'
+          Write-LanLinkSetupProgress $OutputPath 45 'copy'
+        }
+        if ([IO.File]::ReadAllText($OutputPath) -ne '45|copy') { throw 'Native progress output is invalid.' }
+        Write-LanLinkSetupProgress $OutputPath 100 'complete'
+        if ([IO.File]::ReadAllText($OutputPath) -ne '100|complete') { throw 'Native completion output is invalid.' }
+        Remove-Item -LiteralPath $OutputPath
+        '@ | Set-Content -LiteralPath $check -Encoding UTF8
+        & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $check -ModulePath "$env:GITHUB_WORKSPACE/packaging/windows/ClientSetup.psm1" -OutputPath "$env:RUNNER_TEMP/LanLink-progress-helper.txt"
+        if ($LASTEXITCODE -ne 0) { throw 'Progress helper failed under Windows PowerShell.' }
     - name: Validate Windows Setup compiler compatibility
       if: runner.os == 'Windows'
       run: |

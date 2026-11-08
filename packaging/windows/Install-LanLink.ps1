@@ -99,16 +99,16 @@ try {
     $payload = [Collections.Generic.List[object]]::new()
     foreach ($folder in 'bin', 'licenses') {
         foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot $folder) -Recurse -File) {
-            $payload.Add(@{ source = $file.FullName; relative = $file.FullName.Substring($PSScriptRoot.Length + 1); size = $file.Length })
+            $payload.Add([pscustomobject]@{ source = $file.FullName; relative = $file.FullName.Substring($PSScriptRoot.Length + 1); size = $file.Length })
         }
     }
     foreach ($name in 'Install-LanLink.ps1', 'Uninstall-LanLink.ps1', 'ClientSetup.psm1', 'package-version.txt',
                      'build-info.json', 'INSTALL.md', 'SERVER-SETUP.md', 'RELEASE-NOTES.md', 'Maintenance-LanLink.ps1') {
         $source = Join-Path $PSScriptRoot $name
-        $payload.Add(@{ source = $source; relative = $name; size = (Get-Item -LiteralPath $source).Length })
+        $payload.Add([pscustomobject]@{ source = $source; relative = $name; size = (Get-Item -LiteralPath $source).Length })
     }
     if ($SetupExecutable) {
-        $payload.Add(@{ source = $SetupExecutable; relative = 'maintenance\LanLink-Setup.exe'; size = (Get-Item -LiteralPath $SetupExecutable).Length })
+        $payload.Add([pscustomobject]@{ source = $SetupExecutable; relative = 'maintenance\LanLink-Setup.exe'; size = (Get-Item -LiteralPath $SetupExecutable).Length })
     }
     $totalBytes = ($payload | Measure-Object -Property size -Sum).Sum
     $copiedBytes = 0L
